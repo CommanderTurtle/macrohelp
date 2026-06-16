@@ -15,9 +15,7 @@ A native Windows overlay tool with cursor crosshairs, real-time coordinate track
 
 - **Full-Screen Crosshair Overlay** - Red lines + yellow center dot across all monitors
 - **Real-Time Coordinates** - Live X/Y position at 60+ FPS in a dark themed panel
-
-# ^ Live, updating coordinates (refreshed at 60fps right under mouse cursor)
-
+<p><span style="font-size:18px; color:#bbb;">^ Live, updating coordinates (refreshed at 60fps right under mouse cursor)</span></p>
 - **Live Key Visualization** - Every key press shown with icon glyphs, fading over 5 seconds
 - **Global Hotkeys** - `Shift+Alt+1` and `Shift+Alt+2` work over any overlay
 - **Cursor Position Saving** - Save coordinates as Tasket `cursormovements` JSON
