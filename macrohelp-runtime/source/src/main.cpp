@@ -74,6 +74,8 @@ static constexpr UINT_PTR PASTE_BUFFER_WATCH_TIMER = 4705;
 static constexpr UINT_PTR REGISTRY_HUB_WATCH_TIMER = 4706;
 static constexpr int      GRID_SPACING_PX = 120;
 static constexpr int      PASTE_BUFFER_MAX_VISIBLE_LINES = 50;
+static constexpr int      REGISTRY_POINT_COUNT = 16;
+static constexpr int      REGISTRY_ROUTER_POINT_COUNT = 6;
 
 // Key display
 static constexpr int      KEY_DISPLAY_W     = 420;
@@ -454,8 +456,8 @@ std::wstring g_registryImportPath;
 int g_lastTasketTaskNumber = 0;
 std::wstring g_lastTasketTaskState;
 std::wstring g_lastTasketTaskMessage;
-bool g_registryPointSet[3] = {};
-POINT g_registryPoints[3] = {};
+bool g_registryPointSet[REGISTRY_POINT_COUNT] = {};
+POINT g_registryPoints[REGISTRY_POINT_COUNT] = {};
 
 // Key tracking
 std::vector<std::string> g_activeCombo;
@@ -1338,60 +1340,19 @@ static bool LoadTemplateActions(const std::wstring& templateFileName, std::strin
 }
 
 static bool LoadZoneActions(POINT start, POINT end, std::string* actions, std::wstring* status) {
-    std::string body = ReadTasketSavedTaskTemplate(L"Click Drag Zone Flow.scht");
-    if (body.empty()) {
-        std::vector<std::string> generated = {
-            BuildCursorMovementActionJson(
-                "CursorMoveExampleTopLeftBox",
-                {{0, 200, start.x, start.y}}),
-            BuildWaitActionJson(0.2),
-            BuildCursorMovementActionJson(
-                "ClickDragZoneFlow",
-                {{0, 1, start.x, start.y}, {0, 1500, end.x, end.y}},
-                {"LEFT_MOUSE"}),
-            BuildWaitActionJson(2.0)
-        };
-        if (actions) *actions = JoinGeneratedActions(generated);
-        if (status) *status = L"Using built-in Macrohelp zone drag actions.";
-        return true;
-    }
-
-    size_t nextFrom = 0;
-    if (!ReplaceNextCursorMovementPoint(body, 0, start, &nextFrom) ||
-        !ReplaceNextCursorMovementPoint(body, nextFrom, start, &nextFrom) ||
-        !ReplaceNextCursorMovementPoint(body, nextFrom, end, nullptr)) {
-        std::vector<std::string> generated = {
-            BuildCursorMovementActionJson(
-                "CursorMoveExampleTopLeftBox",
-                {{0, 200, start.x, start.y}}),
-            BuildWaitActionJson(0.2),
-            BuildCursorMovementActionJson(
-                "ClickDragZoneFlow",
-                {{0, 1, start.x, start.y}, {0, 1500, end.x, end.y}},
-                {"LEFT_MOUSE"}),
-            BuildWaitActionJson(2.0)
-        };
-        if (actions) *actions = JoinGeneratedActions(generated);
-        if (status) *status = L"Using built-in Macrohelp zone drag actions because template coordinates could not be patched.";
-        return true;
-    }
-
-    if (!ExtractTasketActionsBlock(body, actions)) {
-        std::vector<std::string> generated = {
-            BuildCursorMovementActionJson(
-                "CursorMoveExampleTopLeftBox",
-                {{0, 200, start.x, start.y}}),
-            BuildWaitActionJson(0.2),
-            BuildCursorMovementActionJson(
-                "ClickDragZoneFlow",
-                {{0, 1, start.x, start.y}, {0, 1500, end.x, end.y}},
-                {"LEFT_MOUSE"}),
-            BuildWaitActionJson(2.0)
-        };
-        if (actions) *actions = JoinGeneratedActions(generated);
-        if (status) *status = L"Using built-in Macrohelp zone drag actions because template actions could not be read.";
-        return true;
-    }
+    std::vector<std::string> generated = {
+        BuildCursorMovementActionJson(
+            "CursorMoveExampleTopLeftBox",
+            {{0, 200, start.x, start.y}}),
+        BuildWaitActionJson(0.2),
+        BuildCursorMovementActionJson(
+            "ClickDragZoneFlow",
+            {{0, 1500, end.x, end.y}},
+            {"LEFT_MOUSE"}),
+        BuildWaitActionJson(2.0)
+    };
+    if (actions) *actions = JoinGeneratedActions(generated);
+    if (status) *status = L"Using canonical Macrohelp zone drag actions.";
     return true;
 }
 
@@ -2812,12 +2773,13 @@ static void CloseViewTogglesDialog(HWND hwnd) {
 static void UpdateViewTogglesDialogText(HWND hwnd) {
     if (!hwnd) return;
     SetDlgItemTextW(hwnd, IDC_STATIC_VIEW_PROMPT, L"Display toggles");
-    SetDlgItemTextW(hwnd, IDC_STATIC_VIEW_HINT, L"Z target | X grid | C coords only");
+    SetDlgItemTextW(hwnd, IDC_STATIC_VIEW_HINT, L"Z target | X grid | C coords only | K key HUD");
 
     std::wstringstream ss;
     ss << L"Crosshair " << (g_crosshairVisible ? L"on" : L"off")
        << L"  |  Grid " << (g_gridVisible ? L"on" : L"off")
        << L"  |  Coords-only " << (g_coordinatesOnlyMode ? L"on" : L"off")
+       << L"  |  Keys " << (g_keyDisplayVisible ? L"on" : L"off")
        << L"  |  Type one command key.";
     SetDlgItemTextW(hwnd, IDC_STATIC_VIEW_STATUS, ss.str().c_str());
     SetDlgItemTextW(hwnd, IDC_EDIT_VIEW_VALUE, L"");
@@ -2864,9 +2826,20 @@ static bool RunViewToggleCommand(HWND hwnd, const std::wstring& rawCommand) {
         return true;
     }
 
+    if (command == "k" || command == "keys" || command == "keyhud" ||
+        command == "hidekeys" || command == "hide_keys" || command == "showkeys" || command == "show_keys") {
+        g_keyDisplayVisible = !g_keyDisplayVisible;
+        if (g_hwndKeyDisplay && IsWindow(g_hwndKeyDisplay)) {
+            ShowWindow(g_hwndKeyDisplay, g_keyDisplayVisible ? SW_SHOW : SW_HIDE);
+        }
+        PushKeyHistory({g_keyDisplayVisible ? "KEYS_ON" : "KEYS_OFF"});
+        CloseViewTogglesDialog(hwnd);
+        return true;
+    }
+
     SetDlgItemTextW(hwnd, IDC_EDIT_VIEW_VALUE, L"");
     SetDlgItemTextW(hwnd, IDC_STATIC_VIEW_STATUS,
-        L"Use Z for crosshair, X for gridlines, or C for coordinates-only. Esc cancels.");
+        L"Use Z crosshair, X gridlines, C coordinates-only, or K key HUD. Esc cancels.");
     return true;
 }
 
@@ -3912,7 +3885,7 @@ static std::string BuildKeysSequenceActionJson(
         json += "                    " + std::to_string(releaseAfterMs) + ",\n";
         json += "                    [\n";
         for (size_t j = 0; j < steps[i].size(); j++) {
-            json += "                        \"" + steps[i][j] + "\"";
+            json += "                        \"" + EscapeJsonString(steps[i][j]) + "\"";
             if (j + 1 < steps[i].size()) json += ",";
             json += "\n";
         }
@@ -4410,11 +4383,90 @@ static int RegistryVarIndexFromCommand(const std::string& command) {
     return -1;
 }
 
+static int RegistryPointIndexFromCommand(const std::string& command) {
+    std::string key = LowerAscii(TrimAscii(command));
+    std::string compact;
+    compact.reserve(key.size());
+    for (char ch : key) {
+        if (ch == '_' || ch == '-' || isspace((unsigned char)ch)) continue;
+        compact.push_back(ch);
+    }
+    if (compact.rfind("point", 0) == 0) compact = compact.substr(5);
+    else if (compact.rfind("p", 0) == 0 && compact.size() > 1) compact = compact.substr(1);
+    if (compact.empty()) return -1;
+    for (char ch : compact) {
+        if (!isdigit((unsigned char)ch)) return -1;
+    }
+    int pointNumber = atoi(compact.c_str());
+    if (pointNumber < 1 || pointNumber > REGISTRY_POINT_COUNT) return -1;
+    return pointNumber - 1;
+}
+
 static std::string PointValueUtf8(int pointIndex) {
-    if (pointIndex < 0 || pointIndex >= 3 || !g_registryPointSet[pointIndex]) return "";
+    if (pointIndex < 0 || pointIndex >= REGISTRY_POINT_COUNT || !g_registryPointSet[pointIndex]) return "";
     std::ostringstream ss;
     ss << g_registryPoints[pointIndex].x << "," << g_registryPoints[pointIndex].y;
     return ss.str();
+}
+
+static bool ParsePointCoordinatesLoose(const std::wstring& raw, POINT& point) {
+    std::vector<int> values;
+    const wchar_t* p = raw.c_str();
+    while (*p) {
+        wchar_t* next = nullptr;
+        long value = wcstol(p, &next, 10);
+        if (next != p) {
+            values.push_back((int)value);
+            p = next;
+        } else {
+            ++p;
+        }
+    }
+    if (values.size() < 2) return false;
+    point = {values[0], values[1]};
+    return true;
+}
+
+static bool ResolveRegistryPointReference(const std::string& raw, POINT& point) {
+    int idx = RegistryPointIndexFromCommand(raw);
+    if (idx < 0 || idx >= REGISTRY_POINT_COUNT || !g_registryPointSet[idx]) return false;
+    point = g_registryPoints[idx];
+    return true;
+}
+
+static bool ResolveRegistryZoneReference(const std::string& raw, POINT& start, POINT& end) {
+    std::string key = LowerAscii(TrimAscii(raw));
+    std::string compact;
+    compact.reserve(key.size());
+    for (char ch : key) {
+        if (ch == '_' || ch == '-' || isspace((unsigned char)ch)) continue;
+        compact.push_back(ch);
+    }
+    if (compact.rfind("zone", 0) == 0) compact = compact.substr(4);
+    int slot = PasteBufferSlotFromCommand(compact);
+    if (slot < 0 || slot > 3 || !g_zoneBuffers[slot].set) return false;
+    start = g_zoneBuffers[slot].start;
+    end = g_zoneBuffers[slot].end;
+    return true;
+}
+
+static bool ParsePointCoordinatesOrReference(const std::wstring& raw, POINT& point) {
+    std::string utf8 = TrimAscii(WStringToUtf8(raw));
+    if (ResolveRegistryPointReference(utf8, point)) return true;
+    return ParsePointCoordinatesLoose(raw, point);
+}
+
+static bool ParseZoneCoordinatesOrPointRefs(const std::wstring& raw, POINT& start, POINT& end) {
+    if (ParseZoneBufferCoordinates(raw, start, end)) return true;
+
+    std::vector<std::string> args = SplitScriptArgs(WStringToUtf8(raw));
+    if (args.size() == 1 && ResolveRegistryZoneReference(args[0], start, end)) return true;
+    if (args.size() != 2) return false;
+    POINT a = {}, b = {};
+    if (!ResolveRegistryPointReference(args[0], a) || !ResolveRegistryPointReference(args[1], b)) return false;
+    start = a;
+    end = b;
+    return true;
 }
 
 static std::string ZoneValueUtf8(int slot) {
@@ -4443,6 +4495,12 @@ static bool LookupScriptTextValue(const std::string& rawKey, std::wstring& text)
 static std::string ExpandRegistryHubValueReferences(const std::string& value) {
     std::string trimmed = TrimAscii(value);
     if (trimmed.size() < 2 || trimmed[0] != '$') return value;
+
+    int pointSlot = RegistryPointIndexFromCommand(trimmed.substr(1));
+    if (pointSlot >= 0) {
+        std::string pointValue = PointValueUtf8(pointSlot);
+        if (!pointValue.empty()) return pointValue;
+    }
 
     std::wstring text;
     if (LookupScriptTextValue(trimmed.substr(1), text)) return WStringToUtf8(text);
@@ -4796,6 +4854,151 @@ static bool TokenIsScriptTextKey(const std::string& rawKey) {
     return RegistryVarIndexFromCommand(key) >= 0 || PasteBufferSlotFromCommand(key) >= 0;
 }
 
+static std::string CompactKeyAlias(std::string value) {
+    value = LowerAscii(TrimAscii(value));
+    std::string out;
+    out.reserve(value.size());
+    for (char ch : value) {
+        if (ch == '_' || ch == '-' || ch == ' ') continue;
+        out.push_back(ch);
+    }
+    return out;
+}
+
+static std::string UpperAscii(std::string value) {
+    for (char& ch : value) {
+        ch = (char)std::toupper((unsigned char)ch);
+    }
+    return value;
+}
+
+static std::string NormalizeTasketScriptKeyToken(const std::string& rawKey) {
+    std::string trimmed = TrimAscii(rawKey);
+    if (trimmed.empty()) return "";
+
+    std::string compact = CompactKeyAlias(trimmed);
+    if (compact.size() == 1 && std::isalnum((unsigned char)compact[0])) {
+        return UpperAscii(compact);
+    }
+
+    if (compact == "left" || compact == "leftarrow" || compact == "arrowleft") return "LEFT_ARROW";
+    if (compact == "right" || compact == "rightarrow" || compact == "arrowright") return "RIGHT_ARROW";
+    if (compact == "up" || compact == "uparrow" || compact == "arrowup") return "UP_ARROW";
+    if (compact == "down" || compact == "downarrow" || compact == "arrowdown") return "DOWN_ARROW";
+
+    if (compact == "ctrl" || compact == "control" || compact == "leftctrl" ||
+        compact == "ctrlleft" || compact == "leftcontrol" || compact == "controlleft" ||
+        compact == "lctrl" || compact == "lcontrol") {
+        return "CONTROL_LEFT";
+    }
+    if (compact == "rightctrl" || compact == "ctrlright" || compact == "rightcontrol" ||
+        compact == "controlright" || compact == "rctrl" || compact == "rcontrol") {
+        return "CONTROL_RIGHT";
+    }
+    if (compact == "shift" || compact == "leftshift" || compact == "shiftleft" || compact == "lshift") {
+        return "SHIFT_LEFT";
+    }
+    if (compact == "rightshift" || compact == "shiftright" || compact == "rshift") {
+        return "SHIFT_RIGHT";
+    }
+    if (compact == "alt" || compact == "leftalt" || compact == "altleft" || compact == "lalt") {
+        return "ALT_LEFT";
+    }
+    if (compact == "rightalt" || compact == "altright" || compact == "altgr" || compact == "ralt") {
+        return "ALT_GR";
+    }
+    if (compact == "win" || compact == "windows" || compact == "leftwin" || compact == "rightwin") {
+        return "WINDOWS";
+    }
+
+    if (compact == "space" || compact == "spacebar") return "SPACEBAR";
+    if (compact == "return" || compact == "enter") return "ENTER";
+    if (compact == "escape" || compact == "esc") return "ESCAPE";
+    if (compact == "backspace" || compact == "bksp") return "BACKSPACE";
+    if (compact == "delete" || compact == "del") return "DELETE";
+    if (compact == "insert" || compact == "ins") return "INSERT";
+    if (compact == "tab") return "TAB";
+    if (compact == "home") return "HOME";
+    if (compact == "end") return "END";
+    if (compact == "pageup" || compact == "pgup") return "PAGE_UP";
+    if (compact == "pagedown" || compact == "pgdn") return "PAGE_DOWN";
+
+    if (compact == "leftmouse" || compact == "mouseleft" || compact == "lmouse") return "LEFT_MOUSE";
+    if (compact == "rightmouse" || compact == "mouseright" || compact == "rmouse") return "RIGHT_MOUSE";
+    if (compact == "middlemouse" || compact == "mousemiddle" || compact == "mmouse") return "MIDDLE_MOUSE";
+
+    if (compact.rfind("f", 0) == 0 && compact.size() <= 3) {
+        bool allDigits = compact.size() > 1;
+        for (size_t i = 1; i < compact.size(); ++i) {
+            if (!std::isdigit((unsigned char)compact[i])) allDigits = false;
+        }
+        if (allDigits) return UpperAscii(compact);
+    }
+
+    return trimmed;
+}
+
+static bool TryParsePositiveInt(const std::string& raw, int& value) {
+    std::string trimmed = TrimAscii(raw);
+    if (trimmed.empty()) return false;
+    char* end = nullptr;
+    long parsed = strtol(trimmed.c_str(), &end, 10);
+    if (end == trimmed.c_str()) return false;
+    while (end && *end) {
+        if (!isspace((unsigned char)*end)) return false;
+        ++end;
+    }
+    if (parsed < 1) return false;
+    if (parsed > 1000) parsed = 1000;
+    value = (int)parsed;
+    return true;
+}
+
+static bool AppendModifierRepeatToken(
+    const std::vector<std::string>& args,
+    std::vector<std::string>& actions,
+    std::wstring* status) {
+    if (args.size() < 2) {
+        if (status) *status = L"{ctrlmod key count} or {shiftmod key count} needs a key.";
+        return false;
+    }
+
+    std::string head = LowerAscii(TrimAscii(args[0]));
+    std::string modifier;
+    std::string namePrefix;
+    if (head == "ctrlmod" || head == "controlmod") {
+        modifier = "CONTROL_LEFT";
+        namePrefix = "RegistryHubCtrlMod";
+    } else if (head == "shiftmod") {
+        modifier = "SHIFT_LEFT";
+        namePrefix = "RegistryHubShiftMod";
+    } else {
+        return false;
+    }
+
+    std::string target = NormalizeTasketScriptKeyToken(args[1]);
+    if (target.empty()) {
+        if (status) *status = L"Modifier token target key is empty.";
+        return false;
+    }
+
+    int count = 1;
+    if (args.size() >= 3 && !TryParsePositiveInt(args[2], count)) {
+        if (status) *status = L"Modifier token repeat count must be a positive integer.";
+        return false;
+    }
+
+    std::vector<std::vector<std::string>> steps;
+    steps.reserve((size_t)count);
+    for (int i = 0; i < count; ++i) {
+        steps.push_back({modifier, target});
+    }
+
+    actions.push_back(BuildKeysSequenceActionJson(namePrefix + "_" + target + "_" + std::to_string(count), steps, 120, 90));
+    actions.push_back(BuildWaitActionJson(0.05));
+    return true;
+}
+
 static bool AppendPasteListActions(
     const std::vector<std::string>& keys,
     bool pressEnter,
@@ -4974,7 +5177,7 @@ static bool AppendZoneFlowToken(const std::vector<std::string>& args, std::vecto
         return false;
     }
 
-    auto zoneSlotOf = [](const std::string& key) { return PasteBufferSlotFromCommand(key); };
+    auto zoneSlotOf = [](const std::string& key) { return PasteBufferSlotFromCommand(LowerAscii(key)); };
     auto flowOf = [](const std::string& key) { return ZoneFlowFromCommand(LowerAscii(key), true); };
 
     int zoneSlot = -1;
@@ -5062,11 +5265,11 @@ static bool ApplyRegistryHubSetToken(const std::string& token, std::wstring* sta
         }
     }
     if (target == "zone" && args.size() >= 3) {
-        int slot = PasteBufferSlotFromCommand(args[1]);
+        int slot = PasteBufferSlotFromCommand(LowerAscii(args[1]));
         POINT start = {}, end = {};
         size_t pos = body.find(args[2]);
         if (slot >= 0 && pos != std::string::npos &&
-            ParseZoneBufferCoordinates(Utf8ToWString(ExpandRegistryHubValueReferences(TrimAscii(body.substr(pos)))), start, end)) {
+            ParseZoneCoordinatesOrPointRefs(Utf8ToWString(ExpandRegistryHubValueReferences(TrimAscii(body.substr(pos)))), start, end)) {
             g_zoneBuffers[slot].set = true;
             g_zoneBuffers[slot].start = start;
             g_zoneBuffers[slot].end = end;
@@ -5074,12 +5277,11 @@ static bool ApplyRegistryHubSetToken(const std::string& token, std::wstring* sta
         }
     }
     if (target == "point" && args.size() >= 3) {
-        int point = atoi(args[1].c_str()) - 3;
+        int point = RegistryPointIndexFromCommand(args[1]);
         POINT parsed = {};
-        POINT ignored = {};
         size_t pos = body.find(args[2]);
-        if (point >= 0 && point < 3 && pos != std::string::npos &&
-            ParseZoneBufferCoordinates(Utf8ToWString(ExpandRegistryHubValueReferences(TrimAscii(body.substr(pos))) + ",0,0"), parsed, ignored)) {
+        if (point >= 0 && point < REGISTRY_POINT_COUNT && pos != std::string::npos &&
+            ParsePointCoordinatesOrReference(Utf8ToWString(ExpandRegistryHubValueReferences(TrimAscii(body.substr(pos)))), parsed)) {
             g_registryPointSet[point] = true;
             g_registryPoints[point] = parsed;
             return true;
@@ -5146,8 +5348,8 @@ static bool CompileRegistryHubToken(
         return true;
     }
     if (lower.rfind("point ", 0) == 0) {
-        int idx = atoi(token.c_str() + 6) - 3;
-        if (idx < 0 || idx > 2 || !g_registryPointSet[idx]) {
+        int idx = RegistryPointIndexFromCommand(token.substr(6));
+        if (idx < 0 || idx >= REGISTRY_POINT_COUNT || !g_registryPointSet[idx]) {
             if (status) *status = L"Point token references an unset point.";
             return false;
         }
@@ -5200,6 +5402,10 @@ static bool CompileRegistryHubToken(
     if (lower.rfind("shell ", 0) == 0) {
         return AppendShellAliasToken(SplitScriptArgs(token.substr(6)), actions, status);
     }
+    if (lower.rfind("ctrlmod ", 0) == 0 || lower.rfind("controlmod ", 0) == 0 ||
+        lower.rfind("shiftmod ", 0) == 0) {
+        return AppendModifierRepeatToken(SplitScriptArgs(token), actions, status);
+    }
     if (lower.rfind("system ", 0) == 0) {
         if (status) *status = L"{system ...} is disabled in Registry Hub. Use Tasket keyboard/paste primitives instead.";
         return false;
@@ -5247,7 +5453,7 @@ static bool CompileRegistryHubToken(
         if (allTextKeys) return AppendPasteListActions(args, false, pasteFocusClickEnabled, actions, status);
 
         std::vector<std::string> keyStep;
-        for (const auto& arg : args) keyStep.push_back(arg);
+        for (const auto& arg : args) keyStep.push_back(NormalizeTasketScriptKeyToken(arg));
         actions.push_back(BuildKeysSequenceActionJson("RegistryHubKeys", {keyStep}, 200, 100));
         return true;
     }
@@ -6340,7 +6546,7 @@ LRESULT CALLBACK CoordPanelWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
                 AppendMenuW(hm, MF_STRING, IDM_CLICK_RIGHT, L"Manual Right Click (Shift+Alt+5)");
                 AppendMenuW(hm, MF_STRING, IDM_CLICK_MIDDLE, L"Manual Middle Click (Shift+Alt+6)");
                 AppendMenuW(hm, MF_STRING, IDM_STOP_ALL_TASKET, L"Stop All Tasket Tasks (Shift+Alt+7)");
-                AppendMenuW(hm, MF_STRING, IDM_VIEW_TOGGLES, L"Display Toggles (Hub -> 1)");
+                AppendMenuW(hm, MF_STRING, IDM_VIEW_TOGGLES, L"Display Toggles (Hub -> Q)");
                 AppendMenuW(hm, MF_STRING, IDM_REGISTRY_HUB, L"Registry Hub (Shift+Alt+2)");
                 AppendMenuW(hm, MF_STRING, IDM_SAVE_CURSOR, L"Save Cursor (Shift+Alt+0)");
                 AppendMenuW(hm, MF_SEPARATOR, 0, nullptr);
@@ -6849,7 +7055,7 @@ LRESULT CALLBACK ViewTogglesDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         case WM_COMMAND:
             if (LOWORD(wParam) == IDC_EDIT_VIEW_VALUE && HIWORD(wParam) == EN_CHANGE) {
                 std::wstring text = DialogText(hwnd, IDC_EDIT_VIEW_VALUE);
-                if (text.size() == 1 && wcschr(L"zZxXcCvV", text[0])) {
+                if (text.size() == 1 && wcschr(L"zZxXcCkKvV", text[0])) {
                     RunViewToggleCommand(hwnd, text);
                 }
                 return TRUE;
@@ -7032,8 +7238,8 @@ static std::string RegistryHubStateToText() {
     for (int i = 0; i < 4; ++i) {
         out << "---VAR " << (char)RegistryVarKey(i) << "---\n" << WStringToUtf8(g_registryVars[i]) << "\n";
     }
-    for (int i = 0; i < 3; ++i) {
-        out << "---POINT " << (i + 3) << "---\n";
+    for (int i = 0; i < REGISTRY_POINT_COUNT; ++i) {
+        out << "---POINT " << (i + 1) << "---\n";
         if (g_registryPointSet[i]) out << g_registryPoints[i].x << "," << g_registryPoints[i].y;
         out << "\n";
     }
@@ -7155,6 +7361,7 @@ static std::string RegistryHubEnvironmentToText() {
     WriteRegistryHubExportLine(out, "CoordinatePanelVisible", g_coordPanelVisible ? "1" : "0");
     WriteRegistryHubExportLine(out, "KeyHudVisible", g_keyDisplayVisible ? "1" : "0");
     WriteRegistryHubExportLine(out, "GridVisible", g_gridVisible ? "1" : "0");
+    WriteRegistryHubExportLine(out, "CoordinatesOnlyMode", g_coordinatesOnlyMode ? "1" : "0");
 
     for (int i = 0; i < 4; ++i) {
         char key = (char)RegistryVarKey(i);
@@ -7169,8 +7376,8 @@ static std::string RegistryHubEnvironmentToText() {
         WriteRegistryHubExportLine(out, std::string("Zone") + key + "Set", g_zoneBuffers[i].set ? "1" : "0");
         WriteRegistryHubExportLine(out, std::string("Zone") + key, ZoneValueUtf8(i));
     }
-    for (int i = 0; i < 3; ++i) {
-        int pointNumber = i + 3;
+    for (int i = 0; i < REGISTRY_POINT_COUNT; ++i) {
+        int pointNumber = i + 1;
         WriteRegistryHubExportLine(out, "Point" + std::to_string(pointNumber) + "Set", g_registryPointSet[i] ? "1" : "0");
         WriteRegistryHubExportLine(out, "Point" + std::to_string(pointNumber), PointValueUtf8(i));
     }
@@ -7223,6 +7430,7 @@ static bool ImportRegistryHubEnvironment(std::wstring* status) {
         else if (key == "coordinatepanelvisible") g_coordPanelVisible = ParseRegistryHubBoolValue(value);
         else if (key == "keyhudvisible") g_keyDisplayVisible = ParseRegistryHubBoolValue(value);
         else if (key == "gridvisible") g_gridVisible = ParseRegistryHubBoolValue(value);
+        else if (key == "coordinatesonlymode") g_coordinatesOnlyMode = ParseRegistryHubBoolValue(value);
         else if (key.size() == 4 && key.rfind("var", 0) == 0) {
             int slot = RegistryVarIndexFromCommand(std::string(1, key[3]));
             if (slot >= 0) g_registryVars[slot] = wide;
@@ -7240,13 +7448,13 @@ static bool ImportRegistryHubEnvironment(std::wstring* status) {
                 g_zoneBuffers[slot].start = start;
                 g_zoneBuffers[slot].end = end;
             }
-        } else if (key.size() == 9 && key.rfind("point", 0) == 0 && key.substr(6) == "set") {
-            int point = key[5] - '3';
-            if (point >= 0 && point < 3) g_registryPointSet[point] = ParseRegistryHubBoolValue(value);
-        } else if (key.size() == 6 && key.rfind("point", 0) == 0) {
-            int point = key[5] - '3';
+        } else if (key.rfind("point", 0) == 0 && key.size() > 8 && key.substr(key.size() - 3) == "set") {
+            int point = RegistryPointIndexFromCommand(key.substr(0, key.size() - 3));
+            if (point >= 0 && point < REGISTRY_POINT_COUNT) g_registryPointSet[point] = ParseRegistryHubBoolValue(value);
+        } else if (key.rfind("point", 0) == 0) {
+            int point = RegistryPointIndexFromCommand(key);
             POINT parsed = {};
-            if (point >= 0 && point < 3 && ParsePointCoordinates(wide, parsed)) {
+            if (point >= 0 && point < REGISTRY_POINT_COUNT && ParsePointCoordinates(wide, parsed)) {
                 g_registryPointSet[point] = true;
                 g_registryPoints[point] = parsed;
             }
@@ -7322,9 +7530,9 @@ static void LoadRegistryHubState() {
             g_zoneBuffers[i].end = end;
         }
     }
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < REGISTRY_POINT_COUNT; ++i) {
         POINT pt = {};
-        if (ParsePointCoordinates(section("---POINT " + std::to_string(i + 3) + "---"), pt)) {
+        if (ParsePointCoordinates(section("---POINT " + std::to_string(i + 1) + "---"), pt)) {
             g_registryPointSet[i] = true;
             g_registryPoints[i] = pt;
         }
@@ -7335,7 +7543,7 @@ static void LoadRegistryHubState() {
 static void ClearRegistryHubState() {
     g_registryScript.clear();
     for (auto& value : g_registryVars) value.clear();
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < REGISTRY_POINT_COUNT; ++i) {
         g_registryPointSet[i] = false;
         g_registryPoints[i] = {0, 0};
     }
@@ -7359,7 +7567,7 @@ static std::wstring RegistryHubHelpText() {
         L"The normal verb is Play. Low-level .scht saving exists only for debugging and future-proofing against Tasket format changes.\r\n\r\n"
         L"Router Keys Before Opening The Script Editor\r\n"
         L"--------------------------------------------\r\n"
-        L"1  Open display toggles. In that screen, Z toggles the crosshair window, X toggles gridlines, and C leaves only cursor coordinates.\r\n"
+        L"Q  Open the visibility/display toggles. In that screen, Z toggles the target, X toggles gridlines, C leaves only cursor coordinates, and K toggles key visibility.\r\n"
         L"Z  Open the workflow script editor.\r\n"
         L"P  Play the current workflow immediately, then hide the Registry Hub window on success.\r\n"
         L"L  Clear Registry Hub script-local state. Paste buffers and zone buffers remain available.\r\n"
@@ -7371,8 +7579,8 @@ static std::wstring RegistryHubHelpText() {
         L"C  Set shell alias C. Blank resets to cmd.\r\n"
         L"G  Set shell alias G. Example contents: uv run python\r\n"
         L"A/S/D/F  Set script-local multiline variables. Shift+Enter adds lines; Enter saves.\r\n"
-        L"N  Set zone buffers Z/X/C/V as x1,y1,x2,y2.\r\n"
-        L"3/4/5  Set important points 3, 4, and 5 as x,y.\r\n"
+        L"N  Set zone buffers Z/X/C/V as x1,y1,x2,y2, as two point references such as 1,2, or by copying another zone slot.\r\n"
+        L"1/2/3/4/5/6  Set visible important points as x,y. Type S while editing a point to save the current cursor coordinate.\r\n"
         L"Esc  Close and preserve state.\r\n\r\n"
         L"Script Editor Buttons\r\n"
         L"---------------------\r\n"
@@ -7381,10 +7589,18 @@ static std::wstring RegistryHubHelpText() {
         L"Import     Reads a plaintext environment file from the configured import path.\r\n"
         L"Save Schts Writes the compiled Tasket .scht file and manifest to Desktop\\temps for inspection.\r\n"
         L"Play       Schedules the compiled Tasket flow through tasket-httpd.\r\n\r\n"
+        L"Visibility Toggles From Q\r\n"
+        L"-------------------------\r\n"
+        L"Q opens the visibility screen from the Registry Hub router. It is the only router key for display toggles.\r\n"
+        L"Inside Q, Z toggles the target/crosshair window.\r\n"
+        L"Inside Q, X toggles the cursor-centered gridlines.\r\n"
+        L"Inside Q, C toggles coordinates-only mode, leaving the coordinate tag while hiding target/grid drawing.\r\n"
+        L"Inside Q, K toggles the key-press HUD visibility. This mirrors the tray option without leaving the keyboard flow.\r\n\r\n"
         L"Text Buffers And Variables\r\n"
         L"--------------------------\r\n"
         L"A/S/D/F are Registry Hub script variables. They are edited from the Registry Hub router.\r\n"
         L"Z/X/C/V are the main paste buffers owned by Shift+Alt+1. Registry Hub can read or set them, but it does not replace that menu.\r\n"
+        L"Zone buffers also use Z/X/C/V names, but they are separate physical coordinate ranges, not stored paste text.\r\n"
         L"$A, $S, $D, $F, $Z, $X, $C, and $V resolve to the current buffer text inside {set ...} and condition tokens.\r\n"
         L"{A} or {A,Z,C} pastes listed buffers with small Tasket waits. By default it does not click first, so focused shells stay focused.\r\n"
         L"{enter A,Z} pastes the listed buffers and presses Enter afterward. It also defaults to no-click.\r\n"
@@ -7398,7 +7614,11 @@ static std::wstring RegistryHubHelpText() {
         L"{set paste Z literal text}\r\n"
         L"{set Z $A}\r\n"
         L"{set zone Z 100,200,500,600}\r\n"
+        L"{set zone Z 1,2} still sets zone slot Z; the two-value comma list means start at point 1 and end at point 2.\r\n"
+        L"{set zone Z X} copies existing physical zone X into physical zone Z. Zone slots remain only Z/X/C/V.\r\n"
         L"{set point 3 1200,700}\r\n"
+        L"{set point 4 3} copies important point 3 into important point 4.\r\n"
+        L"{set point 5 $3} also works; $1 through $16 resolve to important-point coordinates.\r\n"
         L"{set registry %USERPROFILE%\\Desktop\\New Text Document.txt}\r\n"
         L"{set shell X bash}\r\n"
         L"{set shell C cmd}\r\n"
@@ -7436,12 +7656,15 @@ static std::wstring RegistryHubHelpText() {
         L"Pointer And Click Tokens\r\n"
         L"------------------------\r\n"
         L"{wait 200} waits 200 milliseconds.\r\n"
-        L"{point 3}, {point 4}, and {point 5} move through the canonical Tasket cursor-move template.\r\n"
+        L"{point 1} through {point 16} move through the canonical Tasket cursor-move template when that point is set.\r\n"
         L"{click} or {left} emits a left-click action.\r\n"
         L"{click on} / {click off} changes whether buffer paste tokens click before pasting.\r\n"
         L"{right} emits a right-click action.\r\n"
         L"{middle} emits a middle-click action.\r\n"
-        L"{ALT_LEFT F4} and similar unknown brace tokens become Tasket key chords.\r\n\r\n"
+        L"{ALT_LEFT F4} and similar unknown brace tokens become Tasket key chords.\r\n"
+        L"Chord aliases are normalized before JSON output: left/right/up/down become arrow keys; LEFT_SHIFT, left_shift, shift_left, ctrl, alt, win, esc, pgdn, and similar names become Tasket names.\r\n"
+        L"{ctrlmod right 3} emits Ctrl+Right three times. {controlmod right 3} is the same alias.\r\n"
+        L"{shiftmod up 3} emits Shift+Up three times. Counts are clamped to a sane maximum.\r\n\r\n"
         L"Shell Tokens\r\n"
         L"------------\r\n"
         L"{powershell} opens Windows Terminal / PowerShell Preview with Win+Alt+Space, waits, then presses Enter.\r\n"
@@ -7457,6 +7680,8 @@ static std::wstring RegistryHubHelpText() {
         L"Use Save Schts to inspect the exact generated schedule before relying on a complex workflow.\r\n\r\n"
         L"Zone Tokens\r\n"
         L"-----------\r\n"
+        L"Zone buffers are physical coordinate ranges. A valid zone is either x1,y1,x2,y2, two point references, or a copy of another zone.\r\n"
+        L"Zone slot names are Z/X/C/V. Uppercase and lowercase are accepted in script tokens.\r\n"
         L"Zone methods match the circle-zone menu:\r\n"
         L"Z = image snip/copy flow.\r\n"
         L"X = text extractor flow.\r\n"
@@ -7469,11 +7694,12 @@ static std::wstring RegistryHubHelpText() {
         L"Image capture cannot be saved into a text paste buffer, so zonebuf supports X, C, and V only.\r\n\r\n"
         L"Export / Import File\r\n"
         L"--------------------\r\n"
-        L"The plaintext environment export stores registry path, import/export paths, shell aliases, script text, A/S/D/F vars, Z/X/C/V paste buffers, zones, points, visibility toggles, and last status.\r\n"
+        L"The plaintext environment export stores registry path, import/export paths, shell aliases, script text, A/S/D/F vars, Z/X/C/V paste buffers, zone buffers, points 1-16, Q visibility toggles, coordinates-only mode, and last status.\r\n"
         L"Blank values are intentional. They make the file stable and easy to diff or edit by hand.\r\n\r\n"
         L"Examples\r\n"
         L"--------\r\n"
         L"{powershell}{wait 700}{paste A}{ENTER}{wait 300}{ALT_LEFT F4}\r\n"
+        L"{powershell}{wait 700}{paste A}{ctrlmod right 3}{shiftmod up 2}{ALT_LEFT F4}\r\n"
         L"{set A $Z}{if A contains waterfront}{enter A}{else}{enter D}{endif}\r\n"
         L"{set zone Z 100,100,600,400}{zonebuf Z,C,V}{if V contains approved}{play FollowupTask}{endif}\r\n"
         L"{if saved-task OpenDailyFocus exists}{play OpenDailyFocus}{endif}\r\n"
@@ -7564,7 +7790,7 @@ static void UpdateRegistryHubDialogText(HWND hwnd) {
         case RegistryHubStage::Command:
             SetDlgItemTextW(hwnd, IDC_STATIC_REGISTRY_HUB_PROMPT, L"Registry Hub");
             SetDlgItemTextW(hwnd, IDC_STATIC_REGISTRY_HUB_HINT,
-                L"1 view | Z script | P play | E/I paths | L clear | H help | R registry | X/C/G shells | A/S/D/F vars | N zones | 3/4/5 pts");
+                L"Q view | Z script | P play | E/I paths | L clear | H help | R registry | X/C/G shells | A/S/D/F vars | N zones | 1-6 pts");
             SetDlgItemTextW(hwnd, IDC_STATIC_REGISTRY_HUB_STATUS,
                 g_registryHubState.status.empty() ? L"Type one command key. Escape closes and preserves state." : g_registryHubState.status.c_str());
             SetDlgItemTextW(hwnd, IDC_EDIT_REGISTRY_HUB_VALUE, L"");
@@ -7651,8 +7877,8 @@ static void UpdateRegistryHubDialogText(HWND hwnd) {
         case RegistryHubStage::ZoneEdit: {
             std::wstring prompt = ZoneBufferSlotLabel(g_registryHubState.activeZoneSlot);
             SetDlgItemTextW(hwnd, IDC_STATIC_REGISTRY_HUB_PROMPT, prompt.c_str());
-            SetDlgItemTextW(hwnd, IDC_STATIC_REGISTRY_HUB_HINT, L"Enter x1,y1,x2,y2 and press Enter.");
-            SetDlgItemTextW(hwnd, IDC_STATIC_REGISTRY_HUB_STATUS, L"Use as {zone Z,X}, {zonebuf Z,X,V}, etc.");
+            SetDlgItemTextW(hwnd, IDC_STATIC_REGISTRY_HUB_HINT, L"Enter x1,y1,x2,y2, pointA,pointB, or another zone slot.");
+            SetDlgItemTextW(hwnd, IDC_STATIC_REGISTRY_HUB_STATUS, L"A zone needs four coords; two items mean points, one Z/X/C/V means copy that zone.");
             std::wstring value = g_zoneBuffers[g_registryHubState.activeZoneSlot].set ?
                 FormatZoneBufferCoordinates(g_zoneBuffers[g_registryHubState.activeZoneSlot].start, g_zoneBuffers[g_registryHubState.activeZoneSlot].end) : L"";
             SetDlgItemTextW(hwnd, IDC_EDIT_REGISTRY_HUB_VALUE, value.c_str());
@@ -7660,10 +7886,10 @@ static void UpdateRegistryHubDialogText(HWND hwnd) {
         }
         case RegistryHubStage::PointEdit: {
             std::wstring prompt = L"Important point ";
-            prompt += std::to_wstring(g_registryHubState.activePoint + 3);
+            prompt += std::to_wstring(g_registryHubState.activePoint + 1);
             SetDlgItemTextW(hwnd, IDC_STATIC_REGISTRY_HUB_PROMPT, prompt.c_str());
-            SetDlgItemTextW(hwnd, IDC_STATIC_REGISTRY_HUB_HINT, L"Enter x,y and press Enter.");
-            SetDlgItemTextW(hwnd, IDC_STATIC_REGISTRY_HUB_STATUS, L"Use as {point 3}, {point 4}, or {point 5}.");
+            SetDlgItemTextW(hwnd, IDC_STATIC_REGISTRY_HUB_HINT, L"Enter x,y and press Enter. Type S to save current cursor position.");
+            SetDlgItemTextW(hwnd, IDC_STATIC_REGISTRY_HUB_STATUS, L"Use as {point N}, {set point N ...}, or {set zone Z 1,2}.");
             std::wstring value;
             if (g_registryPointSet[g_registryHubState.activePoint]) {
                 value = Utf8ToWString(PointValueUtf8(g_registryHubState.activePoint));
@@ -7714,8 +7940,8 @@ static bool SaveRegistryHubCurrentStage(HWND hwnd) {
             break;
         case RegistryHubStage::ZoneEdit: {
             POINT start = {}, end = {};
-            if (!ParseZoneBufferCoordinates(value, start, end)) {
-                SetDlgItemTextW(hwnd, IDC_STATIC_REGISTRY_HUB_STATUS, L"Expected x1,y1,x2,y2.");
+            if (!ParseZoneCoordinatesOrPointRefs(value, start, end)) {
+                SetDlgItemTextW(hwnd, IDC_STATIC_REGISTRY_HUB_STATUS, L"Expected x1,y1,x2,y2 or pointA,pointB.");
                 return false;
             }
             int slot = g_registryHubState.activeZoneSlot;
@@ -7728,12 +7954,15 @@ static bool SaveRegistryHubCurrentStage(HWND hwnd) {
         }
         case RegistryHubStage::PointEdit: {
             POINT point = {};
-            if (!ParsePointCoordinates(value, point)) {
+            std::wstring trimmed = TrimWide(value);
+            if (_wcsicmp(trimmed.c_str(), L"s") == 0 || _wcsicmp(trimmed.c_str(), L"save") == 0 || _wcsicmp(trimmed.c_str(), L"cursor") == 0) {
+                GetCursorPos(&point);
+            } else if (!ParsePointCoordinatesOrReference(value, point)) {
                 SetDlgItemTextW(hwnd, IDC_STATIC_REGISTRY_HUB_STATUS, L"Expected x,y.");
                 return false;
             }
             int slot = g_registryHubState.activePoint;
-            if (slot >= 0 && slot < 3) {
+            if (slot >= 0 && slot < REGISTRY_POINT_COUNT) {
                 g_registryPointSet[slot] = true;
                 g_registryPoints[slot] = point;
             }
@@ -7792,7 +8021,7 @@ static bool RunRegistryHubRouterCommand(HWND hwnd, const std::wstring& raw) {
         UpdateRegistryHubDialogText(hwnd);
         return true;
     }
-    if (command == "1" || command == "view" || command == "display") {
+    if (command == "q" || command == "view" || command == "display") {
         CloseRegistryHubDialog(hwnd);
         StartViewToggles();
         return true;
@@ -7821,10 +8050,8 @@ static bool RunRegistryHubRouterCommand(HWND hwnd, const std::wstring& raw) {
     else if (command == "n") g_registryHubState.stage = RegistryHubStage::ZoneSelect;
     else {
         int varSlot = RegistryVarIndexFromCommand(command);
-        int pointSlot = -1;
-        if (command == "3") pointSlot = 0;
-        if (command == "4") pointSlot = 1;
-        if (command == "5") pointSlot = 2;
+        int pointSlot = RegistryPointIndexFromCommand(command);
+        if (pointSlot >= REGISTRY_ROUTER_POINT_COUNT) pointSlot = -1;
         if (varSlot >= 0) {
             g_registryHubState.stage = RegistryHubStage::VarEdit;
             g_registryHubState.activeVar = varSlot;
@@ -7968,8 +8195,15 @@ LRESULT CALLBACK RegistryHubDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
                     g_registryHubState.stage == RegistryHubStage::PasteBufferSelect ||
                     g_registryHubState.stage == RegistryHubStage::ZoneSelect) {
                     std::wstring text = DialogText(hwnd, IDC_EDIT_REGISTRY_HUB_VALUE);
-                    if (text.size() == 1 && wcschr(L"zZpPeEiIlLhH?rRxXcCgGaAsSdDfFbBnN1345vV", text[0])) {
+                    if (text.size() == 1 && wcschr(L"zZpPqQeEiIlLhH?rRxXcCgGaAsSdDfFbBnN123456vV", text[0])) {
                         RunRegistryHubCommand(hwnd, text);
+                    }
+                    return TRUE;
+                }
+                if (g_registryHubState.stage == RegistryHubStage::PointEdit) {
+                    std::wstring text = DialogText(hwnd, IDC_EDIT_REGISTRY_HUB_VALUE);
+                    if (text.size() == 1 && (text[0] == L's' || text[0] == L'S')) {
+                        SaveRegistryHubCurrentStage(hwnd);
                     }
                     return TRUE;
                 }
