@@ -1,8 +1,8 @@
-# Macrohelp v2.0
+# Macrohelp - Native JSON-only Branch
 
 A native Windows overlay tool with cursor crosshairs, real-time coordinate tracking, and live key press visualization. Inspired by Microsoft PowerToys Mouse Pointer Crosshairs, built for macro recording with Tasket-compatible JSON output.
 
-## What's New in v2.0
+## Features
 
 - **Live Key Display** - See every key you press rendered in real-time beside your cursor
 - **PromptFont Integration** - Beautiful keyboard glyph icons (by Shinmera) for all keys
@@ -11,7 +11,7 @@ A native Windows overlay tool with cursor crosshairs, real-time coordinate track
 - **Per-Pixel Alpha Blending** - GDI+ rendering with `UpdateLayeredWindow` for smooth transparency
 - **VS 2022/2025 Hardened** - `/permissive-` strict conformance, modern C++17
 
-## Features
+---
 
 - **Full-Screen Crosshair Overlay** - Red lines + yellow center dot across all monitors
 - **Real-Time Coordinates** - Live X/Y position at 60+ FPS in a dark themed panel
