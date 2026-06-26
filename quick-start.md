@@ -38,4 +38,19 @@ Get-Process CursorOverlay -ErrorAction SilentlyContinue | Stop-Process -Force
 Get-Process tasket-httpd -ErrorAction SilentlyContinue | Stop-Process -Force
 ```
 
+## Adjust DPI manually (if needed, 4k defaults to 2+)
+
+```powershell
+$env:MACROHELP_UI_SCALE = "2.25"
+Start-Process "C:\..path\to\CursorOverlay.exe\
+```
+
+For persistance:
+
+```powershell
+[Environment]::SetEnvironmentVariable("MACROHELP_UI_SCALE", "2.25", "User")
+# Then restart. To fully remove it later:
+[Environment]::SetEnvironmentVariable("MACROHELP_UI_SCALE", $null, "User")
+```
+
 Macrohelp also exposes `Shift+Alt+7` as the emergency stop hotkey for active Tasket tasks through the daemon.
