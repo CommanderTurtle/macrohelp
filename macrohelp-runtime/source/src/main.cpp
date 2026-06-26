@@ -61,6 +61,7 @@ static constexpr int      CENTER_DOT_R      = 4;
 static constexpr COLORREF CENTER_DOT_COLOR  = RGB(255, 200, 0);
 static constexpr COLORREF COLORKEY          = RGB(0, 0, 0);
 static constexpr int      DEFAULT_UPDATE_MS = 16;
+static constexpr int      MIN_CROSSHAIR_UPDATE_MS = 8;
 static constexpr int      COORD_PANEL_CLIENT_W = 760;
 static constexpr int      COORD_PANEL_CLIENT_H = 76;
 static constexpr int      COORD_PANEL_VISIBLE_W = 760;
@@ -72,6 +73,7 @@ static constexpr UINT_PTR VIEW_TOGGLE_WATCH_TIMER = 4704;
 static constexpr UINT_PTR PASTE_BUFFER_WATCH_TIMER = 4705;
 static constexpr UINT_PTR REGISTRY_HUB_WATCH_TIMER = 4706;
 static constexpr int      GRID_SPACING_PX = 120;
+static constexpr int      PASTE_BUFFER_MAX_VISIBLE_LINES = 50;
 
 // Key display
 static constexpr int      KEY_DISPLAY_W     = 420;
@@ -486,6 +488,7 @@ int         g_screenW = 0, g_screenH = 0;
 int         g_updateMs = DEFAULT_UPDATE_MS;
 int         g_displayRefreshHz = 60;
 bool        g_timerResolutionActive = false;
+double      g_uiScale = 1.0;
 
 // Shared dialog data
 POINT       g_savedCursorPos = {0, 0};
@@ -1749,7 +1752,8 @@ void WriteBackendState(bool force) {
     f << "  \"screen\": {\"x\": " << g_screenX << ", \"y\": " << g_screenY
       << ", \"w\": " << g_screenW << ", \"h\": " << g_screenH << "},\n";
     f << "  \"display\": {\"refresh_hz\": " << g_displayRefreshHz
-      << ", \"update_ms\": " << g_updateMs << "},\n";
+      << ", \"update_ms\": " << g_updateMs
+      << ", \"ui_scale\": " << std::fixed << std::setprecision(2) << g_uiScale << std::defaultfloat << "},\n";
     f << "  \"visible\": {\"crosshair\": " << (g_crosshairVisible ? "true" : "false")
       << ", \"coord_panel\": " << (g_coordPanelVisible ? "true" : "false")
       << ", \"key_display\": " << (g_keyDisplayVisible ? "true" : "false")
@@ -2064,25 +2068,135 @@ static bool MouseMovedPastAnchor(POINT anchor, DWORD openedTickMs, DWORD graceMs
     return dx > tolerance || dy > tolerance;
 }
 
+static int UiPx(int value) {
+    if (value == 0) return 0;
+    int scaled = (int)std::lround((double)value * g_uiScale);
+    if (value > 0 && scaled < 1) return 1;
+    if (value < 0 && scaled > -1) return -1;
+    return scaled;
+}
+
+static int UiFontPx(int value) {
+    return std::max(1, UiPx(value));
+}
+
+static double ReadUiScaleOverride() {
+    wchar_t value[64] = {};
+    DWORD len = GetEnvironmentVariableW(L"MACROHELP_UI_SCALE", value, (DWORD)(sizeof(value) / sizeof(value[0])));
+    if (len == 0 || len >= (DWORD)(sizeof(value) / sizeof(value[0]))) return 0.0;
+
+    wchar_t* end = nullptr;
+    double parsed = wcstod(value, &end);
+    if (end == value || parsed <= 0.0) return 0.0;
+    return std::clamp(parsed, 0.75, 3.0);
+}
+
+static double DetectUiScale() {
+    double overrideScale = ReadUiScaleOverride();
+    if (overrideScale > 0.0) return overrideScale;
+
+    int dpi = 96;
+    HDC hdc = GetDC(nullptr);
+    if (hdc) {
+        int detected = GetDeviceCaps(hdc, LOGPIXELSX);
+        if (detected >= 72 && detected <= 768) dpi = detected;
+        ReleaseDC(nullptr, hdc);
+    }
+
+    double scale = std::max(1.0, (double)dpi / 96.0);
+    if (g_screenW >= 3000 || g_screenH >= 1800) scale = std::max(scale, 2.0);
+    if (g_screenW >= 5000 || g_screenH >= 2800) scale = std::max(scale, 2.5);
+    return std::clamp(scale, 1.0, 3.0);
+}
+
+static BOOL CALLBACK ApplyDialogUiFontToChild(HWND child, LPARAM fontParam) {
+    HFONT font = (HFONT)fontParam;
+    SendMessageW(child, WM_SETFONT, (WPARAM)font, TRUE);
+
+    wchar_t className[32] = {};
+    GetClassNameW(child, className, (int)(sizeof(className) / sizeof(className[0])));
+    if (_wcsicmp(className, L"Edit") == 0) {
+        SendMessageW(child, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
+                     MAKELPARAM(UiPx(8), UiPx(8)));
+    }
+    return TRUE;
+}
+
+static void ApplyDialogUiFont(HWND hwnd, HFONT font = nullptr) {
+    if (!hwnd) return;
+    HFONT effectiveFont = font ? font : g_hFontCoord;
+    if (!effectiveFont) return;
+    SendMessageW(hwnd, WM_SETFONT, (WPARAM)effectiveFont, TRUE);
+    EnumChildWindows(hwnd, ApplyDialogUiFontToChild, (LPARAM)effectiveFont);
+}
+
+static BOOL CALLBACK ScaleResourceDialogChild(HWND child, LPARAM parentParam) {
+    HWND parent = (HWND)parentParam;
+    if (GetParent(child) != parent) return TRUE;
+
+    RECT r = {};
+    GetWindowRect(child, &r);
+    POINT pts[2] = {{r.left, r.top}, {r.right, r.bottom}};
+    MapWindowPoints(HWND_DESKTOP, parent, pts, 2);
+
+    int x = UiPx(pts[0].x);
+    int y = UiPx(pts[0].y);
+    int w = UiPx(pts[1].x - pts[0].x);
+    int h = UiPx(pts[1].y - pts[0].y);
+    MoveWindow(child, x, y, w, h, TRUE);
+    return TRUE;
+}
+
+static void ScaleResourceDialogFromCurrentLayout(HWND hwnd) {
+    if (!hwnd || g_uiScale <= 1.05) return;
+
+    RECT wr = {};
+    RECT client = {};
+    GetWindowRect(hwnd, &wr);
+    GetClientRect(hwnd, &client);
+
+    int oldW = client.right - client.left;
+    int oldH = client.bottom - client.top;
+    int newClientW = UiPx(oldW);
+    int newClientH = UiPx(oldH);
+    RECT target = {0, 0, newClientW, newClientH};
+    DWORD style = (DWORD)GetWindowLongPtrW(hwnd, GWL_STYLE);
+    DWORD exStyle = (DWORD)GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+    AdjustWindowRectEx(&target, style, FALSE, exStyle);
+
+    int newW = target.right - target.left;
+    int newH = target.bottom - target.top;
+    int x = wr.left - (newW - (wr.right - wr.left)) / 2;
+    int y = wr.top - (newH - (wr.bottom - wr.top)) / 2;
+    SetWindowPos(hwnd, HWND_TOPMOST, x, y, newW, newH, SWP_NOACTIVATE);
+
+    EnumChildWindows(hwnd, ScaleResourceDialogChild, (LPARAM)hwnd);
+}
+
+static int KeyDisplayW() { return UiPx(KEY_DISPLAY_W); }
+static int KeyDisplayH() { return UiPx(KEY_DISPLAY_H); }
+static int CoordPanelW() { return UiPx(COORD_PANEL_CLIENT_W); }
+static int CoordPanelH() { return UiPx(COORD_PANEL_CLIENT_H); }
+
 static void LayoutCircleDialog(HWND hwnd) {
     if (!hwnd) return;
 
-    int width = 382;
-    int height = 112;
+    int width = UiPx(382);
+    int height = UiPx(112);
 
-    const int margin = 10;
+    const int margin = UiPx(10);
     int x = g_screenX + (g_screenW - width) / 2;
-    int y = g_screenY + g_screenH - height - 72;
+    int y = g_screenY + g_screenH - height - UiPx(72);
     if (x < g_screenX + margin) x = g_screenX + margin;
     if (x + width > g_screenX + g_screenW - margin) x = g_screenX + g_screenW - width - margin;
     if (y < g_screenY + margin) y = g_screenY + margin;
     if (y + height > g_screenY + g_screenH - margin) y = g_screenY + g_screenH - height - margin;
 
     SetWindowPos(hwnd, HWND_TOPMOST, x, y, width, height, SWP_SHOWWINDOW);
-    MoveWindow(GetDlgItem(hwnd, IDC_STATIC_CIRCLE_PROMPT), 12, 8, width - 24, 18, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_EDIT_CIRCLE_VALUE), 12, 30, width - 24, 24, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_STATIC_CIRCLE_HINT), 12, 58, width - 24, 20, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_STATIC_CIRCLE_STATUS), 12, 80, width - 24, 22, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_STATIC_CIRCLE_PROMPT), UiPx(12), UiPx(8), width - UiPx(24), UiPx(18), TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_EDIT_CIRCLE_VALUE), UiPx(12), UiPx(30), width - UiPx(24), UiPx(26), TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_STATIC_CIRCLE_HINT), UiPx(12), UiPx(60), width - UiPx(24), UiPx(20), TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_STATIC_CIRCLE_STATUS), UiPx(12), UiPx(82), width - UiPx(24), UiPx(22), TRUE);
 
     HWND moveBtn = GetDlgItem(hwnd, IDC_BTN_CIRCLE_MOVE_NOW);
     HWND appendBtn = GetDlgItem(hwnd, IDC_BTN_CIRCLE_APPEND_COORD);
@@ -2161,21 +2275,21 @@ static void SendNativeMouseClick(int buttonIndex) {
 static void LayoutClickActionDialog(HWND hwnd) {
     if (!hwnd) return;
 
-    int width = 430;
-    int height = 118;
-    const int margin = 12;
+    int width = UiPx(430);
+    int height = UiPx(118);
+    const int margin = UiPx(12);
     int x = g_screenX + (g_screenW - width) / 2;
-    int y = g_screenY + g_screenH - height - 42;
+    int y = g_screenY + g_screenH - height - UiPx(42);
     if (x < g_screenX + margin) x = g_screenX + margin;
     if (x + width > g_screenX + g_screenW - margin) x = g_screenX + g_screenW - width - margin;
     if (y < g_screenY + margin) y = g_screenY + margin;
     if (y + height > g_screenY + g_screenH - margin) y = g_screenY + g_screenH - height - margin;
 
     SetWindowPos(hwnd, HWND_TOPMOST, x, y, width, height, SWP_SHOWWINDOW);
-    MoveWindow(GetDlgItem(hwnd, IDC_STATIC_CLICK_PROMPT), 14, 10, width - 28, 18, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_EDIT_CLICK_VALUE), 14, 30, width - 28, 24, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_STATIC_CLICK_HINT), 14, 62, width - 28, 18, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_STATIC_CLICK_STATUS), 14, 84, width - 28, 20, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_STATIC_CLICK_PROMPT), UiPx(14), UiPx(10), width - UiPx(28), UiPx(18), TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_EDIT_CLICK_VALUE), UiPx(14), UiPx(30), width - UiPx(28), UiPx(26), TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_STATIC_CLICK_HINT), UiPx(14), UiPx(62), width - UiPx(28), UiPx(18), TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_STATIC_CLICK_STATUS), UiPx(14), UiPx(84), width - UiPx(28), UiPx(20), TRUE);
     ShowDlgItem(hwnd, IDOK, false);
     ShowDlgItem(hwnd, IDCANCEL, false);
     MoveWindow(GetDlgItem(hwnd, IDOK), -200, -200, 1, 1, TRUE);
@@ -2185,21 +2299,21 @@ static void LayoutClickActionDialog(HWND hwnd) {
 static void LayoutViewTogglesDialog(HWND hwnd) {
     if (!hwnd) return;
 
-    int width = 430;
-    int height = 118;
-    const int margin = 12;
+    int width = UiPx(430);
+    int height = UiPx(118);
+    const int margin = UiPx(12);
     int x = g_screenX + (g_screenW - width) / 2;
-    int y = g_screenY + g_screenH - height - 42;
+    int y = g_screenY + g_screenH - height - UiPx(42);
     if (x < g_screenX + margin) x = g_screenX + margin;
     if (x + width > g_screenX + g_screenW - margin) x = g_screenX + g_screenW - width - margin;
     if (y < g_screenY + margin) y = g_screenY + margin;
     if (y + height > g_screenY + g_screenH - margin) y = g_screenY + g_screenH - height - margin;
 
     SetWindowPos(hwnd, HWND_TOPMOST, x, y, width, height, SWP_SHOWWINDOW);
-    MoveWindow(GetDlgItem(hwnd, IDC_STATIC_VIEW_PROMPT), 14, 10, width - 28, 18, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_EDIT_VIEW_VALUE), 14, 30, width - 28, 24, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_STATIC_VIEW_HINT), 14, 62, width - 28, 18, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_STATIC_VIEW_STATUS), 14, 84, width - 28, 20, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_STATIC_VIEW_PROMPT), UiPx(14), UiPx(10), width - UiPx(28), UiPx(18), TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_EDIT_VIEW_VALUE), UiPx(14), UiPx(30), width - UiPx(28), UiPx(26), TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_STATIC_VIEW_HINT), UiPx(14), UiPx(62), width - UiPx(28), UiPx(18), TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_STATIC_VIEW_STATUS), UiPx(14), UiPx(84), width - UiPx(28), UiPx(20), TRUE);
     ShowDlgItem(hwnd, IDOK, false);
     ShowDlgItem(hwnd, IDCANCEL, false);
     MoveWindow(GetDlgItem(hwnd, IDOK), -200, -200, 1, 1, TRUE);
@@ -2278,14 +2392,22 @@ static bool ParseZoneBufferCoordinates(const std::wstring& raw, POINT& start, PO
     return true;
 }
 
-static int CountTextLines(const std::wstring& text) {
+static int CountTextLinesLimited(const std::wstring& text, int maxLines) {
     int lines = 1;
     for (wchar_t ch : text) {
         if (ch == L'\n') ++lines;
     }
     if (lines < 1) lines = 1;
-    if (lines > 8) lines = 8;
+    if (maxLines > 0 && lines > maxLines) lines = maxLines;
     return lines;
+}
+
+static int CountTextLines(const std::wstring& text) {
+    return CountTextLinesLimited(text, 8);
+}
+
+static int CountPasteBufferVisibleLines(const std::wstring& text) {
+    return CountTextLinesLimited(text, PASTE_BUFFER_MAX_VISIBLE_LINES);
 }
 
 static bool RegistryHubStageUsesGrowEdit(RegistryHubStage stage) {
@@ -2314,28 +2436,31 @@ static void FocusPasteBufferEdit(HWND hwnd, bool selectAll = true) {
 static void LayoutPasteBuffersDialog(HWND hwnd) {
     if (!hwnd) return;
 
-    int width = 430;
-    int editHeight = 24;
+    int width = UiPx(430);
+    int editHeight = UiPx(26);
     if (g_pasteBufferState.stage == PasteBufferStage::Edit ||
         g_pasteBufferState.stage == PasteBufferStage::ZoneEdit) {
-        int lines = std::max(1, g_pasteBufferState.visibleLines);
-        editHeight = 24 + (lines - 1) * 20;
-        if (editHeight > 164) editHeight = 164;
+        int lineLimit = g_pasteBufferState.stage == PasteBufferStage::Edit ? PASTE_BUFFER_MAX_VISIBLE_LINES : 8;
+        int lines = std::clamp(g_pasteBufferState.visibleLines, 1, lineLimit);
+        editHeight = UiPx(26) + (lines - 1) * UiPx(20);
+        int maxByScreen = std::max(UiPx(96), g_screenH - UiPx(178));
+        int maxByLines = UiPx(26) + (lineLimit - 1) * UiPx(20);
+        editHeight = std::min(editHeight, std::min(maxByScreen, maxByLines));
     }
-    int height = 118 + (editHeight - 24);
-    const int margin = 12;
+    int height = UiPx(118) + (editHeight - UiPx(26));
+    const int margin = UiPx(12);
     int x = g_screenX + (g_screenW - width) / 2;
-    int y = g_screenY + g_screenH - height - 42;
+    int y = g_screenY + g_screenH - height - UiPx(42);
     if (x < g_screenX + margin) x = g_screenX + margin;
     if (x + width > g_screenX + g_screenW - margin) x = g_screenX + g_screenW - width - margin;
     if (y < g_screenY + margin) y = g_screenY + margin;
     if (y + height > g_screenY + g_screenH - margin) y = g_screenY + g_screenH - height - margin;
 
     SetWindowPos(hwnd, HWND_TOPMOST, x, y, width, height, SWP_SHOWWINDOW);
-    MoveWindow(GetDlgItem(hwnd, IDC_STATIC_PASTE_BUFFER_PROMPT), 14, 10, width - 28, 18, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_EDIT_PASTE_BUFFER_VALUE), 14, 30, width - 28, editHeight, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_STATIC_PASTE_BUFFER_HINT), 14, 38 + editHeight, width - 28, 18, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_STATIC_PASTE_BUFFER_STATUS), 14, 60 + editHeight, width - 28, 20, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_STATIC_PASTE_BUFFER_PROMPT), UiPx(14), UiPx(10), width - UiPx(28), UiPx(18), TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_EDIT_PASTE_BUFFER_VALUE), UiPx(14), UiPx(30), width - UiPx(28), editHeight, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_STATIC_PASTE_BUFFER_HINT), UiPx(14), UiPx(40) + editHeight, width - UiPx(28), UiPx(18), TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_STATIC_PASTE_BUFFER_STATUS), UiPx(14), UiPx(62) + editHeight, width - UiPx(28), UiPx(20), TRUE);
     ShowDlgItem(hwnd, IDOK, false);
     ShowDlgItem(hwnd, IDCANCEL, false);
     MoveWindow(GetDlgItem(hwnd, IDOK), -200, -200, 1, 1, TRUE);
@@ -2349,11 +2474,11 @@ static void LayoutRecordKeysDialog(HWND hwnd) {
     bool isPasteStage = g_recordKeysState.stage == RecordKeysStage::Paste;
     bool isCommandStage = g_recordKeysState.stage == RecordKeysStage::Command;
 
-    int width = 650;
-    int height = isNameStage ? 124 : (isPasteStage ? 272 : 218);
-    const int margin = 12;
+    int width = UiPx(650);
+    int height = isNameStage ? UiPx(124) : (isPasteStage ? UiPx(272) : UiPx(218));
+    const int margin = UiPx(12);
     int x = g_screenX + (g_screenW - width) / 2;
-    int y = g_screenY + g_screenH - height - 34;
+    int y = g_screenY + g_screenH - height - UiPx(34);
     if (x < g_screenX + margin) x = g_screenX + margin;
     if (x + width > g_screenX + g_screenW - margin) x = g_screenX + g_screenW - width - margin;
     if (y < g_screenY + margin) y = g_screenY + margin;
@@ -2379,25 +2504,25 @@ static void LayoutRecordKeysDialog(HWND hwnd) {
     ShowDlgItem(hwnd, IDCANCEL, false);
 
     if (isNameStage) {
-        MoveWindow(GetDlgItem(hwnd, IDC_STATIC_SEQ_NAME), 14, 12, 360, 16, TRUE);
-        MoveWindow(GetDlgItem(hwnd, IDC_EDIT_SEQ_NAME), 14, 30, width - 128, 24, TRUE);
-        MoveWindow(GetDlgItem(hwnd, IDC_STATIC_SEQ_DELAY), width - 100, 12, 86, 16, TRUE);
-        MoveWindow(GetDlgItem(hwnd, IDC_EDIT_DELAY), width - 100, 30, 84, 24, TRUE);
-        MoveWindow(GetDlgItem(hwnd, IDC_STATIC_STATUS), 14, 70, width - 28, 40, TRUE);
+        MoveWindow(GetDlgItem(hwnd, IDC_STATIC_SEQ_NAME), UiPx(14), UiPx(12), UiPx(360), UiPx(16), TRUE);
+        MoveWindow(GetDlgItem(hwnd, IDC_EDIT_SEQ_NAME), UiPx(14), UiPx(30), width - UiPx(128), UiPx(26), TRUE);
+        MoveWindow(GetDlgItem(hwnd, IDC_STATIC_SEQ_DELAY), width - UiPx(100), UiPx(12), UiPx(86), UiPx(16), TRUE);
+        MoveWindow(GetDlgItem(hwnd, IDC_EDIT_DELAY), width - UiPx(100), UiPx(30), UiPx(84), UiPx(26), TRUE);
+        MoveWindow(GetDlgItem(hwnd, IDC_STATIC_STATUS), UiPx(14), UiPx(70), width - UiPx(28), UiPx(40), TRUE);
     } else if (isCommandStage) {
-        MoveWindow(GetDlgItem(hwnd, IDC_STATIC_SEQ_NAME), 14, 12, width - 28, 16, TRUE);
-        MoveWindow(GetDlgItem(hwnd, IDC_EDIT_SEQ_NAME), 14, 30, width - 28, 24, TRUE);
-        MoveWindow(GetDlgItem(hwnd, IDC_STATIC_RECORDED_FLOW), 14, 66, 180, 16, TRUE);
-        MoveWindow(GetDlgItem(hwnd, IDC_LIST_KEYS), 14, 84, 306, 120, TRUE);
-        MoveWindow(GetDlgItem(hwnd, IDC_STATIC_RECORD_STATUS_LABEL), 336, 66, 70, 16, TRUE);
-        MoveWindow(GetDlgItem(hwnd, IDC_STATIC_STATUS), 336, 84, width - 350, 70, TRUE);
+        MoveWindow(GetDlgItem(hwnd, IDC_STATIC_SEQ_NAME), UiPx(14), UiPx(12), width - UiPx(28), UiPx(16), TRUE);
+        MoveWindow(GetDlgItem(hwnd, IDC_EDIT_SEQ_NAME), UiPx(14), UiPx(30), width - UiPx(28), UiPx(26), TRUE);
+        MoveWindow(GetDlgItem(hwnd, IDC_STATIC_RECORDED_FLOW), UiPx(14), UiPx(66), UiPx(180), UiPx(16), TRUE);
+        MoveWindow(GetDlgItem(hwnd, IDC_LIST_KEYS), UiPx(14), UiPx(84), UiPx(306), UiPx(120), TRUE);
+        MoveWindow(GetDlgItem(hwnd, IDC_STATIC_RECORD_STATUS_LABEL), UiPx(336), UiPx(66), UiPx(70), UiPx(16), TRUE);
+        MoveWindow(GetDlgItem(hwnd, IDC_STATIC_STATUS), UiPx(336), UiPx(84), width - UiPx(350), UiPx(70), TRUE);
     } else {
-        MoveWindow(GetDlgItem(hwnd, IDC_STATIC_RECORDED_FLOW), 14, 14, 180, 16, TRUE);
-        MoveWindow(GetDlgItem(hwnd, IDC_LIST_KEYS), 14, 32, 292, 178, TRUE);
-        MoveWindow(GetDlgItem(hwnd, IDC_STATIC_PASTE_BLOCK), 324, 14, width - 338, 16, TRUE);
-        MoveWindow(GetDlgItem(hwnd, IDC_EDIT_PASTE_TEXT), 324, 32, width - 338, 148, TRUE);
-        MoveWindow(GetDlgItem(hwnd, IDC_STATIC_RECORD_STATUS_LABEL), 324, 190, 70, 16, TRUE);
-        MoveWindow(GetDlgItem(hwnd, IDC_STATIC_STATUS), 324, 208, width - 338, 44, TRUE);
+        MoveWindow(GetDlgItem(hwnd, IDC_STATIC_RECORDED_FLOW), UiPx(14), UiPx(14), UiPx(180), UiPx(16), TRUE);
+        MoveWindow(GetDlgItem(hwnd, IDC_LIST_KEYS), UiPx(14), UiPx(32), UiPx(292), UiPx(178), TRUE);
+        MoveWindow(GetDlgItem(hwnd, IDC_STATIC_PASTE_BLOCK), UiPx(324), UiPx(14), width - UiPx(338), UiPx(16), TRUE);
+        MoveWindow(GetDlgItem(hwnd, IDC_EDIT_PASTE_TEXT), UiPx(324), UiPx(32), width - UiPx(338), UiPx(148), TRUE);
+        MoveWindow(GetDlgItem(hwnd, IDC_STATIC_RECORD_STATUS_LABEL), UiPx(324), UiPx(190), UiPx(70), UiPx(16), TRUE);
+        MoveWindow(GetDlgItem(hwnd, IDC_STATIC_STATUS), UiPx(324), UiPx(208), width - UiPx(338), UiPx(44), TRUE);
     }
 
     MoveWindow(GetDlgItem(hwnd, IDC_BTN_CAPTURE), -200, -200, 1, 1, TRUE);
@@ -2412,22 +2537,22 @@ static void LayoutRecordKeysDialog(HWND hwnd) {
 static void LayoutSaveCursorDialog(HWND hwnd) {
     if (!hwnd) return;
 
-    int width = 500;
-    int height = 124;
-    const int margin = 12;
+    int width = UiPx(500);
+    int height = UiPx(124);
+    const int margin = UiPx(12);
     int x = g_screenX + (g_screenW - width) / 2;
-    int y = g_screenY + g_screenH - height - 42;
+    int y = g_screenY + g_screenH - height - UiPx(42);
     if (x < g_screenX + margin) x = g_screenX + margin;
     if (x + width > g_screenX + g_screenW - margin) x = g_screenX + g_screenW - width - margin;
     if (y < g_screenY + margin) y = g_screenY + margin;
     if (y + height > g_screenY + g_screenH - margin) y = g_screenY + g_screenH - height - margin;
 
     SetWindowPos(hwnd, HWND_TOPMOST, x, y, width, height, SWP_SHOWWINDOW);
-    MoveWindow(GetDlgItem(hwnd, IDC_STATIC_SAVE_NAME), 14, 10, width - 28, 18, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_EDIT_NAME), 14, 28, width - 28, 24, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_STATIC_SAVE_COORD_LABEL), 14, 58, 90, 16, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_STATIC_COORDS), 110, 58, width - 124, 18, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_STATIC_SAVE_HINT), 14, 88, width - 28, 24, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_STATIC_SAVE_NAME), UiPx(14), UiPx(10), width - UiPx(28), UiPx(18), TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_EDIT_NAME), UiPx(14), UiPx(28), width - UiPx(28), UiPx(26), TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_STATIC_SAVE_COORD_LABEL), UiPx(14), UiPx(60), UiPx(90), UiPx(16), TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_STATIC_COORDS), UiPx(110), UiPx(60), width - UiPx(124), UiPx(18), TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_STATIC_SAVE_HINT), UiPx(14), UiPx(88), width - UiPx(28), UiPx(24), TRUE);
     ShowDlgItem(hwnd, IDOK, false);
     ShowDlgItem(hwnd, IDC_BTN_ADD_ANOTHER_CURSOR, false);
     ShowDlgItem(hwnd, IDC_BTN_ADD_CLICK_CURSOR, false);
@@ -2773,7 +2898,7 @@ static void UpdatePasteBuffersDialogText(HWND hwnd) {
         std::wstring prompt = PasteBufferSlotLabel(g_pasteBufferState.activeSlot);
         SetDlgItemTextW(hwnd, IDC_STATIC_PASTE_BUFFER_PROMPT, prompt.c_str());
         SetDlgItemTextW(hwnd, IDC_STATIC_PASTE_BUFFER_HINT,
-            L"Enter saves. Shift+Enter adds a line and grows upward.");
+            L"Enter saves. Shift+Enter adds a line and grows upward, capped at 50 visible lines.");
         SetDlgItemTextW(hwnd, IDC_STATIC_PASTE_BUFFER_STATUS,
             L"Mouse move cancels. Esc cancels without saving.");
     } else if (g_pasteBufferState.stage == PasteBufferStage::PasteSelect) {
@@ -3179,7 +3304,7 @@ static bool RunPasteBufferCommand(HWND hwnd, const std::wstring& rawCommand) {
     if (slot >= 0) {
         g_pasteBufferState.stage = PasteBufferStage::Edit;
         g_pasteBufferState.activeSlot = slot;
-        g_pasteBufferState.visibleLines = CountTextLines(g_pasteBuffers[slot]);
+        g_pasteBufferState.visibleLines = CountPasteBufferVisibleLines(g_pasteBuffers[slot]);
         SetDlgItemTextW(hwnd, IDC_EDIT_PASTE_BUFFER_VALUE, g_pasteBuffers[slot].c_str());
         UpdatePasteBuffersDialogText(hwnd);
         FocusPasteBufferEdit(hwnd, false);
@@ -4657,14 +4782,21 @@ static bool TokenIsScriptTextKey(const std::string& rawKey) {
     return RegistryVarIndexFromCommand(key) >= 0 || PasteBufferSlotFromCommand(key) >= 0;
 }
 
-static bool AppendPasteListActions(const std::vector<std::string>& keys, bool pressEnter, std::vector<std::string>& actions, std::wstring* status) {
+static bool AppendPasteListActions(
+    const std::vector<std::string>& keys,
+    bool pressEnter,
+    bool focusClickEnabled,
+    std::vector<std::string>& actions,
+    std::wstring* status) {
     if (keys.empty()) {
         if (status) *status = L"Paste token needs at least one buffer key.";
         return false;
     }
-    actions.push_back(BuildWaitActionJson(0.1));
-    actions.push_back(BuildLeftClickActionJson("RegistryHubPasteFocusClick"));
-    actions.push_back(BuildWaitActionJson(0.08));
+    if (focusClickEnabled) {
+        actions.push_back(BuildWaitActionJson(0.1));
+        actions.push_back(BuildLeftClickActionJson("RegistryHubPasteFocusClick"));
+        actions.push_back(BuildWaitActionJson(0.08));
+    }
     for (size_t i = 0; i < keys.size(); ++i) {
         std::wstring text;
         if (!ResolveScriptTextValue(keys[i], text)) {
@@ -4981,7 +5113,11 @@ static bool ApplyRegistryHubSetToken(const std::string& token, std::wstring* sta
     return false;
 }
 
-static bool CompileRegistryHubToken(const std::string& rawToken, std::vector<std::string>& actions, std::wstring* status) {
+static bool CompileRegistryHubToken(
+    const std::string& rawToken,
+    std::vector<std::string>& actions,
+    bool& pasteFocusClickEnabled,
+    std::wstring* status) {
     std::string token = TrimAscii(rawToken);
     std::string lower = LowerAscii(token);
     if (token.empty()) return true;
@@ -5004,6 +5140,14 @@ static bool CompileRegistryHubToken(const std::string& rawToken, std::vector<std
         std::string moveActions;
         if (!LoadCursorMoveActions(g_registryPoints[idx], &moveActions, status)) return false;
         actions.push_back(moveActions);
+        return true;
+    }
+    if (lower == "click on" || lower == "paste click on" || lower == "focus click on") {
+        pasteFocusClickEnabled = true;
+        return true;
+    }
+    if (lower == "click off" || lower == "paste click off" || lower == "focus click off") {
+        pasteFocusClickEnabled = false;
         return true;
     }
     if (lower == "click" || lower == "left") {
@@ -5074,7 +5218,7 @@ static bool CompileRegistryHubToken(const std::string& rawToken, std::vector<std
                 return false;
             }
         }
-        return AppendPasteListActions(args, true, actions, status);
+        return AppendPasteListActions(args, true, pasteFocusClickEnabled, actions, status);
     }
 
     std::vector<std::string> args = SplitScriptArgs(token);
@@ -5086,7 +5230,7 @@ static bool CompileRegistryHubToken(const std::string& rawToken, std::vector<std
                 break;
             }
         }
-        if (allTextKeys) return AppendPasteListActions(args, false, actions, status);
+        if (allTextKeys) return AppendPasteListActions(args, false, pasteFocusClickEnabled, actions, status);
 
         std::vector<std::string> keyStep;
         for (const auto& arg : args) keyStep.push_back(arg);
@@ -5122,6 +5266,7 @@ static bool CompileRegistryHubScriptToTaskJson(std::string* taskJson, int* actio
 
     std::vector<std::string> actions;
     std::vector<RegistryHubBranchFrame> branches;
+    bool pasteFocusClickEnabled = false;
     for (const auto& token : tokens) {
         std::string trimmed = TrimAscii(token);
         std::string lower = LowerAscii(trimmed);
@@ -5153,7 +5298,7 @@ static bool CompileRegistryHubScriptToTaskJson(std::string* taskJson, int* actio
             continue;
         }
         if (!RegistryHubBranchesActive(branches)) continue;
-        if (!CompileRegistryHubToken(token, actions, status)) return false;
+        if (!CompileRegistryHubToken(token, actions, pasteFocusClickEnabled, status)) return false;
     }
     if (!branches.empty()) {
         if (status) *status = L"Registry Hub script has an unclosed {if ...}. Add {endif}.";
@@ -5340,11 +5485,11 @@ bool LoadPromptFont() {
     }
 
     // Create HFONT handles for PromptFont
-    g_hPromptFont = CreateFontW(KEY_FONT_SIZE + 2, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+    g_hPromptFont = CreateFontW(UiFontPx(KEY_FONT_SIZE + 2), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                                  DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                                  CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, L"PromptFont");
 
-    g_hPromptFontSmall = CreateFontW(11, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+    g_hPromptFontSmall = CreateFontW(UiFontPx(11), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                                       DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                                       CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, L"PromptFont");
 
@@ -5414,51 +5559,51 @@ static void DrawKeyDisplayEntry(Graphics& gfx, const std::vector<std::string>& k
         prefix = L"-";
         prefix += Utf8ToWString(std::to_string(-historyIndex));
 
-        Font font(L"Segoe UI", 10, FontStyleRegular);
+        Font font(L"Segoe UI", (REAL)UiFontPx(10), FontStyleRegular, UnitPixel);
         SolidBrush brush(Color(a, 160, 160, 170));
-        PointF pt((REAL)startX, (REAL)(y + 4));
+        PointF pt((REAL)startX, (REAL)(y + UiPx(4)));
         gfx.DrawString(prefix.c_str(), (INT)prefix.length(), &font, pt, &brush);
     }
 
-    int x = startX + KEY_PREFIX_W;
+    int x = startX + UiPx(KEY_PREFIX_W);
 
     // Draw each key in the combo
     for (size_t i = 0; i < keys.size(); i++) {
         // "+" separator between keys
         if (i > 0) {
-            Font sepFont(L"Segoe UI", 9, FontStyleRegular);
+            Font sepFont(L"Segoe UI", (REAL)UiFontPx(9), FontStyleRegular, UnitPixel);
             SolidBrush sepBrush(Color(a, 180, 180, 190));
-            PointF sepPt((REAL)x, (REAL)(y + 4));
+            PointF sepPt((REAL)x, (REAL)(y + UiPx(4)));
             gfx.DrawString(L"+", 1, &sepFont, sepPt, &sepBrush);
-            x += 16;
+            x += UiPx(16);
         }
 
         // Get glyph or text for this key
         std::wstring display = KeyToGlyph(keys[i]);
 
         // Measure text to size the box
-        auto measureFont = CreateKeyTextFont(keys[i], (REAL)KEY_FONT_SIZE);
+        auto measureFont = CreateKeyTextFont(keys[i], (REAL)UiFontPx(KEY_FONT_SIZE));
         int textW = MeasureKeyTextWidth(gfx, display, *measureFont);
-        if (textW < 12) textW = 12;
-        int boxW = textW + KEY_BOX_PAD_X * 2;
+        if (textW < UiPx(12)) textW = UiPx(12);
+        int boxW = textW + UiPx(KEY_BOX_PAD_X) * 2;
 
         // Draw rounded rect background
         Color bgColor(a, KEY_BG_R, KEY_BG_G, KEY_BG_B);
         Color borderColor(a, KEY_BORDER_R, KEY_BORDER_G, KEY_BORDER_B);
-        DrawRoundedRect(gfx, x, y, boxW, boxH, KEY_BOX_RADIUS, bgColor, borderColor);
+        DrawRoundedRect(gfx, x, y, boxW, boxH, UiPx(KEY_BOX_RADIUS), bgColor, borderColor);
 
         // Draw text
-        auto font = CreateKeyTextFont(keys[i], (REAL)KEY_FONT_SIZE);
+        auto font = CreateKeyTextFont(keys[i], (REAL)UiFontPx(KEY_FONT_SIZE));
         SolidBrush textBrush(Color(a, 255, 255, 255));
 
         // Center text in box
-        RectF layoutRect((REAL)(x + 2), (REAL)(y - 1), (REAL)(boxW - 4), (REAL)(boxH + 2));
+        RectF layoutRect((REAL)(x + UiPx(2)), (REAL)(y - UiPx(1)), (REAL)(boxW - UiPx(4)), (REAL)(boxH + UiPx(2)));
         StringFormat sf;
         sf.SetAlignment(StringAlignmentCenter);
         sf.SetLineAlignment(StringAlignmentCenter);
         gfx.DrawString(display.c_str(), (INT)display.length(), font.get(), layoutRect, &sf, &textBrush);
 
-        x += boxW + KEY_GAP_X;
+        x += boxW + UiPx(KEY_GAP_X);
     }
 }
 
@@ -5471,17 +5616,19 @@ void RenderKeyDisplay() {
 
     // Anchor to the upper-right of the cursor. Entries are drawn from the
     // bottom upward so the newest key feels attached to the pointer.
-    int winX = cursorPt.x + KEY_OFFSET_X;
-    int winY = cursorPt.y - KEY_DISPLAY_H - KEY_OFFSET_Y;
+    int keyDisplayW = KeyDisplayW();
+    int keyDisplayH = KeyDisplayH();
+    int winX = cursorPt.x + UiPx(KEY_OFFSET_X);
+    int winY = cursorPt.y - keyDisplayH - UiPx(KEY_OFFSET_Y);
 
     // Clamp to screen bounds
     if (winX < g_screenX) winX = g_screenX;
-    if (winX + KEY_DISPLAY_W > g_screenX + g_screenW) {
-        winX = cursorPt.x - KEY_DISPLAY_W - KEY_OFFSET_X;
+    if (winX + keyDisplayW > g_screenX + g_screenW) {
+        winX = cursorPt.x - keyDisplayW - UiPx(KEY_OFFSET_X);
     }
     if (winX < g_screenX) winX = g_screenX;
     if (winY < g_screenY) winY = g_screenY;
-    if (winY + KEY_DISPLAY_H > g_screenY + g_screenH) winY = g_screenY + g_screenH - KEY_DISPLAY_H;
+    if (winY + keyDisplayH > g_screenY + g_screenH) winY = g_screenY + g_screenH - keyDisplayH;
 
     // Move window if needed
     RECT rc;
@@ -5531,14 +5678,15 @@ void RenderKeyDisplay() {
     }
 
     DWORD now = GetTickCount();
-    int y = KEY_DISPLAY_H - KEY_BOX_H - 8;
+    int keyBoxH = UiPx(KEY_BOX_H);
+    int y = keyDisplayH - keyBoxH - UiPx(8);
 
     // Draw active (unfinalized) combo closest to the cursor with pulsing opacity
     if (!activeKeys.empty()) {
         // Pulse between 60% and 100% opacity
         float pulse = 0.6f + 0.4f * sinf((now % 1000) / 1000.0f * 3.14159f * 2);
-        DrawKeyDisplayEntry(gfx, activeKeys, 8, y, KEY_BOX_H, 0, pulse);
-        y -= KEY_BOX_H + KEY_GAP_Y + 4;
+        DrawKeyDisplayEntry(gfx, activeKeys, UiPx(8), y, keyBoxH, 0, pulse);
+        y -= keyBoxH + UiPx(KEY_GAP_Y) + UiPx(4);
     }
 
     // Draw history entries upward like a compact input timeline
@@ -5552,10 +5700,10 @@ void RenderKeyDisplay() {
         // History index: 0 = current (most recent finalized), -1 = next, etc.
         int histIdx = -i;
 
-        DrawKeyDisplayEntry(gfx, entries[i].keys, 8, y, KEY_BOX_H, histIdx, opacity);
-        y -= KEY_BOX_H + KEY_GAP_Y;
+        DrawKeyDisplayEntry(gfx, entries[i].keys, UiPx(8), y, keyBoxH, histIdx, opacity);
+        y -= keyBoxH + UiPx(KEY_GAP_Y);
 
-        if (y < 8) break;
+        if (y < UiPx(8)) break;
     }
 
     // Update layered window with alpha
@@ -5579,14 +5727,14 @@ static void DrawLabelBox(HDC hdc, const std::wstring& text, int x, int y, COLORR
     SIZE size = {};
     GetTextExtentPoint32W(hdc, text.c_str(), (int)text.size(), &size);
 
-    const int padX = 8;
-    const int padY = 4;
+    const int padX = UiPx(8);
+    const int padY = UiPx(4);
     RECT rc = {x, y, x + size.cx + padX * 2, y + size.cy + padY * 2};
     HBRUSH bg = CreateSolidBrush(RGB(18, 22, 27));
     HPEN pen = CreatePen(PS_SOLID, 1, accent);
     HBRUSH oldBg = (HBRUSH)SelectObject(hdc, bg);
     HPEN oldPen = (HPEN)SelectObject(hdc, pen);
-    RoundRect(hdc, rc.left, rc.top, rc.right, rc.bottom, 10, 10);
+    RoundRect(hdc, rc.left, rc.top, rc.right, rc.bottom, UiPx(10), UiPx(10));
     SelectObject(hdc, oldPen);
     SelectObject(hdc, oldBg);
     DeleteObject(pen);
@@ -5742,29 +5890,29 @@ void DrawCursorGrid(HDC hdc, const RECT& rc, POINT pt) {
     DeleteObject(gridPen);
 
     HFONT hGridFont = CreateFontW(
-        11, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        UiFontPx(12), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
         CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
     HFONT oldFont = (HFONT)SelectObject(hdc, hGridFont);
     SetBkMode(hdc, TRANSPARENT);
     SetTextColor(hdc, RGB(92, 100, 108));
 
-    const int minGx = (int)floor((double)(rc.left + 14 - pt.x) / spacing);
-    const int maxGx = (int)ceil((double)(rc.right - 80 - pt.x) / spacing);
-    const int minGy = (int)floor((double)(rc.top + 12 - pt.y) / spacing);
-    const int maxGy = (int)ceil((double)(rc.bottom - 20 - pt.y) / spacing);
+    const int minGx = (int)floor((double)(rc.left + UiPx(14) - pt.x) / spacing);
+    const int maxGx = (int)ceil((double)(rc.right - UiPx(80) - pt.x) / spacing);
+    const int minGy = (int)floor((double)(rc.top + UiPx(12) - pt.y) / spacing);
+    const int maxGy = (int)ceil((double)(rc.bottom - UiPx(20) - pt.y) / spacing);
 
     for (int gx = minGx; gx <= maxGx; ++gx) {
         int x = pt.x + gx * spacing;
-        if (x < rc.left + 14 || x > rc.right - 80) continue;
+        if (x < rc.left + UiPx(14) || x > rc.right - UiPx(80)) continue;
         for (int gy = minGy; gy <= maxGy; ++gy) {
             int y = pt.y + gy * spacing;
-            if (y < rc.top + 12 || y > rc.bottom - 20) continue;
+            if (y < rc.top + UiPx(12) || y > rc.bottom - UiPx(20)) continue;
             if (gx == 0 && gy == 0) continue;
             if ((abs(gx) + abs(gy)) % 2 != 0) continue;
 
             std::wstring label = GridOffsetLabel(gx * spacing, gy * spacing);
-            TextOutW(hdc, x + 4, y + 4, label.c_str(), (int)label.size());
+            TextOutW(hdc, x + UiPx(4), y + UiPx(4), label.c_str(), (int)label.size());
         }
     }
 
@@ -5825,13 +5973,13 @@ static void DrawCrosshair(HDC hdc) {
     std::wstring coordText = ss.str();
     GetTextExtentPoint32W(hdc, coordText.c_str(), (int)coordText.length(), &textSize);
 
-    const int padX = 8;
-    const int padY = 4;
-    const int gapX = 14;
-    const int gapY = 14;
+    const int padX = UiPx(8);
+    const int padY = UiPx(4);
+    const int gapX = UiPx(14);
+    const int gapY = UiPx(14);
     int boxW = textSize.cx + padX * 2;
     int boxH = textSize.cy + padY * 2;
-    const int margin = 8;
+    const int margin = UiPx(8);
     int x = pt.x + gapX;
     int y = pt.y + gapY;
 
@@ -5851,7 +5999,7 @@ static void DrawCrosshair(HDC hdc) {
     HPEN hTagPen = CreatePen(PS_SOLID, 1, RGB(62, 132, 176));
     HBRUSH hOldTagBg = (HBRUSH)SelectObject(hdc, hTagBg);
     HPEN hOldTagPen = (HPEN)SelectObject(hdc, hTagPen);
-    RoundRect(hdc, rcTag.left, rcTag.top, rcTag.right, rcTag.bottom, 10, 10);
+    RoundRect(hdc, rcTag.left, rcTag.top, rcTag.right, rcTag.bottom, UiPx(10), UiPx(10));
     SelectObject(hdc, hOldTagPen);
     SelectObject(hdc, hOldTagBg);
     DeleteObject(hTagPen);
@@ -5871,11 +6019,27 @@ LRESULT CALLBACK CrosshairWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
     switch (msg) {
         case WM_TIMER:
             if (wParam == IDT_UPDATE_CURSOR) {
+                static POINT s_lastPaintCursor = {LONG_MIN, LONG_MIN};
+                static bool s_lastPreviewActive = false;
+                POINT beforeCursor = {};
+                GetCursorPos(&beforeCursor);
+
                 HideCirclePreviewIfMouseMoved();
+                bool previewBeforeRefresh = g_circlePreview.enabled;
                 RefreshCirclePreviewFromFile();
                 ProcessBackendCommandFile();
                 WriteBackendState();
-                InvalidateRect(hwnd, nullptr, FALSE);
+
+                bool cursorMoved = beforeCursor.x != s_lastPaintCursor.x ||
+                                   beforeCursor.y != s_lastPaintCursor.y;
+                bool previewChanged = previewBeforeRefresh != g_circlePreview.enabled ||
+                                      s_lastPreviewActive != g_circlePreview.enabled;
+                bool needsFrame = cursorMoved || previewChanged || g_circlePreview.enabled;
+                if (needsFrame) {
+                    s_lastPaintCursor = beforeCursor;
+                    s_lastPreviewActive = g_circlePreview.enabled;
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                }
             }
             return 0;
 
@@ -5976,7 +6140,7 @@ LRESULT CALLBACK CoordPanelWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
 
         case WM_KEYDOWN:
             if (wParam == '1') {
-                PostMessage(g_hwndCrosshair, WM_HOTKEY, IDH_SAVE_CURSOR, 0);
+                PostMessage(g_hwndCrosshair, WM_HOTKEY, IDH_PASTE_BUFFERS, 0);
                 return 0;
             }
             if (wParam == '2') {
@@ -6012,7 +6176,7 @@ LRESULT CALLBACK CoordPanelWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
                 return 0;
             }
             if (wParam == '0') {
-                PostMessage(g_hwndCrosshair, WM_HOTKEY, IDH_PASTE_BUFFERS, 0);
+                PostMessage(g_hwndCrosshair, WM_HOTKEY, IDH_SAVE_CURSOR, 0);
                 return 0;
             }
             return DefWindowProc(hwnd, msg, wParam, lParam);
@@ -6078,13 +6242,13 @@ LRESULT CALLBACK CoordPanelWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
 
             FillRect(hdc, &rc, g_hbrColorkey);
 
-            RECT rcPanel = {0, 0, COORD_PANEL_VISIBLE_W, COORD_PANEL_VISIBLE_H};
+            RECT rcPanel = {0, 0, CoordPanelW(), CoordPanelH()};
             HBRUSH hBg = CreateSolidBrush(RGB(30, 30, 30));
             FillRect(hdc, &rcPanel, hBg);
             DeleteObject(hBg);
 
             // Accent bar
-            RECT rcAcc = {rcPanel.left, rcPanel.top, rcPanel.right, rcPanel.top + 3};
+            RECT rcAcc = {rcPanel.left, rcPanel.top, rcPanel.right, rcPanel.top + UiPx(3)};
             HBRUSH hAcc = CreateSolidBrush(RGB(0, 150, 255));
             FillRect(hdc, &rcAcc, hAcc);
             DeleteObject(hAcc);
@@ -6107,11 +6271,11 @@ LRESULT CALLBACK CoordPanelWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
             st += L"ms";
             st += L"    ";
             st += GetKeyHudStatusText();
-            TextOutW(hdc, rc.left + 15, rc.top + 16, st.c_str(), (int)st.length());
+            TextOutW(hdc, rc.left + UiPx(15), rc.top + UiPx(16), st.c_str(), (int)st.length());
 
             SetTextColor(hdc, RGB(170, 190, 205));
-            std::wstring hotkeys = L"Shift+Alt: 1 Save  2 Record  3 Circle  4 Left  5 Right  6 Middle  7 Stop  8 View  9 Hub  0 Paste";
-            TextOutW(hdc, rc.left + 15, rc.top + 40, hotkeys.c_str(), (int)hotkeys.length());
+            std::wstring hotkeys = L"Shift+Alt: 1 Paste  2 Record  3 Circle  4 Left  5 Right  6 Middle  7 Stop  8 View  9 Hub  0 Save";
+            TextOutW(hdc, rc.left + UiPx(15), rc.top + UiPx(40), hotkeys.c_str(), (int)hotkeys.length());
 
             EndPaint(hwnd, &ps);
             return 0;
@@ -6120,18 +6284,18 @@ LRESULT CALLBACK CoordPanelWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
         case WM_LBUTTONUP: {
             int x = GET_X_LPARAM(lParam);
             int y = GET_Y_LPARAM(lParam);
-            if (y >= 34 && y <= 66) {
-                if (x < 85) {
-                    PostMessage(g_hwndCrosshair, WM_HOTKEY, IDH_SAVE_CURSOR, 0);
-                } else if (x < 190) {
+            if (y >= UiPx(34) && y <= UiPx(66)) {
+                if (x < UiPx(85)) {
+                    PostMessage(g_hwndCrosshair, WM_HOTKEY, IDH_PASTE_BUFFERS, 0);
+                } else if (x < UiPx(190)) {
                     PostMessage(g_hwndCrosshair, WM_HOTKEY, IDH_RECORD_KEYS, 0);
-                } else if (x < 285) {
+                } else if (x < UiPx(285)) {
                     PostMessage(g_hwndCrosshair, WM_HOTKEY, IDH_CIRCLE_PLACER, 0);
-                } else if (x < 380) {
+                } else if (x < UiPx(380)) {
                     PostMessage(g_hwndCrosshair, WM_HOTKEY, IDH_CLICK_LEFT, 0);
-                } else if (x < 470) {
+                } else if (x < UiPx(470)) {
                     PostMessage(g_hwndCrosshair, WM_HOTKEY, IDH_CLICK_RIGHT, 0);
-                } else if (x < 560) {
+                } else if (x < UiPx(560)) {
                     PostMessage(g_hwndCrosshair, WM_HOTKEY, IDH_CLICK_MIDDLE, 0);
                 } else {
                     PostMessage(g_hwndCrosshair, WM_HOTKEY, IDH_STOP_ALL_TASKET, 0);
@@ -6154,7 +6318,7 @@ LRESULT CALLBACK CoordPanelWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
                 AppendMenuW(hm, MF_STRING, IDM_TOGGLE_KEYS,
                     g_keyDisplayVisible ? L"Hide Key Display" : L"Show Key Display");
                 AppendMenuW(hm, MF_SEPARATOR, 0, nullptr);
-                AppendMenuW(hm, MF_STRING, IDM_SAVE_CURSOR, L"Save Cursor (Shift+Alt+1)");
+                AppendMenuW(hm, MF_STRING, IDM_PASTE_BUFFERS, L"Paste Buffers (Shift+Alt+1)");
                 AppendMenuW(hm, MF_STRING, IDM_RECORD_KEYS, L"Record Keys (Shift+Alt+2)");
                 AppendMenuW(hm, MF_STRING, IDM_CIRCLE_PLACER, L"Circle Placement (Shift+Alt+3)");
                 AppendMenuW(hm, MF_STRING, IDM_CLICK_LEFT, L"Manual Left Click (Shift+Alt+4)");
@@ -6163,7 +6327,7 @@ LRESULT CALLBACK CoordPanelWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
                 AppendMenuW(hm, MF_STRING, IDM_STOP_ALL_TASKET, L"Stop All Tasket Tasks (Shift+Alt+7)");
                 AppendMenuW(hm, MF_STRING, IDM_VIEW_TOGGLES, L"View Toggles (Shift+Alt+8)");
                 AppendMenuW(hm, MF_STRING, IDM_REGISTRY_HUB, L"Registry Hub (Shift+Alt+9)");
-                AppendMenuW(hm, MF_STRING, IDM_PASTE_BUFFERS, L"Paste Buffers (Shift+Alt+0)");
+                AppendMenuW(hm, MF_STRING, IDM_SAVE_CURSOR, L"Save Cursor (Shift+Alt+0)");
                 AppendMenuW(hm, MF_SEPARATOR, 0, nullptr);
                 AppendMenuW(hm, MF_STRING, IDM_EXIT, L"Exit");
                 POINT pt;
@@ -6185,8 +6349,8 @@ LRESULT CALLBACK CoordPanelWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
                         g_keyDisplayVisible = !g_keyDisplayVisible;
                         ShowWindow(g_hwndKeyDisplay, g_keyDisplayVisible ? SW_SHOW : SW_HIDE);
                         break;
-                    case IDM_SAVE_CURSOR:
-                        PostMessage(g_hwndCrosshair, WM_HOTKEY, IDH_SAVE_CURSOR, 0);
+                    case IDM_PASTE_BUFFERS:
+                        PostMessage(g_hwndCrosshair, WM_HOTKEY, IDH_PASTE_BUFFERS, 0);
                         break;
                     case IDM_RECORD_KEYS:
                         PostMessage(g_hwndCrosshair, WM_HOTKEY, IDH_RECORD_KEYS, 0);
@@ -6212,8 +6376,8 @@ LRESULT CALLBACK CoordPanelWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
                     case IDM_REGISTRY_HUB:
                         PostMessage(g_hwndCrosshair, WM_HOTKEY, IDH_REGISTRY_HUB, 0);
                         break;
-                    case IDM_PASTE_BUFFERS:
-                        PostMessage(g_hwndCrosshair, WM_HOTKEY, IDH_PASTE_BUFFERS, 0);
+                    case IDM_SAVE_CURSOR:
+                        PostMessage(g_hwndCrosshair, WM_HOTKEY, IDH_SAVE_CURSOR, 0);
                         break;
                     case IDM_EXIT:
                         g_running = false;
@@ -6408,6 +6572,7 @@ LRESULT CALLBACK CirclePlacerDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
     switch (msg) {
         case WM_INITDIALOG: {
             g_hwndCircleDlg = hwnd;
+            ApplyDialogUiFont(hwnd);
             LONG_PTR exStyle = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
             SetWindowLongPtrW(hwnd, GWL_EXSTYLE, exStyle | WS_EX_LAYERED | WS_EX_TOPMOST);
             SetLayeredWindowAttributes(hwnd, 0, 238, LWA_ALPHA);
@@ -6556,6 +6721,7 @@ LRESULT CALLBACK ClickActionDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
     switch (msg) {
         case WM_INITDIALOG: {
             g_hwndClickDlg = hwnd;
+            ApplyDialogUiFont(hwnd);
             LONG_PTR exStyle = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
             SetWindowLongPtrW(hwnd, GWL_EXSTYLE, exStyle | WS_EX_LAYERED | WS_EX_TOPMOST);
             SetLayeredWindowAttributes(hwnd, 0, 238, LWA_ALPHA);
@@ -6630,6 +6796,7 @@ LRESULT CALLBACK ViewTogglesDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
     switch (msg) {
         case WM_INITDIALOG: {
             g_hwndViewTogglesDlg = hwnd;
+            ApplyDialogUiFont(hwnd);
             LONG_PTR exStyle = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
             SetWindowLongPtrW(hwnd, GWL_EXSTYLE, exStyle | WS_EX_LAYERED | WS_EX_TOPMOST);
             SetLayeredWindowAttributes(hwnd, 0, 238, LWA_ALPHA);
@@ -6700,6 +6867,10 @@ LRESULT CALLBACK PasteBuffersDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
     switch (msg) {
         case WM_INITDIALOG: {
             g_hwndPasteBuffersDlg = hwnd;
+            ApplyDialogUiFont(hwnd);
+            if (HWND edit = GetDlgItem(hwnd, IDC_EDIT_PASTE_BUFFER_VALUE)) {
+                SendMessageW(edit, EM_SETLIMITTEXT, 0, 0);
+            }
             LONG_PTR exStyle = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
             SetWindowLongPtrW(hwnd, GWL_EXSTYLE, exStyle | WS_EX_LAYERED | WS_EX_TOPMOST);
             SetLayeredWindowAttributes(hwnd, 0, 238, LWA_ALPHA);
@@ -6757,7 +6928,9 @@ LRESULT CALLBACK PasteBuffersDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
                 if (g_pasteBufferState.stage == PasteBufferStage::Edit ||
                     g_pasteBufferState.stage == PasteBufferStage::ZoneEdit) {
                     std::wstring text = DialogText(hwnd, IDC_EDIT_PASTE_BUFFER_VALUE);
-                    int lines = CountTextLines(text);
+                    int lines = g_pasteBufferState.stage == PasteBufferStage::Edit
+                        ? CountPasteBufferVisibleLines(text)
+                        : CountTextLines(text);
                     bool deliberateLineBreak =
                         (GetKeyState(VK_SHIFT) & 0x8000) &&
                         (GetKeyState(VK_RETURN) & 0x8000);
@@ -7195,11 +7368,13 @@ static std::wstring RegistryHubHelpText() {
         L"Text Buffers And Variables\r\n"
         L"--------------------------\r\n"
         L"A/S/D/F are Registry Hub script variables. They are edited from Shift+Alt+9.\r\n"
-        L"Z/X/C/V are the main paste buffers owned by Shift+Alt+0. Registry Hub can read or set them, but it does not replace that menu.\r\n"
+        L"Z/X/C/V are the main paste buffers owned by Shift+Alt+1. Registry Hub can read or set them, but it does not replace that menu.\r\n"
         L"$A, $S, $D, $F, $Z, $X, $C, and $V resolve to the current buffer text inside {set ...} and condition tokens.\r\n"
-        L"{A} or {A,Z,C} creates a clicked paste sequence. It clicks the current target, then pastes each listed buffer with small Tasket waits.\r\n"
-        L"{paste A} creates a no-click paste. Use this when the target field is already focused.\r\n"
-        L"{enter A,Z} pastes the listed buffers and presses Enter afterward.\r\n\r\n"
+        L"{A} or {A,Z,C} pastes listed buffers with small Tasket waits. By default it does not click first, so focused shells stay focused.\r\n"
+        L"{enter A,Z} pastes the listed buffers and presses Enter afterward. It also defaults to no-click.\r\n"
+        L"{paste A} is an explicit no-click paste token for readability.\r\n"
+        L"{click on} enables prepended focus-clicks for following bare buffer and {enter ...} tokens.\r\n"
+        L"{click off} disables prepended focus-clicks again. Registry Hub starts in click-off mode every Play.\r\n\r\n"
         L"Setting Values\r\n"
         L"--------------\r\n"
         L"{set A literal text}\r\n"
@@ -7247,6 +7422,7 @@ static std::wstring RegistryHubHelpText() {
         L"{wait 200} waits 200 milliseconds.\r\n"
         L"{point 3}, {point 4}, and {point 5} move through the canonical Tasket cursor-move template.\r\n"
         L"{click} or {left} emits a left-click action.\r\n"
+        L"{click on} / {click off} changes whether buffer paste tokens click before pasting.\r\n"
         L"{right} emits a right-click action.\r\n"
         L"{middle} emits a middle-click action.\r\n"
         L"{ALT_LEFT F4} and similar unknown brace tokens become Tasket key chords.\r\n\r\n"
@@ -7296,42 +7472,42 @@ static void LayoutRegistryHubDialog(HWND hwnd) {
     bool growEdit = RegistryHubStageUsesGrowEdit(g_registryHubState.stage);
     bool showRun = g_registryHubState.stage == RegistryHubStage::Script;
     bool showUtilityButtons = showRun;
-    int width = large ? 780 : 560;
-    int editHeight = large ? 390 : 24;
+    int width = large ? UiPx(780) : UiPx(560);
+    int editHeight = large ? UiPx(390) : UiPx(26);
     if (!large && growEdit) {
         int lines = std::max(1, g_registryHubState.visibleLines);
-        editHeight = 24 + (lines - 1) * 20;
-        if (editHeight > 164) editHeight = 164;
+        editHeight = UiPx(26) + (lines - 1) * UiPx(20);
+        if (editHeight > UiPx(164)) editHeight = UiPx(164);
     }
-    int height = large ? 510 : (132 + (editHeight - 24));
-    const int margin = 12;
+    int height = large ? UiPx(510) : (UiPx(132) + (editHeight - UiPx(26)));
+    const int margin = UiPx(12);
     int x = g_screenX + (g_screenW - width) / 2;
-    int y = large ? (g_screenY + (g_screenH - height) / 2) : (g_screenY + g_screenH - height - 42);
+    int y = large ? (g_screenY + (g_screenH - height) / 2) : (g_screenY + g_screenH - height - UiPx(42));
     if (x < g_screenX + margin) x = g_screenX + margin;
     if (x + width > g_screenX + g_screenW - margin) x = g_screenX + g_screenW - width - margin;
     if (y < g_screenY + margin) y = g_screenY + margin;
     if (y + height > g_screenY + g_screenH - margin) y = g_screenY + g_screenH - height - margin;
     SetWindowPos(hwnd, HWND_TOPMOST, x, y, width, height, SWP_SHOWWINDOW);
-    MoveWindow(GetDlgItem(hwnd, IDC_STATIC_REGISTRY_HUB_PROMPT), 14, 10, width - 28, 18, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_EDIT_REGISTRY_HUB_VALUE), 14, 30, width - 28, editHeight, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_STATIC_REGISTRY_HUB_HINT), 14, 38 + editHeight, width - 28, large ? 32 : 18, TRUE);
-    MoveWindow(GetDlgItem(hwnd, IDC_STATIC_REGISTRY_HUB_STATUS), 14, large ? (76 + editHeight) : (60 + editHeight), width - (showRun ? 128 : 28), large ? 36 : 20, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_STATIC_REGISTRY_HUB_PROMPT), UiPx(14), UiPx(10), width - UiPx(28), UiPx(18), TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_EDIT_REGISTRY_HUB_VALUE), UiPx(14), UiPx(30), width - UiPx(28), editHeight, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_STATIC_REGISTRY_HUB_HINT), UiPx(14), UiPx(40) + editHeight, width - UiPx(28), large ? UiPx(34) : UiPx(18), TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_STATIC_REGISTRY_HUB_STATUS), UiPx(14), large ? (UiPx(78) + editHeight) : (UiPx(62) + editHeight), width - (showRun ? UiPx(128) : UiPx(28)), large ? UiPx(38) : UiPx(20), TRUE);
     ShowDlgItem(hwnd, IDC_BTN_REGISTRY_HUB_CLEAR, showUtilityButtons);
     ShowDlgItem(hwnd, IDC_BTN_REGISTRY_HUB_EXPORT, showUtilityButtons);
     ShowDlgItem(hwnd, IDC_BTN_REGISTRY_HUB_IMPORT, showUtilityButtons);
     ShowDlgItem(hwnd, IDC_BTN_REGISTRY_HUB_SAVE_SCHTS, showUtilityButtons);
     ShowDlgItem(hwnd, IDOK, showRun);
     if (showUtilityButtons) {
-        int buttonY = height - 36;
-        int buttonW = 90;
-        int gap = 8;
+        int buttonY = height - UiPx(38);
+        int buttonW = UiPx(96);
+        int gap = UiPx(8);
         int totalW = buttonW * 5 + gap * 4;
-        int startX = width - totalW - 14;
-        MoveWindow(GetDlgItem(hwnd, IDC_BTN_REGISTRY_HUB_CLEAR), startX, buttonY, buttonW, 24, TRUE);
-        MoveWindow(GetDlgItem(hwnd, IDC_BTN_REGISTRY_HUB_EXPORT), startX + buttonW + gap, buttonY, buttonW, 24, TRUE);
-        MoveWindow(GetDlgItem(hwnd, IDC_BTN_REGISTRY_HUB_IMPORT), startX + (buttonW + gap) * 2, buttonY, buttonW, 24, TRUE);
-        MoveWindow(GetDlgItem(hwnd, IDC_BTN_REGISTRY_HUB_SAVE_SCHTS), startX + (buttonW + gap) * 3, buttonY, buttonW, 24, TRUE);
-        MoveWindow(GetDlgItem(hwnd, IDOK), startX + (buttonW + gap) * 4, buttonY, buttonW, 24, TRUE);
+        int startX = width - totalW - UiPx(14);
+        MoveWindow(GetDlgItem(hwnd, IDC_BTN_REGISTRY_HUB_CLEAR), startX, buttonY, buttonW, UiPx(26), TRUE);
+        MoveWindow(GetDlgItem(hwnd, IDC_BTN_REGISTRY_HUB_EXPORT), startX + buttonW + gap, buttonY, buttonW, UiPx(26), TRUE);
+        MoveWindow(GetDlgItem(hwnd, IDC_BTN_REGISTRY_HUB_IMPORT), startX + (buttonW + gap) * 2, buttonY, buttonW, UiPx(26), TRUE);
+        MoveWindow(GetDlgItem(hwnd, IDC_BTN_REGISTRY_HUB_SAVE_SCHTS), startX + (buttonW + gap) * 3, buttonY, buttonW, UiPx(26), TRUE);
+        MoveWindow(GetDlgItem(hwnd, IDOK), startX + (buttonW + gap) * 4, buttonY, buttonW, UiPx(26), TRUE);
     } else {
         MoveWindow(GetDlgItem(hwnd, IDC_BTN_REGISTRY_HUB_CLEAR), -200, -200, 1, 1, TRUE);
         MoveWindow(GetDlgItem(hwnd, IDC_BTN_REGISTRY_HUB_EXPORT), -200, -200, 1, 1, TRUE);
@@ -7365,7 +7541,7 @@ static void UpdateRegistryHubDialogText(HWND hwnd) {
     if (edit) {
         SendMessageW(edit, EM_SETREADONLY, g_registryHubState.stage == RegistryHubStage::Help ? TRUE : FALSE, 0);
         SendMessageW(edit, WM_SETFONT, (WPARAM)(g_registryHubState.stage == RegistryHubStage::Help ? g_hFontMono : g_hFontCoord), TRUE);
-        SendMessageW(edit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(8, 8));
+        SendMessageW(edit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(UiPx(8), UiPx(8)));
     }
 
     switch (g_registryHubState.stage) {
@@ -7439,7 +7615,7 @@ static void UpdateRegistryHubDialogText(HWND hwnd) {
         case RegistryHubStage::PasteBufferSelect:
             SetDlgItemTextW(hwnd, IDC_STATIC_REGISTRY_HUB_PROMPT, L"Paste buffer");
             SetDlgItemTextW(hwnd, IDC_STATIC_REGISTRY_HUB_HINT, L"Choose Z, X, C, or V.");
-            SetDlgItemTextW(hwnd, IDC_STATIC_REGISTRY_HUB_STATUS, L"These are the same paste buffers used by Shift+Alt+0.");
+            SetDlgItemTextW(hwnd, IDC_STATIC_REGISTRY_HUB_STATUS, L"These are the same paste buffers used by Shift+Alt+1.");
             SetDlgItemTextW(hwnd, IDC_EDIT_REGISTRY_HUB_VALUE, L"");
             break;
         case RegistryHubStage::PasteBufferEdit: {
@@ -7453,7 +7629,7 @@ static void UpdateRegistryHubDialogText(HWND hwnd) {
         case RegistryHubStage::ZoneSelect:
             SetDlgItemTextW(hwnd, IDC_STATIC_REGISTRY_HUB_PROMPT, L"Zone buffer");
             SetDlgItemTextW(hwnd, IDC_STATIC_REGISTRY_HUB_HINT, L"Choose Z, X, C, or V.");
-            SetDlgItemTextW(hwnd, IDC_STATIC_REGISTRY_HUB_STATUS, L"Stores x1,y1,x2,y2. These are shared with Shift+Alt+0 -> N.");
+            SetDlgItemTextW(hwnd, IDC_STATIC_REGISTRY_HUB_STATUS, L"Stores x1,y1,x2,y2. These are shared with Shift+Alt+1 -> N.");
             SetDlgItemTextW(hwnd, IDC_EDIT_REGISTRY_HUB_VALUE, L"");
             break;
         case RegistryHubStage::ZoneEdit: {
@@ -7726,6 +7902,7 @@ LRESULT CALLBACK RegistryHubDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
     switch (msg) {
         case WM_INITDIALOG: {
             g_hwndRegistryHubDlg = hwnd;
+            ApplyDialogUiFont(hwnd);
             LONG_PTR exStyle = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
             SetWindowLongPtrW(hwnd, GWL_EXSTYLE, exStyle | WS_EX_LAYERED | WS_EX_TOPMOST);
             SetLayeredWindowAttributes(hwnd, 0, 238, LWA_ALPHA);
@@ -7892,6 +8069,7 @@ LRESULT CALLBACK SaveCursorDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
 
     switch (msg) {
         case WM_INITDIALOG: {
+            ApplyDialogUiFont(hwnd);
             LONG_PTR exStyle = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
             SetWindowLongPtrW(hwnd, GWL_EXSTYLE, exStyle | WS_EX_LAYERED | WS_EX_TOPMOST);
             SetLayeredWindowAttributes(hwnd, 0, 238, LWA_ALPHA);
@@ -7997,6 +8175,7 @@ LRESULT CALLBACK RecordKeysDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
     switch (msg) {
         case WM_INITDIALOG: {
             g_hwndRecordKeysDlg = hwnd;
+            ApplyDialogUiFont(hwnd);
             LONG_PTR exStyle = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
             SetWindowLongPtrW(hwnd, GWL_EXSTYLE, exStyle | WS_EX_LAYERED | WS_EX_TOPMOST);
             SetLayeredWindowAttributes(hwnd, 0, 238, LWA_ALPHA);
@@ -8240,6 +8419,7 @@ LRESULT CALLBACK ManualKeysDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
 
     switch (msg) {
         case WM_INITDIALOG: {
+            ApplyDialogUiFont(hwnd);
             LONG_PTR exStyle = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
             SetWindowLongPtrW(hwnd, GWL_EXSTYLE, exStyle | WS_EX_LAYERED | WS_EX_TOPMOST);
             SetLayeredWindowAttributes(hwnd, 0, 238, LWA_ALPHA);
@@ -8258,6 +8438,7 @@ LRESULT CALLBACK ManualKeysDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
             std::wstringstream ss;
             ss << L"Step " << s_stepNum;
             SetDlgItemTextW(hwnd, IDC_STATIC_STEP_NUM, ss.str().c_str());
+            ScaleResourceDialogFromCurrentLayout(hwnd);
             return FALSE;
         }
 
@@ -8410,13 +8591,13 @@ void CreateCoordPanel() {
 
     DWORD exStyle = WS_EX_TOPMOST | WS_EX_APPWINDOW | WS_EX_LAYERED;
     DWORD style = WS_POPUP;
-    RECT wr = {0, 0, COORD_PANEL_CLIENT_W, COORD_PANEL_CLIENT_H};
+    RECT wr = {0, 0, CoordPanelW(), CoordPanelH()};
     AdjustWindowRectEx(&wr, style, FALSE, exStyle);
     int windowW = wr.right - wr.left;
     int windowH = wr.bottom - wr.top;
 
-    int x = g_screenX + g_screenW - windowW - 20;
-    int y = g_screenY + 20;
+    int x = g_screenX + g_screenW - windowW - UiPx(20);
+    int y = g_screenY + UiPx(20);
 
     g_hwndCoordPanel = CreateWindowExW(
         exStyle,
@@ -8455,14 +8636,14 @@ void CreateKeyDisplayWindow() {
         WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
         L"CursorOverlayKeyDisplay", L"CursorOverlay Keys",
         WS_POPUP,
-        g_screenX, g_screenY, KEY_DISPLAY_W, KEY_DISPLAY_H,
+        g_screenX, g_screenY, KeyDisplayW(), KeyDisplayH(),
         nullptr, nullptr, g_hInst, nullptr);
 
     if (!g_hwndKeyDisplay) return;
 
     // Create 32bpp DIB section for alpha rendering
-    g_keyDibW = KEY_DISPLAY_W;
-    g_keyDibH = KEY_DISPLAY_H;
+    g_keyDibW = KeyDisplayW();
+    g_keyDibH = KeyDisplayH();
 
     BITMAPINFO bmi = {};
     bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
@@ -8541,8 +8722,18 @@ int DetectDisplayRefreshHz() {
 
 int DetectDisplayUpdateIntervalMs() {
     g_displayRefreshHz = DetectDisplayRefreshHz();
+    wchar_t overrideValue[32] = {};
+    DWORD len = GetEnvironmentVariableW(L"MACROHELP_UPDATE_MS", overrideValue, (DWORD)(sizeof(overrideValue) / sizeof(overrideValue[0])));
+    if (len > 0 && len < (DWORD)(sizeof(overrideValue) / sizeof(overrideValue[0]))) {
+        wchar_t* end = nullptr;
+        long parsed = wcstol(overrideValue, &end, 10);
+        if (end != overrideValue && parsed >= 1 && parsed <= 100) {
+            return (int)parsed;
+        }
+    }
+
     double interval = 1000.0 / (double)std::max(1, g_displayRefreshHz);
-    return std::max(1, std::min(DEFAULT_UPDATE_MS, (int)std::round(interval)));
+    return std::max(MIN_CROSSHAIR_UPDATE_MS, std::min(DEFAULT_UPDATE_MS, (int)std::round(interval)));
 }
 
 bool InitApp() {
@@ -8550,15 +8741,16 @@ bool InitApp() {
     // awareness is enabled, otherwise Windows returns scaled coordinates.
     RefreshScreenMetrics();
     g_updateMs = DetectDisplayUpdateIntervalMs();
+    g_uiScale = DetectUiScale();
 
     // Fonts
-    g_hFontCoord = CreateFontW(13, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+    g_hFontCoord = CreateFontW(UiFontPx(13), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                                 CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
-    g_hFontBold = CreateFontW(18, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+    g_hFontBold = CreateFontW(UiFontPx(18), 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
                                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                                CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
-    g_hFontMono = CreateFontW(13, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+    g_hFontMono = CreateFontW(UiFontPx(13), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                                CLEARTYPE_QUALITY, FIXED_PITCH | FF_MODERN, L"Consolas");
     g_hbrColorkey = CreateSolidBrush(COLORKEY);
@@ -8714,7 +8906,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     }
 
     // Hotkeys
-    RegisterHotKey(g_hwndCrosshair, IDH_SAVE_CURSOR, MOD_SHIFT | MOD_ALT, '1');
+    RegisterHotKey(g_hwndCrosshair, IDH_SAVE_CURSOR, MOD_SHIFT | MOD_ALT, '0');
     RegisterHotKey(g_hwndCrosshair, IDH_RECORD_KEYS, MOD_SHIFT | MOD_ALT, '2');
     RegisterHotKey(g_hwndCrosshair, IDH_CIRCLE_PLACER, MOD_SHIFT | MOD_ALT, '3');
     RegisterHotKey(g_hwndCrosshair, IDH_CLICK_LEFT, MOD_SHIFT | MOD_ALT, '4');
@@ -8723,7 +8915,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     RegisterHotKey(g_hwndCrosshair, IDH_STOP_ALL_TASKET, MOD_SHIFT | MOD_ALT, '7');
     RegisterHotKey(g_hwndCrosshair, IDH_VIEW_TOGGLES, MOD_SHIFT | MOD_ALT, '8');
     RegisterHotKey(g_hwndCrosshair, IDH_REGISTRY_HUB, MOD_SHIFT | MOD_ALT, '9');
-    RegisterHotKey(g_hwndCrosshair, IDH_PASTE_BUFFERS, MOD_SHIFT | MOD_ALT, '0');
+    RegisterHotKey(g_hwndCrosshair, IDH_PASTE_BUFFERS, MOD_SHIFT | MOD_ALT, '1');
 
     // Keyboard hook (always active for key display)
     g_hKeyboardHook = SetWindowsHookEx(WH_KEYBOARD_LL, LowLevelKeyboardProc, hInstance, 0);
@@ -8762,7 +8954,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     // Balloon notification
     nid.uFlags = NIF_INFO;
     wcscpy_s(nid.szInfoTitle, L"CursorOverlay");
-    wcscpy_s(nid.szInfo, L"Running! 1=Save 2=Record 3=Circle 4/5/6=Clicks 7=Stop 8=View 9=Hub 0=Paste");
+    wcscpy_s(nid.szInfo, L"Running! 1=Paste 2=Record 3=Circle 4/5/6=Clicks 7=Stop 8=View 9=Hub 0=Save");
     nid.dwInfoFlags = NIIF_INFO | NIIF_NOSOUND;
     Shell_NotifyIcon(NIM_MODIFY, &nid);
 
