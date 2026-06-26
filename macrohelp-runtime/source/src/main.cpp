@@ -405,6 +405,7 @@ bool        g_crosshairVisible = true;
 bool        g_coordPanelVisible = true;
 bool        g_keyDisplayVisible = true;
 bool        g_gridVisible = false;
+bool        g_coordinatesOnlyMode = false;
 bool        g_running = true;
 
 // GDI / GDI+
@@ -2275,7 +2276,7 @@ static void SendNativeMouseClick(int buttonIndex) {
 static void LayoutClickActionDialog(HWND hwnd) {
     if (!hwnd) return;
 
-    int width = UiPx(430);
+    int width = UiPx(560);
     int height = UiPx(118);
     const int margin = UiPx(12);
     int x = g_screenX + (g_screenW - width) / 2;
@@ -2811,11 +2812,12 @@ static void CloseViewTogglesDialog(HWND hwnd) {
 static void UpdateViewTogglesDialogText(HWND hwnd) {
     if (!hwnd) return;
     SetDlgItemTextW(hwnd, IDC_STATIC_VIEW_PROMPT, L"Display toggles");
-    SetDlgItemTextW(hwnd, IDC_STATIC_VIEW_HINT, L"Z crosshair | X gridlines");
+    SetDlgItemTextW(hwnd, IDC_STATIC_VIEW_HINT, L"Z target | X grid | C coords only");
 
     std::wstringstream ss;
     ss << L"Crosshair " << (g_crosshairVisible ? L"on" : L"off")
        << L"  |  Grid " << (g_gridVisible ? L"on" : L"off")
+       << L"  |  Coords-only " << (g_coordinatesOnlyMode ? L"on" : L"off")
        << L"  |  Type one command key.";
     SetDlgItemTextW(hwnd, IDC_STATIC_VIEW_STATUS, ss.str().c_str());
     SetDlgItemTextW(hwnd, IDC_EDIT_VIEW_VALUE, L"");
@@ -2838,6 +2840,18 @@ static bool RunViewToggleCommand(HWND hwnd, const std::wstring& rawCommand) {
         return true;
     }
 
+    if (command == "c" || command == "coords" || command == "coordinates") {
+        g_coordinatesOnlyMode = !g_coordinatesOnlyMode;
+        if (g_coordinatesOnlyMode && !g_crosshairVisible) {
+            g_crosshairVisible = true;
+            ShowWindow(g_hwndCrosshair, SW_SHOW);
+        }
+        InvalidateRect(g_hwndCrosshair, nullptr, FALSE);
+        PushKeyHistory({g_coordinatesOnlyMode ? "COORDS_ONLY" : "TARGET_ON"});
+        CloseViewTogglesDialog(hwnd);
+        return true;
+    }
+
     if (command == "x" || command == "grid" || command == "gridlines") {
         g_gridVisible = !g_gridVisible;
         if (g_gridVisible && !g_crosshairVisible) {
@@ -2852,7 +2866,7 @@ static bool RunViewToggleCommand(HWND hwnd, const std::wstring& rawCommand) {
 
     SetDlgItemTextW(hwnd, IDC_EDIT_VIEW_VALUE, L"");
     SetDlgItemTextW(hwnd, IDC_STATIC_VIEW_STATUS,
-        L"Use Z for crosshair or X for gridlines. Esc cancels.");
+        L"Use Z for crosshair, X for gridlines, or C for coordinates-only. Esc cancels.");
     return true;
 }
 
@@ -5931,36 +5945,38 @@ static void DrawCrosshair(HDC hdc) {
     // Fill with colorkey (transparent)
     FillRect(hdc, &rc, g_hbrColorkey);
 
-    DrawCursorGrid(hdc, rc, pt);
-    DrawCirclePreview(hdc);
+    if (!g_coordinatesOnlyMode) {
+        DrawCursorGrid(hdc, rc, pt);
+        DrawCirclePreview(hdc);
 
-    // Horizontal line
-    HPEN hPen = CreatePen(PS_SOLID, CROSSHAIR_WIDTH, CROSSHAIR_COLOR);
-    HPEN hOld = (HPEN)SelectObject(hdc, hPen);
-    MoveToEx(hdc, rc.left, pt.y, nullptr);
-    LineTo(hdc, rc.right, pt.y);
-    SelectObject(hdc, hOld);
-    DeleteObject(hPen);
+        // Horizontal line
+        HPEN hPen = CreatePen(PS_SOLID, CROSSHAIR_WIDTH, CROSSHAIR_COLOR);
+        HPEN hOld = (HPEN)SelectObject(hdc, hPen);
+        MoveToEx(hdc, rc.left, pt.y, nullptr);
+        LineTo(hdc, rc.right, pt.y);
+        SelectObject(hdc, hOld);
+        DeleteObject(hPen);
 
-    // Vertical line
-    hPen = CreatePen(PS_SOLID, CROSSHAIR_WIDTH, CROSSHAIR_COLOR);
-    hOld = (HPEN)SelectObject(hdc, hPen);
-    MoveToEx(hdc, pt.x, rc.top, nullptr);
-    LineTo(hdc, pt.x, rc.bottom);
-    SelectObject(hdc, hOld);
-    DeleteObject(hPen);
+        // Vertical line
+        hPen = CreatePen(PS_SOLID, CROSSHAIR_WIDTH, CROSSHAIR_COLOR);
+        hOld = (HPEN)SelectObject(hdc, hPen);
+        MoveToEx(hdc, pt.x, rc.top, nullptr);
+        LineTo(hdc, pt.x, rc.bottom);
+        SelectObject(hdc, hOld);
+        DeleteObject(hPen);
 
-    // Existing cursor target dot.
-    HBRUSH hBr = CreateSolidBrush(CENTER_DOT_COLOR);
-    HPEN hDotPen = CreatePen(PS_SOLID, 1, CENTER_DOT_COLOR);
-    HPEN hOldDP = (HPEN)SelectObject(hdc, hDotPen);
-    HBRUSH hOldBr = (HBRUSH)SelectObject(hdc, hBr);
-    int r = CENTER_DOT_R;
-    Ellipse(hdc, pt.x - r, pt.y - r, pt.x + r, pt.y + r);
-    SelectObject(hdc, hOldDP);
-    SelectObject(hdc, hOldBr);
-    DeleteObject(hDotPen);
-    DeleteObject(hBr);
+        // Existing cursor target dot.
+        HBRUSH hBr = CreateSolidBrush(CENTER_DOT_COLOR);
+        HPEN hDotPen = CreatePen(PS_SOLID, 1, CENTER_DOT_COLOR);
+        HPEN hOldDP = (HPEN)SelectObject(hdc, hDotPen);
+        HBRUSH hOldBr = (HBRUSH)SelectObject(hdc, hBr);
+        int r = CENTER_DOT_R;
+        Ellipse(hdc, pt.x - r, pt.y - r, pt.x + r, pt.y + r);
+        SelectObject(hdc, hOldDP);
+        SelectObject(hdc, hOldBr);
+        DeleteObject(hDotPen);
+        DeleteObject(hBr);
+    }
 
     // Cursor-relative coordinate tag. Keep it detached from the key HUD and
     // let it flip around the pointer when it approaches a screen edge.
@@ -6097,7 +6113,9 @@ LRESULT CALLBACK CrosshairWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
                 PushKeyHistory({"TASKET", "STOP"});
             }
             else if (wParam == IDH_VIEW_TOGGLES) {
-                StartViewToggles();
+                g_coordPanelVisible = !IsWindowVisible(g_hwndCoordPanel);
+                ShowWindow(g_hwndCoordPanel, g_coordPanelVisible ? SW_SHOW : SW_HIDE);
+                PushKeyHistory({g_coordPanelVisible ? "PANEL_ON" : "PANEL_OFF"});
             }
             else if (wParam == IDH_PASTE_BUFFERS) {
                 StartPasteBuffers();
@@ -6144,7 +6162,7 @@ LRESULT CALLBACK CoordPanelWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
                 return 0;
             }
             if (wParam == '2') {
-                PostMessage(g_hwndCrosshair, WM_HOTKEY, IDH_RECORD_KEYS, 0);
+                PostMessage(g_hwndCrosshair, WM_HOTKEY, IDH_REGISTRY_HUB, 0);
                 return 0;
             }
             if (wParam == '3' || wParam == 'C') {
@@ -6167,12 +6185,8 @@ LRESULT CALLBACK CoordPanelWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
                 PostMessage(g_hwndCrosshair, WM_HOTKEY, IDH_STOP_ALL_TASKET, 0);
                 return 0;
             }
-            if (wParam == '8') {
-                PostMessage(g_hwndCrosshair, WM_HOTKEY, IDH_VIEW_TOGGLES, 0);
-                return 0;
-            }
             if (wParam == '9') {
-                PostMessage(g_hwndCrosshair, WM_HOTKEY, IDH_REGISTRY_HUB, 0);
+                PostMessage(g_hwndCrosshair, WM_HOTKEY, IDH_RECORD_KEYS, 0);
                 return 0;
             }
             if (wParam == '0') {
@@ -6260,6 +6274,7 @@ LRESULT CALLBACK CoordPanelWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
             SetTextColor(hdc, RGB(205, 205, 210));
             std::wstring st = g_crosshairVisible ? L"Crosshair: active" : L"Crosshair: hidden";
             st += g_gridVisible ? L"  Grid: on" : L"  Grid: off";
+            st += g_coordinatesOnlyMode ? L"  Coords-only: on" : L"  Coords-only: off";
             st += L"  Screen: ";
             st += std::to_wstring(g_screenW);
             st += L"x";
@@ -6274,7 +6289,7 @@ LRESULT CALLBACK CoordPanelWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
             TextOutW(hdc, rc.left + UiPx(15), rc.top + UiPx(16), st.c_str(), (int)st.length());
 
             SetTextColor(hdc, RGB(170, 190, 205));
-            std::wstring hotkeys = L"Shift+Alt: 1 Paste  2 Record  3 Circle  4 Left  5 Right  6 Middle  7 Stop  8 View  9 Hub  0 Save";
+            std::wstring hotkeys = L"Shift+Alt: 1 Paste  2 Hub  3 Circle  4 Left  5 Right  6 Middle  7 Stop  8 Panel  9 Record  0 Save";
             TextOutW(hdc, rc.left + UiPx(15), rc.top + UiPx(40), hotkeys.c_str(), (int)hotkeys.length());
 
             EndPaint(hwnd, &ps);
@@ -6288,7 +6303,7 @@ LRESULT CALLBACK CoordPanelWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
                 if (x < UiPx(85)) {
                     PostMessage(g_hwndCrosshair, WM_HOTKEY, IDH_PASTE_BUFFERS, 0);
                 } else if (x < UiPx(190)) {
-                    PostMessage(g_hwndCrosshair, WM_HOTKEY, IDH_RECORD_KEYS, 0);
+                    PostMessage(g_hwndCrosshair, WM_HOTKEY, IDH_REGISTRY_HUB, 0);
                 } else if (x < UiPx(285)) {
                     PostMessage(g_hwndCrosshair, WM_HOTKEY, IDH_CIRCLE_PLACER, 0);
                 } else if (x < UiPx(380)) {
@@ -6319,14 +6334,14 @@ LRESULT CALLBACK CoordPanelWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
                     g_keyDisplayVisible ? L"Hide Key Display" : L"Show Key Display");
                 AppendMenuW(hm, MF_SEPARATOR, 0, nullptr);
                 AppendMenuW(hm, MF_STRING, IDM_PASTE_BUFFERS, L"Paste Buffers (Shift+Alt+1)");
-                AppendMenuW(hm, MF_STRING, IDM_RECORD_KEYS, L"Record Keys (Shift+Alt+2)");
+                AppendMenuW(hm, MF_STRING, IDM_RECORD_KEYS, L"Record Keys (Shift+Alt+9)");
                 AppendMenuW(hm, MF_STRING, IDM_CIRCLE_PLACER, L"Circle Placement (Shift+Alt+3)");
                 AppendMenuW(hm, MF_STRING, IDM_CLICK_LEFT, L"Manual Left Click (Shift+Alt+4)");
                 AppendMenuW(hm, MF_STRING, IDM_CLICK_RIGHT, L"Manual Right Click (Shift+Alt+5)");
                 AppendMenuW(hm, MF_STRING, IDM_CLICK_MIDDLE, L"Manual Middle Click (Shift+Alt+6)");
                 AppendMenuW(hm, MF_STRING, IDM_STOP_ALL_TASKET, L"Stop All Tasket Tasks (Shift+Alt+7)");
-                AppendMenuW(hm, MF_STRING, IDM_VIEW_TOGGLES, L"View Toggles (Shift+Alt+8)");
-                AppendMenuW(hm, MF_STRING, IDM_REGISTRY_HUB, L"Registry Hub (Shift+Alt+9)");
+                AppendMenuW(hm, MF_STRING, IDM_VIEW_TOGGLES, L"Display Toggles (Hub -> 1)");
+                AppendMenuW(hm, MF_STRING, IDM_REGISTRY_HUB, L"Registry Hub (Shift+Alt+2)");
                 AppendMenuW(hm, MF_STRING, IDM_SAVE_CURSOR, L"Save Cursor (Shift+Alt+0)");
                 AppendMenuW(hm, MF_SEPARATOR, 0, nullptr);
                 AppendMenuW(hm, MF_STRING, IDM_EXIT, L"Exit");
@@ -6834,7 +6849,7 @@ LRESULT CALLBACK ViewTogglesDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         case WM_COMMAND:
             if (LOWORD(wParam) == IDC_EDIT_VIEW_VALUE && HIWORD(wParam) == EN_CHANGE) {
                 std::wstring text = DialogText(hwnd, IDC_EDIT_VIEW_VALUE);
-                if (text.size() == 1 && wcschr(L"zZxXvV", text[0])) {
+                if (text.size() == 1 && wcschr(L"zZxXcCvV", text[0])) {
                     RunViewToggleCommand(hwnd, text);
                 }
                 return TRUE;
@@ -7344,6 +7359,7 @@ static std::wstring RegistryHubHelpText() {
         L"The normal verb is Play. Low-level .scht saving exists only for debugging and future-proofing against Tasket format changes.\r\n\r\n"
         L"Router Keys Before Opening The Script Editor\r\n"
         L"--------------------------------------------\r\n"
+        L"1  Open display toggles. In that screen, Z toggles the crosshair window, X toggles gridlines, and C leaves only cursor coordinates.\r\n"
         L"Z  Open the workflow script editor.\r\n"
         L"P  Play the current workflow immediately, then hide the Registry Hub window on success.\r\n"
         L"L  Clear Registry Hub script-local state. Paste buffers and zone buffers remain available.\r\n"
@@ -7367,7 +7383,7 @@ static std::wstring RegistryHubHelpText() {
         L"Play       Schedules the compiled Tasket flow through tasket-httpd.\r\n\r\n"
         L"Text Buffers And Variables\r\n"
         L"--------------------------\r\n"
-        L"A/S/D/F are Registry Hub script variables. They are edited from Shift+Alt+9.\r\n"
+        L"A/S/D/F are Registry Hub script variables. They are edited from the Registry Hub router.\r\n"
         L"Z/X/C/V are the main paste buffers owned by Shift+Alt+1. Registry Hub can read or set them, but it does not replace that menu.\r\n"
         L"$A, $S, $D, $F, $Z, $X, $C, and $V resolve to the current buffer text inside {set ...} and condition tokens.\r\n"
         L"{A} or {A,Z,C} pastes listed buffers with small Tasket waits. By default it does not click first, so focused shells stay focused.\r\n"
@@ -7472,7 +7488,7 @@ static void LayoutRegistryHubDialog(HWND hwnd) {
     bool growEdit = RegistryHubStageUsesGrowEdit(g_registryHubState.stage);
     bool showRun = g_registryHubState.stage == RegistryHubStage::Script;
     bool showUtilityButtons = showRun;
-    int width = large ? UiPx(780) : UiPx(560);
+    int width = large ? UiPx(780) : UiPx(680);
     int editHeight = large ? UiPx(390) : UiPx(26);
     if (!large && growEdit) {
         int lines = std::max(1, g_registryHubState.visibleLines);
@@ -7548,7 +7564,7 @@ static void UpdateRegistryHubDialogText(HWND hwnd) {
         case RegistryHubStage::Command:
             SetDlgItemTextW(hwnd, IDC_STATIC_REGISTRY_HUB_PROMPT, L"Registry Hub");
             SetDlgItemTextW(hwnd, IDC_STATIC_REGISTRY_HUB_HINT,
-                L"Z script | P play | E export path | I import path | L clear | H help | R registry | X/C/G aliases | A/S/D/F vars | N zones | 3/4/5 pts");
+                L"1 view | Z script | P play | E/I paths | L clear | H help | R registry | X/C/G shells | A/S/D/F vars | N zones | 3/4/5 pts");
             SetDlgItemTextW(hwnd, IDC_STATIC_REGISTRY_HUB_STATUS,
                 g_registryHubState.status.empty() ? L"Type one command key. Escape closes and preserves state." : g_registryHubState.status.c_str());
             SetDlgItemTextW(hwnd, IDC_EDIT_REGISTRY_HUB_VALUE, L"");
@@ -7776,6 +7792,11 @@ static bool RunRegistryHubRouterCommand(HWND hwnd, const std::wstring& raw) {
         UpdateRegistryHubDialogText(hwnd);
         return true;
     }
+    if (command == "1" || command == "view" || command == "display") {
+        CloseRegistryHubDialog(hwnd);
+        StartViewToggles();
+        return true;
+    }
     if (command == "r") g_registryHubState.stage = RegistryHubStage::RegistryPath;
     else if (command == "e") {
         g_registryHubState.stage = RegistryHubStage::ExportPath;
@@ -7947,7 +7968,7 @@ LRESULT CALLBACK RegistryHubDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
                     g_registryHubState.stage == RegistryHubStage::PasteBufferSelect ||
                     g_registryHubState.stage == RegistryHubStage::ZoneSelect) {
                     std::wstring text = DialogText(hwnd, IDC_EDIT_REGISTRY_HUB_VALUE);
-                    if (text.size() == 1 && wcschr(L"zZpPeEiIlLhH?rRxXcCgGaAsSdDfFbBnN345vV", text[0])) {
+                    if (text.size() == 1 && wcschr(L"zZpPeEiIlLhH?rRxXcCgGaAsSdDfFbBnN1345vV", text[0])) {
                         RunRegistryHubCommand(hwnd, text);
                     }
                     return TRUE;
@@ -8907,14 +8928,14 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
 
     // Hotkeys
     RegisterHotKey(g_hwndCrosshair, IDH_SAVE_CURSOR, MOD_SHIFT | MOD_ALT, '0');
-    RegisterHotKey(g_hwndCrosshair, IDH_RECORD_KEYS, MOD_SHIFT | MOD_ALT, '2');
+    RegisterHotKey(g_hwndCrosshair, IDH_REGISTRY_HUB, MOD_SHIFT | MOD_ALT, '2');
     RegisterHotKey(g_hwndCrosshair, IDH_CIRCLE_PLACER, MOD_SHIFT | MOD_ALT, '3');
     RegisterHotKey(g_hwndCrosshair, IDH_CLICK_LEFT, MOD_SHIFT | MOD_ALT, '4');
     RegisterHotKey(g_hwndCrosshair, IDH_CLICK_RIGHT, MOD_SHIFT | MOD_ALT, '5');
     RegisterHotKey(g_hwndCrosshair, IDH_CLICK_MIDDLE, MOD_SHIFT | MOD_ALT, '6');
     RegisterHotKey(g_hwndCrosshair, IDH_STOP_ALL_TASKET, MOD_SHIFT | MOD_ALT, '7');
     RegisterHotKey(g_hwndCrosshair, IDH_VIEW_TOGGLES, MOD_SHIFT | MOD_ALT, '8');
-    RegisterHotKey(g_hwndCrosshair, IDH_REGISTRY_HUB, MOD_SHIFT | MOD_ALT, '9');
+    RegisterHotKey(g_hwndCrosshair, IDH_RECORD_KEYS, MOD_SHIFT | MOD_ALT, '9');
     RegisterHotKey(g_hwndCrosshair, IDH_PASTE_BUFFERS, MOD_SHIFT | MOD_ALT, '1');
 
     // Keyboard hook (always active for key display)
@@ -8954,7 +8975,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     // Balloon notification
     nid.uFlags = NIF_INFO;
     wcscpy_s(nid.szInfoTitle, L"CursorOverlay");
-    wcscpy_s(nid.szInfo, L"Running! 1=Paste 2=Record 3=Circle 4/5/6=Clicks 7=Stop 8=View 9=Hub 0=Save");
+    wcscpy_s(nid.szInfo, L"Running! 1=Paste 2=Hub 3=Circle 4/5/6=Clicks 7=Stop 8=Panel 9=Record 0=Save");
     nid.dwInfoFlags = NIIF_INFO | NIIF_NOSOUND;
     Shell_NotifyIcon(NIM_MODIFY, &nid);
 
