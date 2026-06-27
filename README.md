@@ -12,6 +12,8 @@ Not only is the harness capable of spawning macros and workflow stacks chained w
 
 Want to get into .ani cursors? Check out the bilbata rainbow fork for windows [here](https://github.com/CommanderTurtle/Bibata_Cursor_Rainbow_2.0) — (includes info on .ani and the windows .inf cursor-style for animating)
 
+#### #ReadThe [docs.shel.sh](https://docs.shel.sh/projects/macrohard)
+
 ---
 
 ## Run Existing Build
@@ -85,7 +87,7 @@ More info on applicable screens. Everything is pretty intuitive. Backend is fanc
 - Circle movement and zone actions use Tasket schedules through the daemon, not direct WinUI cursor mutation.
 - Paste buffers and zone buffers are deliberately simple: Macrohelp stores values, then emits Tasket JSON when asked.
 - Registry Hub is the command surface for composing these primitives. It is not meant to be a native automation engine.
-- View [macrohard](https://app.shel.sh/) runtime environment when 'macro too hard, need UI' <-- a 300kb ComfyUI app mimicing workflow module style for emitting/importing machine code. (Plain rendering to text files, all local js) - [(Source Code)](https://github.com/CommanderTurtle/orc/tree/main/app/macrohard)
+- View [macrohard](https://app.shel.sh/macro) runtime environment when 'macro too hard, need UI' <-- a 300kb ComfyUI app mimicing workflow module style for emitting/importing machine code. (Plain rendering to text files, all local js) - [(Source Code)](https://github.com/CommanderTurtle/orc/tree/main/app/macrohard)
 
 ### Technical Details
 
