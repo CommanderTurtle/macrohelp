@@ -535,8 +535,8 @@ static int PromptGlyphCodepointForKey(const std::string& key) {
         {"ALT_GR",         0x0244A}, // PF_KEYBOARD_ALT_GR
         {"WINDOWS",        0x0242A}, // PF_KEYBOARD_SUPER
         {"FN",             0x02426}, // PF_KEYBOARD_FN
-        {"LEFT_MOUSE",     0x0278A}, // PF_MOUSE_1
-        {"RIGHT_MOUSE",    0x0278B}, // PF_MOUSE_2
+        {"LEFT_MOUSE",     0x0278B}, // PF_MOUSE_2 renders as the left button in PromptFont.
+        {"RIGHT_MOUSE",    0x0278A}, // PF_MOUSE_1 renders as the right button in PromptFont.
         {"MIDDLE_MOUSE",   0x0278C}, // PF_MOUSE_3
         {"XBUTTON_1",      0x0278D}, // PF_MOUSE_4
         {"XBUTTON_2",      0x0278E}, // PF_MOUSE_5
@@ -704,6 +704,8 @@ void PollKeyboardState() {
         {VK_DELETE, true}, {VK_INSERT, true}, {VK_ESCAPE, false},
         {VK_TAB, false}, {VK_CAPITAL, false}, {VK_SCROLL, false},
         {VK_NUMLOCK, false}, {VK_SNAPSHOT, false}, {VK_PRINT, false},
+        {VK_LBUTTON, false}, {VK_RBUTTON, false}, {VK_MBUTTON, false},
+        {VK_XBUTTON1, false}, {VK_XBUTTON2, false},
         {VK_UP, true}, {VK_DOWN, true}, {VK_LEFT, true}, {VK_RIGHT, true},
         {VK_HOME, true}, {VK_END, true}, {VK_PRIOR, true}, {VK_NEXT, true},
         {VK_NUMPAD0, false}, {VK_NUMPAD1, false}, {VK_NUMPAD2, false},
@@ -1342,17 +1344,20 @@ static bool LoadTemplateActions(const std::wstring& templateFileName, std::strin
 static bool LoadZoneActions(POINT start, POINT end, std::string* actions, std::wstring* status) {
     std::vector<std::string> generated = {
         BuildCursorMovementActionJson(
-            "CursorMoveExampleTopLeftBox",
-            {{0, 200, start.x, start.y}}),
+            "movecursorpointa",
+            {{0, 300, start.x, start.y}}),
         BuildWaitActionJson(0.2),
         BuildCursorMovementActionJson(
-            "ClickDragZoneFlow",
-            {{0, 1500, end.x, end.y}},
+            "movecursorpointb",
+            {
+                {0, 100, start.x, start.y},
+                {0, 400, end.x, end.y}
+            },
             {"LEFT_MOUSE"}),
         BuildWaitActionJson(2.0)
     };
     if (actions) *actions = JoinGeneratedActions(generated);
-    if (status) *status = L"Using canonical Macrohelp zone drag actions.";
+    if (status) *status = L"Using canonical Macrohelp corrected A-wait-A-hold-B zone drag actions.";
     return true;
 }
 
