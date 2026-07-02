@@ -31,7 +31,7 @@ Combine with a secondary framework! like:
 
 ---
 
-For the httpd daemon, see the [quick start],(./quick-start.md) since automated powershell is likely the best route for targetable latest Qt upstream! (Temporary cache dir nuked, as well, full Qt/VS opt-outs for telemetry)
+For the httpd daemon, see the [quick start](./quick-start.md) since automated powershell is likely the best route for targetable latest Qt upstream! (Temporary cache dir nuked, as well, full Qt/VS opt-outs for telemetry)
 
 ## Runtime Assumptions
 
