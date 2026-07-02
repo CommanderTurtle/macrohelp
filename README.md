@@ -26,8 +26,141 @@ Neat features worth noting:
 Combine with a secondary framework! like:
 
 - [Surfingkeys hotkeys](https://www.youtube.com/watch?v=QZO80CZB9Lw) (rip elements and navigate like vim in the browser)
-- [Powershell here strings](https://docs.shel.sh/xml-project) (paste a long multiline delimited with @' and '@ then see if it prints true or false)
-- [regedited](https://docs.shel.sh/projects/regedited) (rust) or another database. Regedited is another project of mine that allows indexed code segments in a markdown file, allowing one to append the clipboard instantly with a snippet segment (more scale than SimpleSnippet or Scripter for Command Palette)
+- Powershell here strings (example below) - paste a long multiline delimited with @' and '@ then see if it prints true or false
+- [regedited](https://docs.shel.sh/projects/regedited) (rust) - "Dangerously grep a million-line markdown file" - or another database. Regedited is another project of mine that allows indexed code segments in a markdown file, allowing one to append the clipboard instantly with a snippet segment (more scale than SimpleSnippet or Scripter for Command Palette)
+
+<details>
+  <summary>Show powershell here-strings guide</summary>
+  
+#### `pwsh` here strings and fuzziness with Windows-Native OCR:
+
+```powershell
+if ($txt -match "this is the text`nI'm looking for") {
+    @'
+FOUND IT
+This is the success block.
+'@ | Set-Clipboard
+}
+else {
+    @'
+NO MATCH
+This is the fallback block.
+'@ | Set-Clipboard
+}
+
+# VARIANT with newline OR space alternative
+
+if ($txt -match "this is the text(?:`r?`n| )I'm looking for") {
+    'MATCH'
+}
+
+# Optional whitespace or newline between characters
+$txt -match '(?i)I\s*N\s*C\s*L\s*U\s*D\s*E'
+
+<#
+(Matches:)
+INCLUDE
+I N C L U D E
+I N C L U D E
+I\nN\nC\nL\nU\nD\nE
+I NCL UDE
+INCL\nUDE
+#>
+
+# Optional letters:
+$txt -match '(?i)I\s*N?\s*C\s*L?\s*U\s*D\s*E'
+
+<#
+(Matches:)
+INCLUDE
+ICLUDE (missing N)
+INC UDE (missing L)
+INCLDE (missing U)
+INCLDE (missing U)
+#>
+
+# Optional misread letters (N-M , U-V, etc):
+$txt -match '(?i)I\s*[N M]\s*C\s*L\s*[U V]\s*D\s*E'
+
+<# 
+(Matches:)
+INCLUDE
+IMCLUDE
+INCLVDE
+IMCLVDE
+
+vs ..       '(?is)I\s*[N M]?\s*C\s*L?\s*[U V]?\s*D\s*E'
+#>
+
+# like:
+$pattern = '(?is)I\s*[N M]?\s*C\s*L?\s*[U V]?\s*D\s*E'
+if ($txt -match $pattern) {
+    'MATCH'
+} else {
+    'NO MATCH'
+}
+
+<#
+optional whitespace
+optional newline
+optional missing letters
+optional OCR‑misread letters
+case‑insensitivity
+multi‑line text ((?s))
+#>
+
+---
+
+# Reusable function:
+
+function Test-OcrWord {
+    param(
+        [string]$Text,
+        [string]$Word
+    )
+
+    # Build OCR‑resilient regex
+    $chars = $Word.ToCharArray() | ForEach-Object {
+        switch ($_){
+            'N' { '[N M]' }
+            'U' { '[U V]' }
+            'I' { '[I 1]' }
+            'O' { '[O 0]' }
+            'S' { '[S 5]' }
+            'B' { '[B 8]' }
+            default { $_ }
+        } + '\s*'
+    }
+
+    $pattern = '(?is)' + ($chars -join '')
+    return $Text -match $pattern
+}
+
+<# Usage:
+if (Test-OcrWord $txt 'INCLUDE') {
+    'MATCH'
+} #>
+
+# Regular usage of here strings (general)
+
+if ($txt -match '(?is)I\s*[N M]?\s*C\s*L?\s*[U V]?\s*D\s*E') {
+    @'
+SUCCESS BLOCK
+'@ | Set-Clipboard
+}
+else {
+    @'
+FAILURE BLOCK
+'@ | Set-Clipboard
+}
+
+```
+
+Native cmd-only implementation at [docs.shel.sh](https://docs.shel.sh/xml-project)
+
+- Powershell much better, trust.
+
+</details>
 
 ---
 
