@@ -18,13 +18,14 @@ $LocalTasket = Join-Path $Root "original"
 
 if (-not $QtVersion) {
     if (-not (Test-Path -LiteralPath $PinFile)) {
-        throw "QtVersion was not provided and pin file is missing: $PinFile"
+        $QtVersion = "latest-compatible"
+    } else {
+        $QtVersion = (Get-Content -LiteralPath $PinFile -TotalCount 1).Trim()
+        if (-not $QtVersion) {
+            $QtVersion = "latest-compatible"
+        }
+        Write-Host "Using pinned Qt version from QT_VERSION.txt: $QtVersion"
     }
-    $QtVersion = (Get-Content -LiteralPath $PinFile -TotalCount 1).Trim()
-    if (-not $QtVersion) {
-        throw "Qt pin file is empty: $PinFile"
-    }
-    Write-Host "Using pinned Qt version from QT_VERSION.txt: $QtVersion"
 }
 
 if ($DryRun) {

@@ -277,7 +277,7 @@ if ($Build) {
     & cmake -S $SourceRoot -B $BuildPath -G $Generator -A x64 `
         -DCMAKE_PREFIX_PATH="$QtPrefix" `
         -DTASKETPP_ROOT="$OriginalTasket" `
-        -DTASKET_HTTP_BIND=127.0.0.1
+        "-DTASKET_HTTP_BIND=127.0.0.1"
     if ($LASTEXITCODE -ne 0) { throw "CMake configure failed." }
 
     & cmake --build $BuildPath --config Release --parallel

@@ -8,6 +8,7 @@ TaskExecutor::TaskExecutor(QObject *parent)
 TaskExecutor::~TaskExecutor()
 {
     stopGracefully();
+    m_actionsList.clear();
     quit();
     requestInterruption();
     wait(3000);
@@ -37,9 +38,7 @@ void TaskExecutor::setLoop(bool loop, unsigned int timesToRun)
 void TaskExecutor::stopGracefully()
 {
     m_haveToStop = true;
-    // NOTE: We deliberately do NOT call terminate() here.
-    // The run() loop checks m_haveToStop between each action and exits
-    // cleanly. This prevents memory corruption and partial action execution.
+    terminate();
 }
 
 void TaskExecutor::run()
