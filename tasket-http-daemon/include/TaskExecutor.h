@@ -12,8 +12,7 @@
  * TaskThread::copyActionsList() is private and only accessible to TaskTab
  * (friend). Rather than patching Tasket++ source, this class reimplements
  * the execution logic using only public AbstractAction APIs (deepCopy,
- * runAction). It provides the same behaviour: loop control, graceful stop,
- * and finished signals — but with cleaner shutdown (no QThread::terminate).
+ * runAction). It provides the same behaviour: loop control and finished signals.
  */
 class TaskExecutor : public QThread
 {
@@ -34,10 +33,6 @@ public:
      */
     void setLoop(bool loop, unsigned int timesToRun = 1);
 
-    /**
-     * @brief Graceful stop — sets flag, does NOT call terminate().
-     *        The run() loop checks the flag between actions.
-     */
     void stopGracefully();
 
     bool isStopping() const { return m_haveToStop; }
