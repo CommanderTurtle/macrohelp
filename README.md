@@ -12,43 +12,26 @@ Not only is the harness capable of spawning macros and workflow stacks chained w
 
 Want to get into .ani cursors? Check out the bilbata rainbow fork for windows [here](https://github.com/CommanderTurtle/Bibata_Cursor_Rainbow_2.0) — (includes info on .ani and the windows .inf cursor-style for animating)
 
-#### #ReadThe [docs.shel.sh](https://docs.shel.sh/projects/macrohard)
+#### See the Quick Start [here](./quick-start.md)
+
+Neat features worth noting:
+
+- Native Circle Placement tool (uses either i+j coordinate offsets in circular grid / or radian/degrees)
+- Paste library (great for quickly writing reused code snippets)
+- Keyboard history + Coodinates right beside the mouse cursor
+- Zone creation with the circle tool
+- And of course rusable zones and workflows (looks almost like N8N)
+- Program can build entire dynamic workflows easily with oneliner scripts. Example: discord automation that checks for incoming messages from a user, and a zone immediately grabs from the library of copypastas for that particular user.
+
+Combine with a secondary framework! like:
+
+- [Surfingkeys hotkeys](https://www.youtube.com/watch?v=QZO80CZB9Lw) (rip elements and navigate like vim in the browser)
+- [Powershell here strings](https://docs.shel.sh/xml-project) (paste a long multiline delimited with @' and '@ then see if it prints true or false)
+- [regedited](https://docs.shel.sh/projects/regedited) (rust) or another database. Regedited is another project of mine that allows indexed code segments in a markdown file, allowing one to append the clipboard instantly with a snippet segment (more scale than SimpleSnippet or Scripter for Command Palette)
 
 ---
 
-## Run Existing Build
-
-```powershell
-cd macrohelp-runtime/bin
-.\CursorOverlay.exe
-```
-
-## Rebuild From Source (first step requirement, ensuring latest VS build tools)
-
-(Developer Powershell)
-
-```powershell
-cd macrohelp-runtime/source
-cmake -S . -B build-vs2026 -G "Visual Studio 18 2026" -A x64
-# or, cmake -S . -B build-vs -G "Visual Studio 17 2022" -A x64
-cmake --build build-vs --config Release
-# Start program:
-.\build-vs\bin\Release\CursorOverlay.exe
-```
-
-Fast rebuild loop:
-
-```powershell
-# Kill the process (no startup hooks, very portable — can close from system tray too)
-Get-Process CursorOverlay -ErrorAction SilentlyContinue | Stop-Process -Force
-cd macrohelp-runtime/source
-# Build again:
-cmake --build build-vs --config Release
-# Start program:
-.\build-vs\bin\Release\CursorOverlay.exe
-```
-
-For the httpd daemon, see the quick start, since automated powershell is likely the best route for targetable latest Qt upstream.
+For the httpd daemon, see the [quick start],(./quick-start.md) since automated powershell is likely the best route for targetable latest Qt upstream! (Temporary cache dir nuked, as well, full Qt/VS opt-outs for telemetry)
 
 ## Runtime Assumptions
 
@@ -60,25 +43,52 @@ For the httpd daemon, see the quick start, since automated powershell is likely 
 $env:APPDATA\Tasket++\saved_tasks
 ```
 
-## Current Hotkeys
+If you want to use the script playground:
+
+- Assumed Win+Alt+Space = Powertoys Command-Palette hotkey
+- Assumed favorite terminal (like Terminal Preview or Powershell Preview) is TOP-pinned command-palette
+
+If you want to use the text-extractor zones:
+
+- Assumed Win+Shift+Y = Powertoys Text-Extractor hotkey
+
+If you want bash and python shells to work:
+
+- Make sure they're on path
+- `winget install --source winget --id Git.Git`
+- `winget install --source winget --id Python.Python.3.12`
+- Win+R `sysdm.cpl` > Advanced > Environment Variables > System variables PATH + `Edit` :
+- C:\Users\myuser\AppData\Local\Programs\Git\bin\
+
+Else, manually script them after `{powershell}`, example:
+
+```plain
+Assumed store of `uv venv .... bunch of stuff`, then `uv run python` == variable Z (buffered script)
+{powershell}{Z}{enter}
+```
+
+```powershell
+$env:APPDATA\Tasket++\saved_tasks
+```
+
+---
+
+# Current Hotkeys
 
 ```text
 Shift+Alt+1  Paste and zone buffers.
-Shift+Alt+2  Assembly playground
+Shift+Alt+2  Assembly playground -> Further, 'Q' is views
 Shift+Alt+3  Circle and zone placement.
 Shift+Alt+4  Left-click helper.
 Shift+Alt+5  Right-click helper.
 Shift+Alt+6  Middle-click helper.
 Shift+Alt+7  Stop all Tasket tasks through the daemon.
-Shift+Alt+8  Toggle Panel
-Shift+Alt+9  Save current cursor coordinate to Macrohelp JSON.
-Shift+Alt+0  Record key/mouse sequence, including paste blocks.
+Shift+Alt+8  Toggle Top-Right Panel
+Shift+Alt+9  Save JSONs for MouseMove.
+Shift+Alt+0  Save JSONs for KeySequence.
 ```
 
-More info on applicable screens. Everything is pretty intuitive. Backend is fancy json parsing and structure mimicry, with no native hooks to mouse or keyboard control.
-
-`{powershell}` machine code assumes 'Win+Alt+Space [Command Pallet](https://learn.microsoft.com/en-us/windows/powertoys/) has a first pinned entry of powershell preview. Set to your favorite shell. 
-> This is backend for all machine code, a spawnable shell must be easily reached this way.
+More info on applicable screens. Everything is pretty intuitive. Backend has no native hooks to mouse or keyboard control without Tasket.
 
 ---
 
@@ -87,7 +97,7 @@ More info on applicable screens. Everything is pretty intuitive. Backend is fanc
 - Circle movement and zone actions use Tasket schedules through the daemon, not direct WinUI cursor mutation.
 - Paste buffers and zone buffers are deliberately simple: Macrohelp stores values, then emits Tasket JSON when asked.
 - Registry Hub is the command surface for composing these primitives. It is not meant to be a native automation engine.
-- View [macrohard](https://app.shel.sh/macro) runtime environment when 'macro too hard, need UI' <-- a 300kb ComfyUI app mimicing workflow module style for emitting/importing machine code. (Plain rendering to text files, all local js) - [(Source Code)](https://github.com/CommanderTurtle/orc/tree/main/app/macrohard)
+- View [live workflow editor](https://app.shel.sh/macro) runtime environment when 'script too hard, need UI' <-- a 300kb ComfyUI app mimicing workflow module style for emitting/importing machine code. (Plain rendering to text files, all local js) - [(Source Code)](https://github.com/CommanderTurtle/orc/tree/main/app/macrohard)
 
 ### Technical Details
 
@@ -107,7 +117,7 @@ More info on applicable screens. Everything is pretty intuitive. Backend is fanc
 
 ### PromptFont Key Glyphs
 
-The live key display uses PromptFont (by Shinmera, SIL OFL) for beautiful keyboard icons:
+The live key display uses [PromptFont](https://shinmera.com/docs/promptfont/) (by Shinmera, SIL OFL) for beautiful keyboard icons:
 
 | Key | Glyph | Key | Glyph |
 |-----|-------|-----|-------|
@@ -120,8 +130,7 @@ The live key display uses PromptFont (by Shinmera, SIL OFL) for beautiful keyboa
 | Backspace | `␭` | Space | `␺` |
 | Arrow keys | `⏴⏵⏶⏷` | Delete | `␷` |
 
-Keys without special glyphs (F1-F12, A-Z, 0-9, numpad) render as clean text.
-
 ## License
 
-CursorOverlay is open source. PromptFont by Shinmera (Yukari Hafner) is used under the SIL Open Font License 1.1.
+- CursorOverlay is open source [AGPLv3](./LICENSE). No data ever collected, solely passion project. 
+- PromptFont by Shinmera (Yukari Hafner) is used under the SIL Open Font License 1.1.
