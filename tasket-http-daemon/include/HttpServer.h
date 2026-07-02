@@ -11,6 +11,8 @@
 #include <QMap>
 #include <QMutex>
 
+class TaskRunner;
+
 namespace httplib {
 class Server;
 struct Request;
@@ -44,7 +46,7 @@ class HttpServer : public QObject
     Q_OBJECT
 
 public:
-    explicit HttpServer(TaskRegistry *registry, QObject *parent = nullptr);
+    explicit HttpServer(TaskRegistry *registry, TaskRunner *runner = nullptr, QObject *parent = nullptr);
     ~HttpServer();
 
     bool start(const QString &host, int port, const QString &tasksDir,
@@ -94,6 +96,7 @@ private:
     QList<ToolDescriptor> buildToolInventory() const;
 
     TaskRegistry *m_registry = nullptr;
+    TaskRunner   *m_runner = nullptr;
     QString       m_tasksDir;
     QString       m_apiKey;
     QString       m_host;

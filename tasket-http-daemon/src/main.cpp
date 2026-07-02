@@ -98,7 +98,7 @@ int main(int argc, char *argv[])
 
     TaskRegistry registry;
     TaskRunner runner(&registry);
-    HttpServer server(&registry);
+    HttpServer server(&registry, &runner);
 
     // Wire registry -> runner (when delay timer expires)
     QObject::connect(&registry, &TaskRegistry::executeRequested,
