@@ -19,6 +19,7 @@
 #include <windowsx.h>
 #include <winhttp.h>
 #include <mmsystem.h>
+#include <dwmapi.h>
 #include <shellapi.h>
 #include <shlobj.h>
 #include <gdiplus.h>
@@ -48,6 +49,7 @@
 #pragma comment(lib, "gdiplus.lib")
 #pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "winmm.lib")
+#pragma comment(lib, "dwmapi.lib")
 
 using namespace Gdiplus;
 
@@ -61,7 +63,8 @@ static constexpr int      CENTER_DOT_R      = 4;
 static constexpr COLORREF CENTER_DOT_COLOR  = RGB(255, 200, 0);
 static constexpr COLORREF COLORKEY          = RGB(0, 0, 0);
 static constexpr int      DEFAULT_UPDATE_MS = 16;
-static constexpr int      MIN_CROSSHAIR_UPDATE_MS = 8;
+static constexpr int      MIN_CROSSHAIR_UPDATE_MS = 1;
+static constexpr int      TOPMOST_REASSERT_MS = 1000;
 static constexpr int      COORD_PANEL_CLIENT_W = 760;
 static constexpr int      COORD_PANEL_CLIENT_H = 76;
 static constexpr int      COORD_PANEL_VISIBLE_W = 760;
@@ -92,6 +95,8 @@ static constexpr int      KEY_GAP_Y         = 4;
 static constexpr int      KEY_OFFSET_X      = 24;
 static constexpr int      KEY_OFFSET_Y      = 18;
 static constexpr int      KEY_PREFIX_W      = 28;
+static constexpr int      FAST_COORD_TAG_W  = 180;
+static constexpr int      FAST_COORD_TAG_H  = 34;
 
 // Colors (ARGB premultiplied-ready)
 static constexpr BYTE     KEY_BG_A          = 180;
@@ -110,6 +115,7 @@ static constexpr BYTE     KEY_BORDER_B      = 90;
 LRESULT CALLBACK CrosshairWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 LRESULT CALLBACK CoordPanelWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 LRESULT CALLBACK KeyDisplayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+LRESULT CALLBACK FastOverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 LRESULT CALLBACK SaveCursorDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 LRESULT CALLBACK RecordKeysDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 LRESULT CALLBACK ManualKeysDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -125,9 +131,11 @@ void ShutdownApp();
 void EnablePhysicalPixelDpiAwareness();
 void RefreshScreenMetrics();
 int DetectDisplayUpdateIntervalMs();
+void RefreshCursorTimerForMonitor(HWND hwnd, POINT pt);
 void CreateCrosshairWindow();
 void CreateCoordPanel();
 void CreateKeyDisplayWindow();
+void CreateFastOverlayWindows();
 void RegisterKeyboardRawInput(HWND hwnd);
 void RenderKeyDisplay();
 void DrawKeyDisplayEntry(Graphics& gfx, const std::vector<std::string>& keys,
@@ -199,6 +207,12 @@ void StartRegistryHub();
 void DrawCirclePreview(HDC hdc);
 void DrawCursorGrid(HDC hdc, const RECT& rc, POINT pt);
 void ProcessBackendCommandFile();
+bool CrosshairOverlayShouldBeVisible();
+void RefreshCrosshairOverlayVisibility();
+void ReassertOverlayTopmost();
+void UpdateFastOverlay(POINT screenPt);
+void HideFastOverlay();
+static std::wstring CoordTextForPoint(POINT screenPt);
 static void SetCircleStatus(const std::wstring& value);
 static std::wstring TrimWide(const std::wstring& value);
 static std::string CompactLower(const std::wstring& value);
@@ -396,6 +410,13 @@ HINSTANCE   g_hInst = nullptr;
 HWND        g_hwndCrosshair = nullptr;
 HWND        g_hwndCoordPanel = nullptr;
 HWND        g_hwndKeyDisplay = nullptr;
+HWND        g_hwndFastHLine = nullptr;
+HWND        g_hwndFastVLine = nullptr;
+HWND        g_hwndFastDot = nullptr;
+HWND        g_hwndFastCoordTag = nullptr;
+POINT       g_fastLastCursor = {LONG_MIN, LONG_MIN};
+bool        g_fastLastShowLines = false;
+bool        g_fastLastShowTag = false;
 HWND        g_hwndSaveDlg = nullptr;
 HWND        g_hwndRecordDlg = nullptr;
 HWND        g_hwndViewTogglesDlg = nullptr;
@@ -417,6 +438,12 @@ HFONT       g_hFontMono = nullptr;
 HBRUSH      g_hbrColorkey = nullptr;
 HBRUSH      g_hbrHudBg = nullptr;
 HBRUSH      g_hbrHudEdit = nullptr;
+HPEN        g_hPenCrosshair = nullptr;
+HPEN        g_hPenCenterDot = nullptr;
+HPEN        g_hPenGrid = nullptr;
+HBRUSH      g_hbrCrosshairLine = nullptr;
+HBRUSH      g_hbrCenterDot = nullptr;
+HFONT       g_hFontGrid = nullptr;
 std::wstring g_pendingCircleInputOverride;
 GdiplusStartupInput  g_gdiInput;
 GdiplusStartupOutput g_gdiOutput;
@@ -492,10 +519,13 @@ int         g_updateMs = DEFAULT_UPDATE_MS;
 int         g_displayRefreshHz = 60;
 bool        g_timerResolutionActive = false;
 double      g_uiScale = 1.0;
+HMONITOR    g_updateMonitor = nullptr;
+DWORD       g_lastMonitorProbeTick = 0;
 
 // Shared dialog data
 POINT       g_savedCursorPos = {0, 0};
 std::wstring g_saveCursorDefaultName;
+POINT       g_fastCoordCursor = {0, 0};
 
 // Tray
 #define TRAY_ICON_ID 1001
@@ -2148,7 +2178,7 @@ static int CoordPanelH() { return UiPx(COORD_PANEL_CLIENT_H); }
 static void LayoutCircleDialog(HWND hwnd) {
     if (!hwnd) return;
 
-    int width = UiPx(382);
+    int width = UiPx(g_circlePlacement.stage == CircleStage::Distance ? 560 : 382);
     int height = UiPx(112);
 
     const int margin = UiPx(10);
@@ -2801,7 +2831,8 @@ static bool RunViewToggleCommand(HWND hwnd, const std::wstring& rawCommand) {
 
     if (command == "z" || command == "crosshair") {
         g_crosshairVisible = !g_crosshairVisible;
-        ShowWindow(g_hwndCrosshair, g_crosshairVisible ? SW_SHOW : SW_HIDE);
+        RefreshCrosshairOverlayVisibility();
+        InvalidateRect(g_hwndCrosshair, nullptr, FALSE);
         PushKeyHistory({g_crosshairVisible ? "CROSSHAIR_ON" : "CROSSHAIR_OFF"});
         CloseViewTogglesDialog(hwnd);
         return true;
@@ -2809,10 +2840,7 @@ static bool RunViewToggleCommand(HWND hwnd, const std::wstring& rawCommand) {
 
     if (command == "c" || command == "coords" || command == "coordinates") {
         g_coordinatesOnlyMode = !g_coordinatesOnlyMode;
-        if (g_coordinatesOnlyMode && !g_crosshairVisible) {
-            g_crosshairVisible = true;
-            ShowWindow(g_hwndCrosshair, SW_SHOW);
-        }
+        RefreshCrosshairOverlayVisibility();
         InvalidateRect(g_hwndCrosshair, nullptr, FALSE);
         PushKeyHistory({g_coordinatesOnlyMode ? "COORDS_ONLY" : "TARGET_ON"});
         CloseViewTogglesDialog(hwnd);
@@ -2821,10 +2849,7 @@ static bool RunViewToggleCommand(HWND hwnd, const std::wstring& rawCommand) {
 
     if (command == "x" || command == "grid" || command == "gridlines") {
         g_gridVisible = !g_gridVisible;
-        if (g_gridVisible && !g_crosshairVisible) {
-            g_crosshairVisible = true;
-            ShowWindow(g_hwndCrosshair, SW_SHOW);
-        }
+        RefreshCrosshairOverlayVisibility();
         InvalidateRect(g_hwndCrosshair, nullptr, FALSE);
         PushKeyHistory({g_gridVisible ? "GRID_ON" : "GRID_OFF"});
         CloseViewTogglesDialog(hwnd);
@@ -5859,8 +5884,8 @@ void RenderKeyDisplay() {
     RECT rc;
     GetWindowRect(g_hwndKeyDisplay, &rc);
     if (rc.left != winX || rc.top != winY) {
-        SetWindowPos(g_hwndKeyDisplay, nullptr, winX, winY, 0, 0,
-                     SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        SetWindowPos(g_hwndKeyDisplay, HWND_TOPMOST, winX, winY, 0, 0,
+                     SWP_NOSIZE | SWP_NOACTIVATE);
     }
 
     // Draw directly into the 32bpp DIB memory as premultiplied alpha.
@@ -6091,8 +6116,7 @@ void DrawCursorGrid(HDC hdc, const RECT& rc, POINT pt) {
     const int spacing = GRID_SPACING_PX;
     if (spacing < 24) return;
 
-    HPEN gridPen = CreatePen(PS_SOLID, 1, RGB(42, 46, 52));
-    HPEN oldPen = (HPEN)SelectObject(hdc, gridPen);
+    HPEN oldPen = (HPEN)SelectObject(hdc, g_hPenGrid);
 
     for (int x = pt.x; x >= rc.left; x -= spacing) {
         MoveToEx(hdc, x, rc.top, nullptr);
@@ -6112,13 +6136,8 @@ void DrawCursorGrid(HDC hdc, const RECT& rc, POINT pt) {
     }
 
     SelectObject(hdc, oldPen);
-    DeleteObject(gridPen);
 
-    HFONT hGridFont = CreateFontW(
-        UiFontPx(12), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
-    HFONT oldFont = (HFONT)SelectObject(hdc, hGridFont);
+    HFONT oldFont = (HFONT)SelectObject(hdc, g_hFontGrid ? g_hFontGrid : g_hFontCoord);
     SetBkMode(hdc, TRANSPARENT);
     SetTextColor(hdc, RGB(92, 100, 108));
 
@@ -6142,7 +6161,220 @@ void DrawCursorGrid(HDC hdc, const RECT& rc, POINT pt) {
     }
 
     SelectObject(hdc, oldFont);
-    DeleteObject(hGridFont);
+}
+
+bool CrosshairOverlayShouldBeVisible() {
+    bool fastOverlayReady = g_hwndFastHLine && g_hwndFastVLine &&
+                            g_hwndFastDot && g_hwndFastCoordTag;
+    return (!fastOverlayReady && (g_crosshairVisible || g_coordinatesOnlyMode)) ||
+           g_gridVisible ||
+           g_circlePreview.enabled ||
+           g_circlePlacement.active;
+}
+
+void RefreshCrosshairOverlayVisibility() {
+    if (!g_hwndCrosshair || !IsWindow(g_hwndCrosshair)) return;
+    if (CrosshairOverlayShouldBeVisible()) {
+        HideFastOverlay();
+        ShowWindow(g_hwndCrosshair, SW_SHOWNOACTIVATE);
+        SetWindowPos(g_hwndCrosshair, HWND_TOPMOST,
+                     g_screenX, g_screenY, g_screenW, g_screenH,
+                     SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW);
+    } else {
+        ShowWindow(g_hwndCrosshair, SW_HIDE);
+    }
+}
+
+void HideFastOverlay() {
+    HWND windows[] = {g_hwndFastHLine, g_hwndFastVLine, g_hwndFastDot, g_hwndFastCoordTag};
+    for (HWND hwnd : windows) {
+        if (hwnd && IsWindow(hwnd) && IsWindowVisible(hwnd)) {
+            ShowWindow(hwnd, SW_HIDE);
+        }
+    }
+    g_fastLastCursor = {LONG_MIN, LONG_MIN};
+    g_fastLastShowLines = false;
+    g_fastLastShowTag = false;
+}
+
+static std::wstring CoordTextForPoint(POINT screenPt) {
+    std::wstringstream ss;
+    ss << L"X " << screenPt.x << L"   Y " << screenPt.y;
+    return ss.str();
+}
+
+void UpdateFastOverlay(POINT screenPt) {
+    bool fastOverlayReady = g_hwndFastHLine && g_hwndFastVLine &&
+                            g_hwndFastDot && g_hwndFastCoordTag;
+    if (!fastOverlayReady || CrosshairOverlayShouldBeVisible()) {
+        HideFastOverlay();
+        return;
+    }
+
+    bool showLines = g_crosshairVisible && !g_coordinatesOnlyMode;
+    bool showTag = g_crosshairVisible || g_coordinatesOnlyMode;
+    if (!showLines && !showTag) {
+        HideFastOverlay();
+        return;
+    }
+
+    if (screenPt.x == g_fastLastCursor.x &&
+        screenPt.y == g_fastLastCursor.y &&
+        showLines == g_fastLastShowLines &&
+        showTag == g_fastLastShowTag) {
+        return;
+    }
+
+    UINT moveFlags = SWP_NOACTIVATE | SWP_NOOWNERZORDER;
+    const int lineW = CROSSHAIR_WIDTH;
+    bool linesBecameVisible = showLines && !g_fastLastShowLines;
+    bool tagBecameVisible = showTag && !g_fastLastShowTag;
+    HDWP dwp = BeginDeferWindowPos(4);
+
+    if (showLines) {
+        UINT lineFlags = moveFlags | SWP_SHOWWINDOW | SWP_NOREDRAW;
+        if (dwp) {
+            dwp = DeferWindowPos(dwp, g_hwndFastHLine, HWND_TOPMOST,
+                                 g_screenX, screenPt.y - lineW / 2, g_screenW, lineW,
+                                 lineFlags);
+        }
+        if (dwp) {
+            dwp = DeferWindowPos(dwp, g_hwndFastVLine, HWND_TOPMOST,
+                                 screenPt.x - lineW / 2, g_screenY, lineW, g_screenH,
+                                 lineFlags);
+        }
+
+        const int dotSize = CENTER_DOT_R * 2 + 2;
+        if (dwp) {
+            dwp = DeferWindowPos(dwp, g_hwndFastDot, HWND_TOPMOST,
+                                 screenPt.x - dotSize / 2, screenPt.y - dotSize / 2,
+                                 dotSize, dotSize, moveFlags | SWP_SHOWWINDOW | SWP_NOREDRAW);
+        }
+    } else {
+        if (dwp && IsWindowVisible(g_hwndFastHLine)) {
+            dwp = DeferWindowPos(dwp, g_hwndFastHLine, nullptr, 0, 0, 0, 0,
+                                 moveFlags | SWP_HIDEWINDOW | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER);
+        }
+        if (dwp && IsWindowVisible(g_hwndFastVLine)) {
+            dwp = DeferWindowPos(dwp, g_hwndFastVLine, nullptr, 0, 0, 0, 0,
+                                 moveFlags | SWP_HIDEWINDOW | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER);
+        }
+        if (dwp && IsWindowVisible(g_hwndFastDot)) {
+            dwp = DeferWindowPos(dwp, g_hwndFastDot, nullptr, 0, 0, 0, 0,
+                                 moveFlags | SWP_HIDEWINDOW | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER);
+        }
+    }
+
+    if (showTag) {
+        g_fastCoordCursor = screenPt;
+        std::wstring coordText = CoordTextForPoint(screenPt);
+        SIZE textSize = {};
+        HDC hdc = GetDC(nullptr);
+        HFONT oldFont = nullptr;
+        if (hdc && g_hFontCoord) {
+            oldFont = (HFONT)SelectObject(hdc, g_hFontCoord);
+            GetTextExtentPoint32W(hdc, coordText.c_str(), (int)coordText.length(), &textSize);
+            SelectObject(hdc, oldFont);
+            ReleaseDC(nullptr, hdc);
+        }
+        if (textSize.cx <= 0 || textSize.cy <= 0) {
+            textSize.cx = UiPx(FAST_COORD_TAG_W - 16);
+            textSize.cy = UiFontPx(13);
+        }
+
+        const int padX = UiPx(8);
+        const int padY = UiPx(4);
+        const int gapX = UiPx(14);
+        const int gapY = UiPx(14);
+        const int margin = UiPx(8);
+        int boxW = textSize.cx + padX * 2;
+        int boxH = textSize.cy + padY * 2;
+        int x = screenPt.x + gapX;
+        int y = screenPt.y + gapY;
+        int rightLimit = g_screenX + g_screenW - margin;
+        int bottomLimit = g_screenY + g_screenH - margin;
+
+        if (x + boxW > rightLimit) x = screenPt.x - boxW - gapX;
+        if (y + boxH > bottomLimit) y = screenPt.y - boxH - gapY;
+        if (x < g_screenX + margin) x = g_screenX + margin;
+        if (x + boxW > rightLimit) x = rightLimit - boxW;
+        if (y < g_screenY + margin) y = g_screenY + margin;
+        if (y + boxH > bottomLimit) y = bottomLimit - boxH;
+
+        if (dwp) {
+            dwp = DeferWindowPos(dwp, g_hwndFastCoordTag, HWND_TOPMOST,
+                                 x, y, boxW, boxH, moveFlags | SWP_SHOWWINDOW);
+        }
+    } else {
+        if (dwp && IsWindowVisible(g_hwndFastCoordTag)) {
+            dwp = DeferWindowPos(dwp, g_hwndFastCoordTag, nullptr, 0, 0, 0, 0,
+                                 moveFlags | SWP_HIDEWINDOW | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER);
+        }
+    }
+
+    if (dwp) {
+        EndDeferWindowPos(dwp);
+    } else {
+        if (showLines) {
+            SetWindowPos(g_hwndFastHLine, HWND_TOPMOST,
+                         g_screenX, screenPt.y - lineW / 2, g_screenW, lineW,
+                         moveFlags | SWP_SHOWWINDOW);
+            SetWindowPos(g_hwndFastVLine, HWND_TOPMOST,
+                         screenPt.x - lineW / 2, g_screenY, lineW, g_screenH,
+                         moveFlags | SWP_SHOWWINDOW);
+            const int dotSize = CENTER_DOT_R * 2 + 2;
+            SetWindowPos(g_hwndFastDot, HWND_TOPMOST,
+                         screenPt.x - dotSize / 2, screenPt.y - dotSize / 2,
+                         dotSize, dotSize, moveFlags | SWP_SHOWWINDOW);
+        }
+        if (!showLines) {
+            ShowWindow(g_hwndFastHLine, SW_HIDE);
+            ShowWindow(g_hwndFastVLine, SW_HIDE);
+            ShowWindow(g_hwndFastDot, SW_HIDE);
+        }
+        if (!showTag) {
+            ShowWindow(g_hwndFastCoordTag, SW_HIDE);
+        }
+    }
+
+    if (linesBecameVisible) {
+        RedrawWindow(g_hwndFastHLine, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
+        RedrawWindow(g_hwndFastVLine, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
+        RedrawWindow(g_hwndFastDot, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
+    }
+    if (showTag) {
+        RedrawWindow(g_hwndFastCoordTag, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
+    }
+
+    if (showLines || showTag || tagBecameVisible) {
+        DwmFlush();
+    }
+
+    g_fastLastCursor = screenPt;
+    g_fastLastShowLines = showLines;
+    g_fastLastShowTag = showTag;
+}
+
+void ReassertOverlayTopmost() {
+    RefreshCrosshairOverlayVisibility();
+    POINT pt = {};
+    GetCursorPos(&pt);
+    UpdateFastOverlay(pt);
+    HWND fastWindows[] = {g_hwndFastHLine, g_hwndFastVLine, g_hwndFastDot, g_hwndFastCoordTag};
+    for (HWND hwnd : fastWindows) {
+        if (hwnd && IsWindow(hwnd) && IsWindowVisible(hwnd)) {
+            SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        }
+    }
+    if (g_hwndKeyDisplay && IsWindow(g_hwndKeyDisplay) && g_keyDisplayVisible) {
+        SetWindowPos(g_hwndKeyDisplay, HWND_TOPMOST, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    }
+    if (g_hwndCoordPanel && IsWindow(g_hwndCoordPanel) && g_coordPanelVisible) {
+        SetWindowPos(g_hwndCoordPanel, HWND_TOPMOST, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    }
 }
 
 static void DrawCrosshair(HDC hdc) {
@@ -6156,37 +6388,32 @@ static void DrawCrosshair(HDC hdc) {
     // Fill with colorkey (transparent)
     FillRect(hdc, &rc, g_hbrColorkey);
 
-    if (!g_coordinatesOnlyMode) {
+    if (!g_coordinatesOnlyMode && g_gridVisible) {
         DrawCursorGrid(hdc, rc, pt);
-        DrawCirclePreview(hdc);
+    }
 
+    DrawCirclePreview(hdc);
+
+    if (g_crosshairVisible && !g_coordinatesOnlyMode) {
         // Horizontal line
-        HPEN hPen = CreatePen(PS_SOLID, CROSSHAIR_WIDTH, CROSSHAIR_COLOR);
-        HPEN hOld = (HPEN)SelectObject(hdc, hPen);
+        HPEN hOld = (HPEN)SelectObject(hdc, g_hPenCrosshair);
         MoveToEx(hdc, rc.left, pt.y, nullptr);
         LineTo(hdc, rc.right, pt.y);
         SelectObject(hdc, hOld);
-        DeleteObject(hPen);
 
         // Vertical line
-        hPen = CreatePen(PS_SOLID, CROSSHAIR_WIDTH, CROSSHAIR_COLOR);
-        hOld = (HPEN)SelectObject(hdc, hPen);
+        hOld = (HPEN)SelectObject(hdc, g_hPenCrosshair);
         MoveToEx(hdc, pt.x, rc.top, nullptr);
         LineTo(hdc, pt.x, rc.bottom);
         SelectObject(hdc, hOld);
-        DeleteObject(hPen);
 
         // Existing cursor target dot.
-        HBRUSH hBr = CreateSolidBrush(CENTER_DOT_COLOR);
-        HPEN hDotPen = CreatePen(PS_SOLID, 1, CENTER_DOT_COLOR);
-        HPEN hOldDP = (HPEN)SelectObject(hdc, hDotPen);
-        HBRUSH hOldBr = (HBRUSH)SelectObject(hdc, hBr);
+        HPEN hOldDP = (HPEN)SelectObject(hdc, g_hPenCenterDot);
+        HBRUSH hOldBr = (HBRUSH)SelectObject(hdc, g_hbrCenterDot);
         int r = CENTER_DOT_R;
         Ellipse(hdc, pt.x - r, pt.y - r, pt.x + r, pt.y + r);
         SelectObject(hdc, hOldDP);
         SelectObject(hdc, hOldBr);
-        DeleteObject(hDotPen);
-        DeleteObject(hBr);
     }
 
     // Cursor-relative coordinate tag. Keep it detached from the key HUD and
@@ -6248,24 +6475,35 @@ LRESULT CALLBACK CrosshairWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             if (wParam == IDT_UPDATE_CURSOR) {
                 static POINT s_lastPaintCursor = {LONG_MIN, LONG_MIN};
                 static bool s_lastPreviewActive = false;
+                static DWORD s_lastTopmostTick = 0;
                 POINT beforeCursor = {};
                 GetCursorPos(&beforeCursor);
+                RefreshCursorTimerForMonitor(hwnd, beforeCursor);
 
                 HideCirclePreviewIfMouseMoved();
                 bool previewBeforeRefresh = g_circlePreview.enabled;
                 RefreshCirclePreviewFromFile();
                 ProcessBackendCommandFile();
                 WriteBackendState();
+                RefreshCrosshairOverlayVisibility();
+                UpdateFastOverlay(beforeCursor);
+
+                DWORD now = GetTickCount();
+                if (now - s_lastTopmostTick >= TOPMOST_REASSERT_MS) {
+                    s_lastTopmostTick = now;
+                    ReassertOverlayTopmost();
+                }
 
                 bool cursorMoved = beforeCursor.x != s_lastPaintCursor.x ||
                                    beforeCursor.y != s_lastPaintCursor.y;
                 bool previewChanged = previewBeforeRefresh != g_circlePreview.enabled ||
-                                      s_lastPreviewActive != g_circlePreview.enabled;
-                bool needsFrame = cursorMoved || previewChanged || g_circlePreview.enabled;
+                                       s_lastPreviewActive != g_circlePreview.enabled;
+                bool needsFrame = CrosshairOverlayShouldBeVisible() &&
+                                  (cursorMoved || previewChanged || g_circlePreview.enabled);
                 if (needsFrame) {
+                    InvalidateRect(hwnd, nullptr, FALSE);
                     s_lastPaintCursor = beforeCursor;
                     s_lastPreviewActive = g_circlePreview.enabled;
-                    InvalidateRect(hwnd, nullptr, FALSE);
                 }
             }
             return 0;
@@ -6565,7 +6803,8 @@ LRESULT CALLBACK CoordPanelWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
                 switch (cmd) {
                     case IDM_TOGGLE_CROSSHAIR:
                         g_crosshairVisible = !g_crosshairVisible;
-                        ShowWindow(g_hwndCrosshair, g_crosshairVisible ? SW_SHOW : SW_HIDE);
+                        RefreshCrosshairOverlayVisibility();
+                        InvalidateRect(g_hwndCrosshair, nullptr, FALSE);
                         break;
                     case IDM_TOGGLE_COORDS:
                         g_coordPanelVisible = !g_coordPanelVisible;
@@ -6655,6 +6894,99 @@ LRESULT CALLBACK KeyDisplayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
         case WM_DESTROY:
             KillTimer(hwnd, IDT_UPDATE_KEYS);
             return 0;
+
+        default:
+            return DefWindowProc(hwnd, msg, wParam, lParam);
+    }
+}
+
+// =============================================================================
+// WINDOW PROCEDURE: FAST CURSOR OVERLAY
+// =============================================================================
+
+LRESULT CALLBACK FastOverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    (void)wParam; (void)lParam;
+    switch (msg) {
+        case WM_NCHITTEST:
+            return HTTRANSPARENT;
+
+        case WM_MOUSEACTIVATE:
+            return MA_NOACTIVATE;
+
+        case WM_ERASEBKGND:
+            return 1;
+
+        case WM_PAINT: {
+            PAINTSTRUCT ps;
+            HDC hdc = BeginPaint(hwnd, &ps);
+            RECT rc;
+            GetClientRect(hwnd, &rc);
+
+            if (hwnd == g_hwndFastHLine || hwnd == g_hwndFastVLine) {
+                FillRect(hdc, &rc, g_hbrCrosshairLine);
+                EndPaint(hwnd, &ps);
+                return 0;
+            }
+
+            int w = std::max(1, (int)(rc.right - rc.left));
+            int h = std::max(1, (int)(rc.bottom - rc.top));
+            HDC memDc = CreateCompatibleDC(hdc);
+            HBITMAP memBmp = CreateCompatibleBitmap(hdc, w, h);
+            HBITMAP oldBmp = memBmp ? (HBITMAP)SelectObject(memDc, memBmp) : nullptr;
+            HDC paintDc = (memDc && memBmp) ? memDc : hdc;
+            FillRect(paintDc, &rc, g_hbrColorkey);
+
+            if (hwnd == g_hwndFastDot) {
+                int cx = (rc.right - rc.left) / 2;
+                int cy = (rc.bottom - rc.top) / 2;
+                HPEN oldPen = (HPEN)SelectObject(paintDc, g_hPenCenterDot);
+                HBRUSH oldBrush = (HBRUSH)SelectObject(paintDc, g_hbrCenterDot);
+                Ellipse(paintDc, cx - CENTER_DOT_R, cy - CENTER_DOT_R,
+                        cx + CENTER_DOT_R, cy + CENTER_DOT_R);
+                SelectObject(paintDc, oldPen);
+                SelectObject(paintDc, oldBrush);
+                if (paintDc != hdc) BitBlt(hdc, 0, 0, w, h, paintDc, 0, 0, SRCCOPY);
+                if (oldBmp) SelectObject(memDc, oldBmp);
+                if (memBmp) DeleteObject(memBmp);
+                if (memDc) DeleteDC(memDc);
+                EndPaint(hwnd, &ps);
+                return 0;
+            }
+
+            if (hwnd == g_hwndFastCoordTag) {
+                RECT rcTag = rc;
+                rcTag.right -= 1;
+                rcTag.bottom -= 1;
+                HPEN hTagPen = CreatePen(PS_SOLID, 1, RGB(62, 132, 176));
+                HBRUSH oldBrush = (HBRUSH)SelectObject(paintDc, g_hbrHudBg);
+                HPEN oldPen = (HPEN)SelectObject(paintDc, hTagPen);
+                RoundRect(paintDc, rcTag.left, rcTag.top, rcTag.right, rcTag.bottom, UiPx(10), UiPx(10));
+                SelectObject(paintDc, oldPen);
+                SelectObject(paintDc, oldBrush);
+                DeleteObject(hTagPen);
+
+                std::wstring coordText = CoordTextForPoint(g_fastCoordCursor);
+                SetBkMode(paintDc, TRANSPARENT);
+                SetTextColor(paintDc, RGB(245, 250, 255));
+                HFONT oldFont = (HFONT)SelectObject(paintDc, g_hFontCoord);
+                RECT rcText = {rc.left + UiPx(8), rc.top, rc.right - UiPx(8), rc.bottom};
+                DrawTextW(paintDc, coordText.c_str(), -1, &rcText,
+                          DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+                SelectObject(paintDc, oldFont);
+                if (paintDc != hdc) BitBlt(hdc, 0, 0, w, h, paintDc, 0, 0, SRCCOPY);
+                if (oldBmp) SelectObject(memDc, oldBmp);
+                if (memBmp) DeleteObject(memBmp);
+                if (memDc) DeleteDC(memDc);
+                EndPaint(hwnd, &ps);
+                return 0;
+            }
+
+            if (oldBmp) SelectObject(memDc, oldBmp);
+            if (memBmp) DeleteObject(memBmp);
+            if (memDc) DeleteDC(memDc);
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
 
         default:
             return DefWindowProc(hwnd, msg, wParam, lParam);
@@ -6973,6 +7305,14 @@ LRESULT CALLBACK ClickActionDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             return (INT_PTR)g_hbrHudEdit;
         }
 
+        case WM_KEYDOWN:
+        case WM_SYSKEYDOWN:
+            if (wParam == VK_ESCAPE) {
+                CloseClickActionDialog(hwnd);
+                return TRUE;
+            }
+            break;
+
         case WM_TIMER:
             if (wParam == CLICK_ACTION_WATCH_TIMER &&
                 !g_clickActionState.nativeHeld &&
@@ -7000,7 +7340,7 @@ LRESULT CALLBACK ClickActionDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
                     return TRUE;
                 }
                 case IDCANCEL:
-                    RunClickActionCommand(hwnd, L"v");
+                    CloseClickActionDialog(hwnd);
                     return TRUE;
             }
             break;
@@ -7467,7 +7807,7 @@ static bool ImportRegistryHubEnvironment(std::wstring* status) {
     }
 
     SaveRegistryHubState();
-    if (g_hwndCrosshair && IsWindow(g_hwndCrosshair)) ShowWindow(g_hwndCrosshair, g_crosshairVisible ? SW_SHOW : SW_HIDE);
+    if (g_hwndCrosshair && IsWindow(g_hwndCrosshair)) RefreshCrosshairOverlayVisibility();
     if (g_hwndCoordPanel && IsWindow(g_hwndCoordPanel)) ShowWindow(g_hwndCoordPanel, g_coordPanelVisible ? SW_SHOW : SW_HIDE);
     if (g_hwndKeyDisplay && IsWindow(g_hwndKeyDisplay)) ShowWindow(g_hwndKeyDisplay, g_keyDisplayVisible ? SW_SHOW : SW_HIDE);
     if (status) *status = L"Imported Registry Hub environment: " + path;
@@ -8849,7 +9189,7 @@ void CreateCoordPanel() {
     wcex.lpszClassName = L"CursorOverlayCoordPanel";
     RegisterClassExW(&wcex);
 
-    DWORD exStyle = WS_EX_TOPMOST | WS_EX_APPWINDOW | WS_EX_LAYERED;
+    DWORD exStyle = WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED;
     DWORD style = WS_POPUP;
     RECT wr = {0, 0, CoordPanelW(), CoordPanelH()};
     AdjustWindowRectEx(&wr, style, FALSE, exStyle);
@@ -8925,6 +9265,41 @@ void CreateKeyDisplayWindow() {
     }
 }
 
+void CreateFastOverlayWindows() {
+    WNDCLASSEXW wcex = {};
+    wcex.cbSize = sizeof(wcex);
+    wcex.style = CS_HREDRAW | CS_VREDRAW;
+    wcex.lpfnWndProc = FastOverlayWndProc;
+    wcex.hInstance = g_hInst;
+    wcex.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    wcex.hbrBackground = (HBRUSH)GetStockObject(NULL_BRUSH);
+    wcex.lpszClassName = L"CursorOverlayFastOverlay";
+    RegisterClassExW(&wcex);
+
+    auto createFastWindow = [&](const wchar_t* title, bool layered) -> HWND {
+        DWORD exStyle = WS_EX_TRANSPARENT | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
+        if (layered) exStyle |= WS_EX_LAYERED;
+        HWND hwnd = CreateWindowExW(
+            exStyle,
+            L"CursorOverlayFastOverlay", title,
+            WS_POPUP,
+            g_screenX, g_screenY, UiPx(10), UiPx(10),
+            nullptr, nullptr, g_hInst, nullptr);
+        if (hwnd) {
+            if (layered) {
+                SetLayeredWindowAttributes(hwnd, COLORKEY, 0, LWA_COLORKEY);
+            }
+            ShowWindow(hwnd, SW_HIDE);
+        }
+        return hwnd;
+    };
+
+    g_hwndFastHLine = createFastWindow(L"CursorOverlay Fast HLine", true);
+    g_hwndFastVLine = createFastWindow(L"CursorOverlay Fast VLine", true);
+    g_hwndFastDot = createFastWindow(L"CursorOverlay Fast Dot", true);
+    g_hwndFastCoordTag = createFastWindow(L"CursorOverlay Fast Coordinates", true);
+}
+
 // =============================================================================
 // INITIALIZATION & SHUTDOWN
 // =============================================================================
@@ -8958,9 +9333,28 @@ void RefreshScreenMetrics() {
     g_screenH = GetSystemMetrics(SM_CYVIRTUALSCREEN);
 }
 
-int DetectDisplayRefreshHz() {
-    POINT pt = {};
-    GetCursorPos(&pt);
+static int ParseUpdateIntervalOverrideMs() {
+    wchar_t overrideValue[32] = {};
+    DWORD len = GetEnvironmentVariableW(L"MACROHELP_UPDATE_MS", overrideValue,
+                                        (DWORD)(sizeof(overrideValue) / sizeof(overrideValue[0])));
+    if (len > 0 && len < (DWORD)(sizeof(overrideValue) / sizeof(overrideValue[0]))) {
+        wchar_t* end = nullptr;
+        long parsed = wcstol(overrideValue, &end, 10);
+        if (end != overrideValue && parsed >= 1 && parsed <= 100) {
+            return (int)parsed;
+        }
+    }
+    return 0;
+}
+
+static int UpdateIntervalFromRefreshHz(int hz) {
+    int overrideMs = ParseUpdateIntervalOverrideMs();
+    if (overrideMs > 0) return overrideMs;
+    double interval = 1000.0 / (double)std::max(1, hz);
+    return std::max(MIN_CROSSHAIR_UPDATE_MS, std::min(DEFAULT_UPDATE_MS, (int)std::round(interval)));
+}
+
+static int DetectDisplayRefreshHzAtPoint(POINT pt) {
     HMONITOR monitor = MonitorFromPoint(pt, MONITOR_DEFAULTTOPRIMARY);
     MONITORINFOEXW mi = {};
     mi.cbSize = sizeof(mi);
@@ -8980,20 +9374,40 @@ int DetectDisplayRefreshHz() {
     return 60;
 }
 
+int DetectDisplayRefreshHz() {
+    POINT pt = {};
+    GetCursorPos(&pt);
+    return DetectDisplayRefreshHzAtPoint(pt);
+}
+
 int DetectDisplayUpdateIntervalMs() {
     g_displayRefreshHz = DetectDisplayRefreshHz();
-    wchar_t overrideValue[32] = {};
-    DWORD len = GetEnvironmentVariableW(L"MACROHELP_UPDATE_MS", overrideValue, (DWORD)(sizeof(overrideValue) / sizeof(overrideValue[0])));
-    if (len > 0 && len < (DWORD)(sizeof(overrideValue) / sizeof(overrideValue[0]))) {
-        wchar_t* end = nullptr;
-        long parsed = wcstol(overrideValue, &end, 10);
-        if (end != overrideValue && parsed >= 1 && parsed <= 100) {
-            return (int)parsed;
-        }
-    }
+    return UpdateIntervalFromRefreshHz(g_displayRefreshHz);
+}
 
-    double interval = 1000.0 / (double)std::max(1, g_displayRefreshHz);
-    return std::max(MIN_CROSSHAIR_UPDATE_MS, std::min(DEFAULT_UPDATE_MS, (int)std::round(interval)));
+void RefreshCursorTimerForMonitor(HWND hwnd, POINT pt) {
+    DWORD now = GetTickCount();
+    if (now - g_lastMonitorProbeTick < 1000) return;
+    g_lastMonitorProbeTick = now;
+
+    HMONITOR monitor = MonitorFromPoint(pt, MONITOR_DEFAULTTOPRIMARY);
+    if (monitor && monitor == g_updateMonitor) return;
+    g_updateMonitor = monitor;
+
+    int hz = DetectDisplayRefreshHzAtPoint(pt);
+    int nextUpdateMs = UpdateIntervalFromRefreshHz(hz);
+    g_displayRefreshHz = hz;
+    if (nextUpdateMs == g_updateMs) return;
+
+    g_updateMs = nextUpdateMs;
+    if (hwnd && IsWindow(hwnd)) {
+        KillTimer(hwnd, IDT_UPDATE_CURSOR);
+        SetTimer(hwnd, IDT_UPDATE_CURSOR, g_updateMs, nullptr);
+    }
+    if (g_hwndKeyDisplay && IsWindow(g_hwndKeyDisplay)) {
+        KillTimer(g_hwndKeyDisplay, IDT_UPDATE_KEYS);
+        SetTimer(g_hwndKeyDisplay, IDT_UPDATE_KEYS, g_updateMs, nullptr);
+    }
 }
 
 bool InitApp() {
@@ -9013,9 +9427,17 @@ bool InitApp() {
     g_hFontMono = CreateFontW(UiFontPx(13), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                                CLEARTYPE_QUALITY, FIXED_PITCH | FF_MODERN, L"Consolas");
+    g_hFontGrid = CreateFontW(UiFontPx(12), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                              DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                              CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
     g_hbrColorkey = CreateSolidBrush(COLORKEY);
     g_hbrHudBg = CreateSolidBrush(RGB(18, 22, 27));
     g_hbrHudEdit = CreateSolidBrush(RGB(10, 12, 16));
+    g_hPenCrosshair = CreatePen(PS_SOLID, CROSSHAIR_WIDTH, CROSSHAIR_COLOR);
+    g_hPenCenterDot = CreatePen(PS_SOLID, 1, CENTER_DOT_COLOR);
+    g_hPenGrid = CreatePen(PS_SOLID, 1, RGB(42, 46, 52));
+    g_hbrCrosshairLine = CreateSolidBrush(CROSSHAIR_COLOR);
+    g_hbrCenterDot = CreateSolidBrush(CENTER_DOT_COLOR);
 
     // GDI+
     GdiplusStartup(&g_gdiToken, &g_gdiInput, &g_gdiOutput);
@@ -9023,7 +9445,10 @@ bool InitApp() {
     // PromptFont
     LoadPromptFont();
 
-    return g_hFontCoord && g_hFontBold && g_hFontMono && g_hbrColorkey && g_hbrHudBg && g_hbrHudEdit;
+    return g_hFontCoord && g_hFontBold && g_hFontMono && g_hFontGrid &&
+           g_hbrColorkey && g_hbrHudBg && g_hbrHudEdit &&
+           g_hPenCrosshair && g_hPenCenterDot && g_hPenGrid &&
+           g_hbrCrosshairLine && g_hbrCenterDot;
 }
 
 void ShutdownApp() {
@@ -9040,6 +9465,10 @@ void ShutdownApp() {
     if (g_hKeyDib) DeleteObject(g_hKeyDib);
 
     // Cleanup windows
+    if (g_hwndFastCoordTag) DestroyWindow(g_hwndFastCoordTag);
+    if (g_hwndFastDot) DestroyWindow(g_hwndFastDot);
+    if (g_hwndFastVLine) DestroyWindow(g_hwndFastVLine);
+    if (g_hwndFastHLine) DestroyWindow(g_hwndFastHLine);
     if (g_hwndKeyDisplay) DestroyWindow(g_hwndKeyDisplay);
     if (g_hwndCrosshair) DestroyWindow(g_hwndCrosshair);
     if (g_hwndCoordPanel) DestroyWindow(g_hwndCoordPanel);
@@ -9048,9 +9477,15 @@ void ShutdownApp() {
     if (g_hFontCoord) DeleteObject(g_hFontCoord);
     if (g_hFontBold) DeleteObject(g_hFontBold);
     if (g_hFontMono) DeleteObject(g_hFontMono);
+    if (g_hFontGrid) DeleteObject(g_hFontGrid);
     if (g_hbrColorkey) DeleteObject(g_hbrColorkey);
     if (g_hbrHudBg) DeleteObject(g_hbrHudBg);
     if (g_hbrHudEdit) DeleteObject(g_hbrHudEdit);
+    if (g_hPenCrosshair) DeleteObject(g_hPenCrosshair);
+    if (g_hPenCenterDot) DeleteObject(g_hPenCenterDot);
+    if (g_hPenGrid) DeleteObject(g_hPenGrid);
+    if (g_hbrCrosshairLine) DeleteObject(g_hbrCrosshairLine);
+    if (g_hbrCenterDot) DeleteObject(g_hbrCenterDot);
     if (g_hPromptFont) DeleteObject(g_hPromptFont);
     if (g_hPromptFontSmall) DeleteObject(g_hPromptFontSmall);
 
@@ -9158,6 +9593,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     CreateCrosshairWindow();
     CreateCoordPanel();
     CreateKeyDisplayWindow();
+    CreateFastOverlayWindows();
 
     if (!g_hwndCrosshair || !g_hwndCoordPanel) {
         MessageBoxW(nullptr, L"Failed to create overlay windows.", L"CursorOverlay Error",
@@ -9181,7 +9617,10 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     g_hKeyboardHook = SetWindowsHookEx(WH_KEYBOARD_LL, LowLevelKeyboardProc, hInstance, 0);
 
     // Show windows
-    ShowWindow(g_hwndCrosshair, SW_SHOW);
+    RefreshCrosshairOverlayVisibility();
+    POINT initialCursor = {};
+    GetCursorPos(&initialCursor);
+    UpdateFastOverlay(initialCursor);
     ShowWindow(g_hwndCoordPanel, nCmdShow);
     if (g_hwndKeyDisplay) {
         ShowWindow(g_hwndKeyDisplay, SW_SHOW);
