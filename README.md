@@ -67,10 +67,6 @@ Assumed store of `uv venv .... bunch of stuff`, then `uv run python` == variable
 {powershell}{Z}{enter}
 ```
 
-```powershell
-$env:APPDATA\Tasket++\saved_tasks
-```
-
 ---
 
 # Current Hotkeys
