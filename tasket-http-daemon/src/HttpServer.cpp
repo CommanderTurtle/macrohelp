@@ -1,5 +1,6 @@
 #include "HttpServer.h"
 #include "TaskRegistry.h"
+#include "TaskRunner.h"
 #include "globals.h"
 
 #include "httplib.h"
@@ -15,8 +16,8 @@
 #include <QCoreApplication>
 #include <QRegularExpression>
 
-HttpServer::HttpServer(TaskRegistry *registry, QObject *parent)
-    : QObject(parent), m_registry(registry)
+HttpServer::HttpServer(TaskRegistry *registry, TaskRunner *runner, QObject *parent)
+    : QObject(parent), m_registry(registry), m_runner(runner)
 {
     if(m_registry)
     {
@@ -543,8 +544,10 @@ void HttpServer::handleStop(const httplib::Request &req, httplib::Response &res)
 
     if(idParam.isEmpty())
     {
-        // Stop all
-        m_registry->stopAll();
+        if(m_runner)
+            m_runner->stopAllTasks();
+        if(m_registry)
+            m_registry->stopAll();
         cleanupAllTempTaskFiles();
         emit requestReceived("POST", "/stop", "all");
         sendResponse(res, ApiResponse::ok("All active tasks stopped"));
@@ -560,7 +563,10 @@ void HttpServer::handleStop(const httplib::Request &req, httplib::Response &res)
             return;
         }
 
-        m_registry->stopTask(taskNumber);
+        if(m_runner)
+            m_runner->stopTaskThread(taskNumber);
+        if(m_registry)
+            m_registry->stopTask(taskNumber);
         cleanupTempTaskFile(taskNumber);
         emit requestReceived("POST", "/stop", QString("task #%1").arg(taskNumber));
         sendResponse(res, ApiResponse::ok(QString("Task #%1 '%2' stopped")
