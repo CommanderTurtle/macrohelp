@@ -226,7 +226,8 @@ More info on applicable screens. Everything is pretty intuitive. Backend has no 
 - Circle movement and zone actions use Tasket schedules through the daemon, not direct WinUI cursor mutation.
 - Paste buffers and zone buffers are deliberately simple: Macrohelp stores values, then emits Tasket JSON when asked.
 - Registry Hub is the command surface for composing these primitives. It is not meant to be a native automation engine.
-- View [live workflow editor](https://app.shel.sh/macro) runtime environment when 'script too hard, need UI' <-- a 300kb ComfyUI app mimicing workflow module style for emitting/importing machine code. (Plain rendering to text files, all local js) - [(Source Code)](https://github.com/CommanderTurtle/orc/tree/main/app/macrohard)
+- View [live workflow editor](https://app.shel.sh/macro) runtime environment when 'script too hard, need UI' <-- a 300kb ComfyUI app mimicing workflow module style for emitting/importing machine code. (Plain rendering to text files, all local js) - [(Source Code)](https://github.com/CommanderTurtle/orc/tree/main/app/macro)
+- ReadThe [docs.shel.sh](https://docs.shel.sh/projects/macrohard)
 
 ### Technical Details
 
