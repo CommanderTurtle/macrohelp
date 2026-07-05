@@ -5208,7 +5208,7 @@ static bool AppendZoneFlowToken(const std::vector<std::string>& args, std::vecto
     }
 
     auto zoneSlotOf = [](const std::string& key) { return PasteBufferSlotFromCommand(LowerAscii(key)); };
-    auto flowOf = [](const std::string& key) { return ZoneFlowFromCommand(LowerAscii(key), true); };
+    auto flowOf = [](const std::string& key) { return ZoneFlowFromCommand(LowerAscii(key), false); };
 
     int zoneSlot = -1;
     int flowIndex = -1;
@@ -8032,6 +8032,7 @@ static std::wstring RegistryHubHelpText() {
         L"X = text extractor flow.\r\n"
         L"C = single-line text extractor flow.\r\n"
         L"V = drag-copy flow.\r\n"
+        L"{zone Z,Z} plays zone buffer Z using Snipping Tool image capture.\r\n"
         L"{zone Z,X} plays zone buffer Z using method X.\r\n"
         L"{zone Z,C} plays zone buffer Z using method C.\r\n"
         L"{zone V,V} plays zone buffer V using drag-copy.\r\n"
