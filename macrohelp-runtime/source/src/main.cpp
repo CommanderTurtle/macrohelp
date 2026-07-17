@@ -4509,6 +4509,14 @@ static std::string ZoneValueUtf8(int slot) {
 
 static bool LookupScriptTextValue(const std::string& rawKey, std::wstring& text) {
     std::string key = LowerAscii(TrimAscii(rawKey));
+    if (key == "registry" || key == "registrypath" || key == "registry_path" || key == "regfile") {
+        text = g_registryFilePath;
+        return true;
+    }
+    if (key == "shellg" || key == "shell_g" || key == "regedited" || key == "regbin") {
+        text = g_regeditedExePath;
+        return true;
+    }
     int varSlot = RegistryVarIndexFromCommand(key);
     if (varSlot >= 0) {
         text = g_registryVars[varSlot];
@@ -4881,7 +4889,10 @@ static bool ResolveScriptTextValue(const std::string& rawKey, std::wstring& text
 
 static bool TokenIsScriptTextKey(const std::string& rawKey) {
     std::string key = LowerAscii(TrimAscii(rawKey));
-    return RegistryVarIndexFromCommand(key) >= 0 || PasteBufferSlotFromCommand(key) >= 0;
+    return RegistryVarIndexFromCommand(key) >= 0 ||
+           PasteBufferSlotFromCommand(key) >= 0 ||
+           key == "registry" || key == "registrypath" || key == "registry_path" || key == "regfile" ||
+           key == "shellg" || key == "shell_g" || key == "regedited" || key == "regbin";
 }
 
 static std::string CompactKeyAlias(std::string value) {
@@ -4956,6 +4967,8 @@ static std::string NormalizeTasketScriptKeyToken(const std::string& rawKey) {
     if (compact == "leftmouse" || compact == "mouseleft" || compact == "lmouse") return "LEFT_MOUSE";
     if (compact == "rightmouse" || compact == "mouseright" || compact == "rmouse") return "RIGHT_MOUSE";
     if (compact == "middlemouse" || compact == "mousemiddle" || compact == "mmouse") return "MIDDLE_MOUSE";
+    if (compact == "mousewheelup" || compact == "wheelup" || compact == "scrollup") return "MOUSE_WHEEL_UP";
+    if (compact == "mousewheeldown" || compact == "wheeldown" || compact == "scrolldown") return "MOUSE_WHEEL_DOWN";
 
     if (compact.rfind("f", 0) == 0 && compact.size() <= 3) {
         bool allDigits = compact.size() > 1;
@@ -5025,6 +5038,37 @@ static bool AppendModifierRepeatToken(
     }
 
     actions.push_back(BuildKeysSequenceActionJson(namePrefix + "_" + target + "_" + std::to_string(count), steps, 120, 90));
+    actions.push_back(BuildWaitActionJson(0.05));
+    return true;
+}
+
+static bool AppendWheelRepeatToken(
+    const std::vector<std::string>& args,
+    std::vector<std::string>& actions,
+    std::wstring* status) {
+    if (args.empty() || args.size() > 2) {
+        if (status) *status = L"{wheelup count} or {wheeldown count} accepts one optional repeat count.";
+        return false;
+    }
+
+    std::string wheel = NormalizeTasketScriptKeyToken(args[0]);
+    if (wheel != "MOUSE_WHEEL_UP" && wheel != "MOUSE_WHEEL_DOWN") return false;
+
+    int count = 1;
+    if (args.size() == 2 && !TryParsePositiveInt(args[1], count)) {
+        if (status) *status = L"Wheel repeat count must be a positive integer.";
+        return false;
+    }
+
+    std::vector<std::vector<std::string>> steps;
+    steps.reserve((size_t)count);
+    for (int i = 0; i < count; ++i) steps.push_back({wheel});
+
+    actions.push_back(BuildKeysSequenceActionJson(
+        "RegistryHubWheel_" + wheel + "_" + std::to_string(count),
+        steps,
+        100,
+        90));
     actions.push_back(BuildWaitActionJson(0.05));
     return true;
 }
@@ -5120,7 +5164,7 @@ static bool ResolveShellAlias(const std::string& rawKey, std::wstring& alias, st
         slug = "c";
         return true;
     }
-    if (key == "g" || key == "python" || key == "py") {
+    if (key == "g" || key == "python" || key == "py" || key == "regedited" || key == "regbin") {
         alias = g_regeditedExePath;
         slug = "g";
         return true;
@@ -5136,7 +5180,7 @@ static bool AppendShellAliasToken(const std::vector<std::string>& args, std::vec
     std::wstring alias;
     std::string slug;
     if (!ResolveShellAlias(args[0], alias, slug)) {
-        if (status) *status = L"{shell ...} only accepts X, C, G, bash, cmd, python, or py.";
+        if (status) *status = L"{shell ...} only accepts X, C, G, bash, cmd, python, py, regedited, or regbin.";
         return false;
     }
     if (TrimWide(alias).empty()) {
@@ -5426,11 +5470,18 @@ static bool CompileRegistryHubToken(
     if (lower == "bash") {
         return AppendShellAliasToken({"x"}, actions, status);
     }
-    if (lower == "python" || lower == "py") {
+    if (lower == "python" || lower == "py" || lower == "regedited" || lower == "regbin") {
         return AppendShellAliasToken({"g"}, actions, status);
     }
     if (lower.rfind("shell ", 0) == 0) {
         return AppendShellAliasToken(SplitScriptArgs(token.substr(6)), actions, status);
+    }
+    std::vector<std::string> wheelArgs = SplitScriptArgs(token);
+    if (!wheelArgs.empty()) {
+        std::string wheel = NormalizeTasketScriptKeyToken(wheelArgs[0]);
+        if (wheel == "MOUSE_WHEEL_UP" || wheel == "MOUSE_WHEEL_DOWN") {
+            return AppendWheelRepeatToken(wheelArgs, actions, status);
+        }
     }
     if (lower.rfind("ctrlmod ", 0) == 0 || lower.rfind("controlmod ", 0) == 0 ||
         lower.rfind("shiftmod ", 0) == 0) {
@@ -5448,7 +5499,7 @@ static bool CompileRegistryHubToken(
         std::vector<std::string> args = SplitScriptArgs(token.substr(6));
         for (const auto& arg : args) {
             if (!TokenIsScriptTextKey(arg)) {
-                if (status) *status = L"{paste ...} only accepts A/S/D/F/Z/X/C/V.";
+                if (status) *status = L"{paste ...} only accepts A/S/D/F/Z/X/C/V, REGISTRY, or SHELLG/REGEDITED.";
                 return false;
             }
         }
@@ -5464,7 +5515,7 @@ static bool CompileRegistryHubToken(
         std::vector<std::string> args = SplitScriptArgs(token.substr(6));
         for (const auto& arg : args) {
             if (!TokenIsScriptTextKey(arg)) {
-                if (status) *status = L"{enter ...} only accepts A/S/D/F/Z/X/C/V.";
+                if (status) *status = L"{enter ...} only accepts A/S/D/F/Z/X/C/V, REGISTRY, or SHELLG/REGEDITED.";
                 return false;
             }
         }
@@ -7947,6 +7998,7 @@ static std::wstring RegistryHubHelpText() {
         L"Z/X/C/V are the main paste buffers owned by Shift+Alt+1. Registry Hub can read or set them, but it does not replace that menu.\r\n"
         L"Zone buffers also use Z/X/C/V names, but they are separate physical coordinate ranges, not stored paste text.\r\n"
         L"$A, $S, $D, $F, $Z, $X, $C, and $V resolve to the current buffer text inside {set ...} and condition tokens.\r\n"
+        L"$REGISTRY resolves to the configured registry file path. $SHELLG and $REGEDITED resolve to shell alias G.\r\n"
         L"{A} or {A,Z,C} pastes listed buffers with small Tasket waits. By default it does not click first, so focused shells stay focused.\r\n"
         L"{enter A,Z} pastes the listed buffers and presses Enter afterward. It also defaults to no-click.\r\n"
         L"{paste A} is an explicit no-click paste token for readability.\r\n"
@@ -7968,6 +8020,18 @@ static std::wstring RegistryHubHelpText() {
         L"{set shell X bash}\r\n"
         L"{set shell C cmd}\r\n"
         L"{set shell G uv run python}\r\n\r\n"
+        L"Registry File And Regedited CLI\r\n"
+        L"--------------------------------\r\n"
+        L"R stores one registry-file path in the Registry Hub environment. It persists through Export/Import and does not open, parse, serve, or modify the file by itself.\r\n"
+        L"$REGISTRY expands to that configured path inside {set ...} values and conditions. {paste REGISTRY} pastes the path directly; {enter REGISTRY} pastes it and presses Enter.\r\n"
+        L"G is one configurable shell-command field. G, python, py, regedited, and regbin intentionally resolve to that same field; they are aliases, not executable auto-detection.\r\n"
+        L"{shell G}, {python}, {py}, {regedited}, or {regbin} opens PowerShell, pastes the current G field, and presses Enter through Tasket. Set G to the complete command you want that shortcut to run.\r\n"
+        L"For changing commands, keep Regedited on PATH, construct the complete command in A/S/D/F, then paste it into a visible PowerShell session. Macrohelp still performs no native process execution.\r\n"
+        L"{set A regedited scan \"$REGISTRY\"}\r\n"
+        L"{powershell}{wait 700}{enter A}\r\n"
+        L"{set A regedited ref-get \"$REGISTRY\" index:3:string:2 --clip}\r\n"
+        L"{powershell}{wait 700}{enter A}{wait 300}{ALT_LEFT F4}\r\n"
+        L"The first example prints a registry scan in PowerShell. The second asks Regedited to copy index 3 string 2 to the Windows clipboard, then closes the shell after a short wait.\r\n\r\n"
         L"Branching\r\n"
         L"---------\r\n"
         L"{if A contains waterfront} ... {else} ... {endif}\r\n"
@@ -8010,13 +8074,24 @@ static std::wstring RegistryHubHelpText() {
         L"Chord aliases are normalized before JSON output: left/right/up/down become arrow keys; LEFT_SHIFT, left_shift, shift_left, ctrl, alt, win, esc, pgdn, and similar names become Tasket names.\r\n"
         L"{ctrlmod right 3} emits Ctrl+Right three times. {controlmod right 3} is the same alias.\r\n"
         L"{shiftmod up 3} emits Shift+Up three times. Counts are clamped to a sane maximum.\r\n\r\n"
+        L"Mouse Wheel Tokens\r\n"
+        L"------------------\r\n"
+        L"Tasket v2 exposes MOUSE_WHEEL_UP and MOUSE_WHEEL_DOWN as native mouse strokes. Macrohelp lists both under Mouse buttons in the Shift+Alt+9 manual key picker.\r\n"
+        L"{MOUSE_WHEEL_UP} and {MOUSE_WHEEL_DOWN} emit one corresponding Tasket wheel stroke.\r\n"
+        L"{wheelup}, {scrollup}, and {mousewheelup} normalize to MOUSE_WHEEL_UP.\r\n"
+        L"{wheeldown}, {scrolldown}, and {mousewheeldown} normalize to MOUSE_WHEEL_DOWN.\r\n"
+        L"{wheelup 3}, {scrollup 3}, and {MOUSE_WHEEL_UP 3} emit three separate upward wheel strokes.\r\n"
+        L"{wheeldown 2}, {scrolldown 2}, and {MOUSE_WHEEL_DOWN 2} emit two separate downward wheel strokes.\r\n"
+        L"Counts must be positive integers and use the same safety clamp as counted modifier commands.\r\n\r\n"
         L"Shell Tokens\r\n"
         L"------------\r\n"
         L"{powershell} opens Windows Terminal / PowerShell Preview with Win+Alt+Space, waits, then presses Enter.\r\n"
-        L"{shell X} pastes shell alias X and presses Enter.\r\n"
-        L"{shell C} pastes shell alias C and presses Enter.\r\n"
-        L"{shell G} pastes shell alias G and presses Enter.\r\n"
-        L"{cmd}, {bash}, {python}, and {py} are shortcuts for the configured shell aliases.\r\n"
+        L"Every shell alias uses that same visible flow: open PowerShell, wait for focus, paste the configured alias text, and press Enter through Tasket. No alias launches a process natively.\r\n"
+        L"{shell X} pastes shell alias X and presses Enter. Configure X as bash when {bash} should enter Bash.\r\n"
+        L"{shell C} pastes shell alias C and presses Enter. C defaults to cmd, so {cmd} enters Command Prompt inside the visible shell.\r\n"
+        L"{shell G} pastes shell alias G and presses Enter. Configure G as uv run python, regedited plus arguments, or another complete shell command.\r\n"
+        L"{cmd}, {bash}, {python}, {py}, {regedited}, and {regbin} are shortcuts for the configured shell aliases.\r\n"
+        L"{paste REGISTRY} pastes the selected registry file path. {paste REGEDITED} pastes shell alias G without opening a new shell.\r\n"
         L"{exec ...}, {system ...}, and {sys ...} are intentionally disabled here. Use visible shell primitives and paste buffers instead.\r\n\r\n"
         L"Task And Schedule Tokens\r\n"
         L"------------------------\r\n"
@@ -8943,7 +9018,8 @@ static const wchar_t* const kManualModifiers[] = {
 };
 
 static const wchar_t* const kManualMouseButtons[] = {
-    L"LEFT_MOUSE", L"RIGHT_MOUSE", L"MIDDLE_MOUSE", L"XBUTTON_1", L"XBUTTON_2", nullptr
+    L"LEFT_MOUSE", L"RIGHT_MOUSE", L"MIDDLE_MOUSE", L"XBUTTON_1", L"XBUTTON_2",
+    L"MOUSE_WHEEL_UP", L"MOUSE_WHEEL_DOWN", nullptr
 };
 
 static const wchar_t* const kManualCommons[] = {
