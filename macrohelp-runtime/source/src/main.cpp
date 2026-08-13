@@ -3951,6 +3951,17 @@ static std::string BuildPasteActionJson(const std::string& contentId, const std:
     return json;
 }
 
+static std::string BuildSystemCommandActionJson(const std::string& program, const std::string& arguments) {
+    std::string json;
+    json += "        {\n";
+    json += "            \"sysCommandType\": \"executeprogram\",\n";
+    json += "            \"sysCommandParam1\": \"" + EscapeJsonString(program) + "\",\n";
+    json += "            \"sysCommandParam2\": \"" + EscapeJsonString(arguments) + "\",\n";
+    json += "            \"type\": \"systemcommand\"\n";
+    json += "        },";
+    return json;
+}
+
 static std::string StripTrailingActionComma(std::string actionJson) {
     while (!actionJson.empty() && isspace((unsigned char)actionJson.back())) {
         actionJson.pop_back();
@@ -5126,6 +5137,83 @@ static bool AppendDirectPasteListActions(const std::vector<std::string>& keys, s
     return true;
 }
 
+static std::string Base64EncodeBytes(const std::vector<unsigned char>& bytes) {
+    static constexpr char alphabet[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string encoded;
+    encoded.reserve(((bytes.size() + 2) / 3) * 4);
+
+    for (size_t i = 0; i < bytes.size(); i += 3) {
+        unsigned int value = (unsigned int)bytes[i] << 16;
+        bool hasSecond = i + 1 < bytes.size();
+        bool hasThird = i + 2 < bytes.size();
+        if (hasSecond) value |= (unsigned int)bytes[i + 1] << 8;
+        if (hasThird) value |= (unsigned int)bytes[i + 2];
+
+        encoded.push_back(alphabet[(value >> 18) & 0x3f]);
+        encoded.push_back(alphabet[(value >> 12) & 0x3f]);
+        encoded.push_back(hasSecond ? alphabet[(value >> 6) & 0x3f] : '=');
+        encoded.push_back(hasThird ? alphabet[value & 0x3f] : '=');
+    }
+    return encoded;
+}
+
+static std::string EncodePowerShellCommand(const std::wstring& command) {
+    std::vector<unsigned char> bytes;
+    bytes.reserve(command.size() * 2);
+    for (wchar_t ch : command) {
+        unsigned int codeUnit = (unsigned int)ch;
+        bytes.push_back((unsigned char)(codeUnit & 0xff));
+        bytes.push_back((unsigned char)((codeUnit >> 8) & 0xff));
+    }
+    return Base64EncodeBytes(bytes);
+}
+
+static std::wstring QuotePowerShellLiteral(const std::wstring& value) {
+    std::wstring quoted = L"'";
+    for (wchar_t ch : value) {
+        if (ch == L'\'') quoted += L"''";
+        else quoted.push_back(ch);
+    }
+    quoted.push_back(L'\'');
+    return quoted;
+}
+
+static bool AppendRegeditedReferenceAction(
+    const std::string& rawReference,
+    bool appendClipboard,
+    std::vector<std::string>& actions,
+    std::wstring* status) {
+    std::string reference = TrimAscii(rawReference);
+    std::wstring registryPath = TrimWide(g_registryFilePath);
+    if (reference.empty()) {
+        if (status) *status = appendClipboard ?
+            L"{rgdappend ...} needs a Regedited reference." :
+            L"{rgdclip ...} needs a Regedited reference.";
+        return false;
+    }
+    if (registryPath.empty()) {
+        if (status) *status = L"Set the Registry Hub file path before using Regedited tokens.";
+        return false;
+    }
+
+    std::wstring quotedPath = QuotePowerShellLiteral(registryPath);
+    std::wstring quotedReference = QuotePowerShellLiteral(Utf8ToWString(reference));
+    std::wstring command =
+        L"$ErrorActionPreference='Stop';"
+        L"$OutputEncoding=[System.Text.UTF8Encoding]::new($false);";
+    if (appendClipboard) {
+        command += L"Get-Clipboard -Raw | & rgd rs " + quotedPath + L" " + quotedReference + L" --append";
+    } else {
+        command += L"& rgd rg " + quotedPath + L" " + quotedReference + L" --clip";
+    }
+
+    actions.push_back(BuildSystemCommandActionJson(
+        "powershell.exe",
+        "-NoLogo -NoProfile -NonInteractive -EncodedCommand " + EncodePowerShellCommand(command)));
+    return true;
+}
+
 static void AppendOpenPowerShellPreviewActions(std::vector<std::string>& actions) {
     actions.push_back(BuildKeysSequenceActionJson(
         "RegistryHubOpenPowerShellPreview",
@@ -5432,6 +5520,31 @@ static bool CompileRegistryHubToken(
         actions.push_back(moveActions);
         return true;
     }
+    if (lower == "type" || lower.rfind("type ", 0) == 0) {
+        if (lower == "type") {
+            if (status) *status = L"{type ...} needs literal text.";
+            return false;
+        }
+        actions.push_back(BuildPasteActionJson("registry_hub_type", token.substr(5)));
+        return true;
+    }
+    if (lower == "rgdclip" || lower.rfind("rgdclip ", 0) == 0) {
+        return AppendRegeditedReferenceAction(lower == "rgdclip" ? "" : token.substr(8), false, actions, status);
+    }
+    if (lower == "rgdappend" || lower.rfind("rgdappend ", 0) == 0) {
+        return AppendRegeditedReferenceAction(lower == "rgdappend" ? "" : token.substr(10), true, actions, status);
+    }
+    if (lower.rfind("pt ", 0) == 0) {
+        int idx = RegistryPointIndexFromCommand(token.substr(3));
+        if (idx < 0 || idx >= REGISTRY_POINT_COUNT || !g_registryPointSet[idx]) {
+            if (status) *status = L"Point token references an unset point.";
+            return false;
+        }
+        std::string moveActions;
+        if (!LoadCursorMoveActions(g_registryPoints[idx], &moveActions, status)) return false;
+        actions.push_back(moveActions);
+        return true;
+    }
     if (lower == "click on" || lower == "paste click on" || lower == "focus click on") {
         pasteFocusClickEnabled = true;
         return true;
@@ -5505,6 +5618,16 @@ static bool CompileRegistryHubToken(
         }
         return AppendDirectPasteListActions(args, actions, status);
     }
+    if (lower.rfind("buf ", 0) == 0) {
+        std::vector<std::string> args = SplitScriptArgs(token.substr(4));
+        for (const auto& arg : args) {
+            if (!TokenIsScriptTextKey(arg)) {
+                if (status) *status = L"{buf ...} only accepts A/S/D/F/Z/X/C/V, REGISTRY, or SHELLG/REGEDITED.";
+                return false;
+            }
+        }
+        return AppendPasteListActions(args, false, pasteFocusClickEnabled, actions, status);
+    }
     if (lower.rfind("zonebuf ", 0) == 0) {
         return AppendZoneBufToken(SplitScriptArgs(token.substr(8)), actions, status);
     }
@@ -5524,15 +5647,6 @@ static bool CompileRegistryHubToken(
 
     std::vector<std::string> args = SplitScriptArgs(token);
     if (!args.empty()) {
-        bool allTextKeys = true;
-        for (const auto& arg : args) {
-            if (!TokenIsScriptTextKey(arg)) {
-                allTextKeys = false;
-                break;
-            }
-        }
-        if (allTextKeys) return AppendPasteListActions(args, false, pasteFocusClickEnabled, actions, status);
-
         std::vector<std::string> keyStep;
         for (const auto& arg : args) keyStep.push_back(NormalizeTasketScriptKeyToken(arg));
         actions.push_back(BuildKeysSequenceActionJson("RegistryHubKeys", {keyStep}, 200, 100));
@@ -7999,10 +8113,12 @@ static std::wstring RegistryHubHelpText() {
         L"Zone buffers also use Z/X/C/V names, but they are separate physical coordinate ranges, not stored paste text.\r\n"
         L"$A, $S, $D, $F, $Z, $X, $C, and $V resolve to the current buffer text inside {set ...} and condition tokens.\r\n"
         L"$REGISTRY resolves to the configured registry file path. $SHELLG and $REGEDITED resolve to shell alias G.\r\n"
-        L"{A} or {A,Z,C} pastes listed buffers with small Tasket waits. By default it does not click first, so focused shells stay focused.\r\n"
+        L"{buf A} or {buf A,Z,C} pastes listed buffers with small Tasket waits. By default it does not click first, so focused shells stay focused.\r\n"
         L"{enter A,Z} pastes the listed buffers and presses Enter afterward. It also defaults to no-click.\r\n"
         L"{paste A} is an explicit no-click paste token for readability.\r\n"
-        L"{click on} enables prepended focus-clicks for following bare buffer and {enter ...} tokens.\r\n"
+        L"{type literal text} sends the literal remainder through Tasket's native paste action.\r\n"
+        L"Bare {A}, {S}, {D}, {F}, {Z}, {X}, {C}, and {V} are keyboard strokes; use {buf ...}, {paste ...}, or {enter ...} for stored text.\r\n"
+        L"{click on} enables prepended focus-clicks for following {buf ...} and {enter ...} tokens.\r\n"
         L"{click off} disables prepended focus-clicks again. Registry Hub starts in click-off mode every Play.\r\n\r\n"
         L"Setting Values\r\n"
         L"--------------\r\n"
@@ -8024,14 +8140,12 @@ static std::wstring RegistryHubHelpText() {
         L"--------------------------------\r\n"
         L"R stores one registry-file path in the Registry Hub environment. It persists through Export/Import and does not open, parse, serve, or modify the file by itself.\r\n"
         L"$REGISTRY expands to that configured path inside {set ...} values and conditions. {paste REGISTRY} pastes the path directly; {enter REGISTRY} pastes it and presses Enter.\r\n"
+        L"{rgdclip i6z6} emits a native Tasket command for rgd rg <saved-file> i6z6 --clip. No rgd load state is used.\r\n"
+        L"{rgdappend i6z6} pipes the current multiline clipboard into rgd rs <saved-file> i6z6 --append. Regedited owns string, zone, DB-value, DB-line, and zone-relocation behavior.\r\n"
+        L"Both tokens pass the native reference through verbatim, so i6s6, i6dbl, DB refs, and other Regedited reference forms work the same way as at the CLI.\r\n"
         L"G is one configurable shell-command field. G, python, py, regedited, and regbin intentionally resolve to that same field; they are aliases, not executable auto-detection.\r\n"
         L"{shell G}, {python}, {py}, {regedited}, or {regbin} opens PowerShell, pastes the current G field, and presses Enter through Tasket. Set G to the complete command you want that shortcut to run.\r\n"
-        L"For changing commands, keep Regedited on PATH, construct the complete command in A/S/D/F, then paste it into a visible PowerShell session. Macrohelp still performs no native process execution.\r\n"
-        L"{set A regedited scan \"$REGISTRY\"}\r\n"
-        L"{powershell}{wait 700}{enter A}\r\n"
-        L"{set A regedited ref-get \"$REGISTRY\" index:3:string:2 --clip}\r\n"
-        L"{powershell}{wait 700}{enter A}{wait 300}{ALT_LEFT F4}\r\n"
-        L"The first example prints a registry scan in PowerShell. The second asks Regedited to copy index 3 string 2 to the Windows clipboard, then closes the shell after a short wait.\r\n\r\n"
+        L"Generic {exec ...}, {system ...}, and {sys ...} execution stays disabled. rgdclip and rgdappend are the only direct process adapters in Registry Hub.\r\n\r\n"
         L"Branching\r\n"
         L"---------\r\n"
         L"{if A contains waterfront} ... {else} ... {endif}\r\n"
@@ -8065,7 +8179,7 @@ static std::wstring RegistryHubHelpText() {
         L"Pointer And Click Tokens\r\n"
         L"------------------------\r\n"
         L"{wait 200} waits 200 milliseconds.\r\n"
-        L"{point 1} through {point 16} move through the canonical Tasket cursor-move template when that point is set.\r\n"
+        L"{pt 1} through {pt 16} move through the canonical Tasket cursor-move template when that point is set. {point N} remains the long alias.\r\n"
         L"{click} or {left} emits a left-click action.\r\n"
         L"{click on} / {click off} changes whether buffer paste tokens click before pasting.\r\n"
         L"{right} emits a right-click action.\r\n"
@@ -8122,6 +8236,9 @@ static std::wstring RegistryHubHelpText() {
         L"{powershell}{wait 700}{paste A}{ENTER}{wait 300}{ALT_LEFT F4}\r\n"
         L"{powershell}{wait 700}{paste A}{ctrlmod right 3}{shiftmod up 2}{ALT_LEFT F4}\r\n"
         L"{set A $Z}{if A contains waterfront}{enter A}{else}{enter D}{endif}\r\n"
+        L"{rgdclip i6z6}{wait 500}{CONTROL_LEFT V}\r\n"
+        L"{type literal text pasted by Tasket}\r\n"
+        L"{rgdappend i6s6}{pt 3}{buf Z}{ENTER}\r\n"
         L"{set zone Z 100,100,600,400}{zonebuf Z,C,V}{if V contains approved}{play FollowupTask}{endif}\r\n"
         L"{if saved-task OpenDailyFocus exists}{play OpenDailyFocus}{endif}\r\n"
         L"{if saved-tasks count > 10}{play MorningStartup}{else}{enter D}{endif}\r\n"
@@ -8271,7 +8388,7 @@ static void UpdateRegistryHubDialogText(HWND hwnd) {
             prompt.push_back(RegistryVarKey(g_registryHubState.activeVar));
             SetDlgItemTextW(hwnd, IDC_STATIC_REGISTRY_HUB_PROMPT, prompt.c_str());
             SetDlgItemTextW(hwnd, IDC_STATIC_REGISTRY_HUB_HINT, L"Enter saves. These vars are script-local A/S/D/F and may alias copied data manually.");
-            SetDlgItemTextW(hwnd, IDC_STATIC_REGISTRY_HUB_STATUS, L"Use as {A}, {S}, {D}, {F}, or in comma lists.");
+            SetDlgItemTextW(hwnd, IDC_STATIC_REGISTRY_HUB_STATUS, L"Use as {buf A}, {buf S}, {buf D}, {buf F}, or in comma lists.");
             SetDlgItemTextW(hwnd, IDC_EDIT_REGISTRY_HUB_VALUE, g_registryVars[g_registryHubState.activeVar].c_str());
             break;
         }
@@ -8285,7 +8402,7 @@ static void UpdateRegistryHubDialogText(HWND hwnd) {
             std::wstring prompt = PasteBufferSlotLabel(g_registryHubState.activePasteSlot);
             SetDlgItemTextW(hwnd, IDC_STATIC_REGISTRY_HUB_PROMPT, prompt.c_str());
             SetDlgItemTextW(hwnd, IDC_STATIC_REGISTRY_HUB_HINT, L"Enter saves. Use Shift+Enter for line breaks if needed.");
-            SetDlgItemTextW(hwnd, IDC_STATIC_REGISTRY_HUB_STATUS, L"Use as {Z}, {X}, {C}, {V}, or comma lists.");
+            SetDlgItemTextW(hwnd, IDC_STATIC_REGISTRY_HUB_STATUS, L"Use as {buf Z}, {buf X}, {buf C}, {buf V}, or in comma lists.");
             SetDlgItemTextW(hwnd, IDC_EDIT_REGISTRY_HUB_VALUE, g_pasteBuffers[g_registryHubState.activePasteSlot].c_str());
             break;
         }
@@ -8310,7 +8427,7 @@ static void UpdateRegistryHubDialogText(HWND hwnd) {
             prompt += std::to_wstring(g_registryHubState.activePoint + 1);
             SetDlgItemTextW(hwnd, IDC_STATIC_REGISTRY_HUB_PROMPT, prompt.c_str());
             SetDlgItemTextW(hwnd, IDC_STATIC_REGISTRY_HUB_HINT, L"Enter x,y and press Enter. Type S to save current cursor position.");
-            SetDlgItemTextW(hwnd, IDC_STATIC_REGISTRY_HUB_STATUS, L"Use as {point N}, {set point N ...}, or {set zone Z 1,2}.");
+            SetDlgItemTextW(hwnd, IDC_STATIC_REGISTRY_HUB_STATUS, L"Use as {pt N}, {set point N ...}, or {set zone Z 1,2}.");
             std::wstring value;
             if (g_registryPointSet[g_registryHubState.activePoint]) {
                 value = Utf8ToWString(PointValueUtf8(g_registryHubState.activePoint));
