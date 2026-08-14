@@ -1,0 +1,38 @@
+# Build outputs
+/macrohelp-runtime/source/build/
+/macrohelp-runtime/source/build_mingw/
+/macrohelp-runtime/source/cmake-build-*/
+/macrohelp-runtime/source/out/
+/macrohelp-runtime/source/Debug/
+/macrohelp-runtime/source/Release/
+/macrohelp-runtime/source/x64/
+/macrohelp-runtime/source/x86/
+/macrohelp-runtime/source/build-vs2026/
+
+/tasket-http-daemon/build-msvc/
+/tasket-http-daemon/original/
+/tasket-http-daemon/aqtinstall.log
+
+# Compiled files
+*.exe
+*.obj
+*.o
+*.res
+*.pdb
+*.ilk
+*.idb
+*.tlog
+*.lastbuildstate
+
+# IDE
+.vs/
+.idea/
+*.user
+*.suo
+*.sdf
+*.opensdf
+*.vcxproj.filters
+
+# Temporary
+*.tmp
+*.log
