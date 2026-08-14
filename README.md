@@ -262,5 +262,5 @@ The live key display uses [PromptFont](https://shinmera.com/docs/promptfont/) (b
 
 ## License
 
-- CursorOverlay is open source [AGPLv3](./LICENSE). No data ever collected, solely passion project. 
+- Macrohelp is open source [AGPLv3](./LICENSE). No data ever collected, solely passion project. 
 - PromptFont by Shinmera (Yukari Hafner) is used under the SIL Open Font License 1.1.
