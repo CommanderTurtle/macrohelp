@@ -12,6 +12,7 @@
 /tasket-http-daemon/build-msvc/
 /tasket-http-daemon/original/
 /tasket-http-daemon/aqtinstall.log
+/tasket-http-daemon/QT_VERSION.txt
 
 # Compiled files
 *.exe
