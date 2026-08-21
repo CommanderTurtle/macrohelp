@@ -1,6 +1,6 @@
 # Macrohelp — a developer's best friend
 
-### A lightweight overlay runtime. (~300kb harness) for Tasket++ 
+### A lightweight overlay runtime. (~300kb harness) for [Tasket++](https://github.com/AmirHammouteneEI/ScheduledPasteAndKeys)
 
 Focused on QoL, coordinate capture, buffers, zone math, and translating intent into native Tasket `.scht` work through `tasket-httpd` daemon.
 
