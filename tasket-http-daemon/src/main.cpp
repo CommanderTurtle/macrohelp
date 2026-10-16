@@ -13,7 +13,7 @@
 #include "globals.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION "1.8.0"
+#define APP_VERSION "2.3.0"
 #endif
 
 void printBanner()

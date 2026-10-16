@@ -2,6 +2,7 @@
 param(
     [string]$QtVersion = "",
     [string]$QtArch = "win64_msvc2022_64",
+    [string]$TasketRef = "",
     [switch]$DryRun,
     [switch]$KeepQt,
     [switch]$RequireNewestQt,
@@ -29,7 +30,14 @@ if (-not $QtVersion) {
 }
 
 if ($DryRun) {
-    & (Join-Path $Root "scripts\build-fresh-qt6.ps1") -QtVersion $QtVersion -QtArch $QtArch -DryRun -RequireNewestQt:$RequireNewestQt
+    $previewParams = @{
+        QtVersion = $QtVersion
+        QtArch = $QtArch
+        DryRun = $true
+        RequireNewestQt = [bool]$RequireNewestQt
+    }
+    if ($TasketRef) { $previewParams.TasketRef = $TasketRef }
+    & (Join-Path $Root "scripts\build-fresh-qt6.ps1") @previewParams
     exit $LASTEXITCODE
 }
 
@@ -57,5 +65,6 @@ $childParams = @{
     CleanQtAfterBuild = (-not $KeepQt)
     RequireNewestQt = [bool]$RequireNewestQt
 }
+if ($TasketRef) { $childParams.TasketRef = $TasketRef }
 
 & (Join-Path $Root "scripts\build-fresh-qt6.ps1") @childParams

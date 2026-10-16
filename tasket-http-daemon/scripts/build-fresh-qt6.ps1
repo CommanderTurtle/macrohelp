@@ -4,6 +4,7 @@ param(
     [string]$QtArch = "win64_msvc2022_64",
     [string]$QtCacheRoot = "",
     [string]$TasketRepo = "https://github.com/AmirHammouteneEI/ScheduledPasteAndKeys.git",
+    [string]$TasketRef = "bbc70d5304786ab337218fbf803f3c8da11fb92b",
     [string]$BuildDir = "build-msvc",
     [switch]$DryRun,
     [switch]$InstallQt,
@@ -146,7 +147,10 @@ if (Test-Path -LiteralPath $SiblingTasket) {
 } else {
     $OriginalTasket = $LocalTasket
 }
-$PatchPath = Join-Path $SourceRoot "patches\Task.h.patch"
+$PatchPaths = @(
+    (Join-Path $SourceRoot "patches\Task.h.patch"),
+    (Join-Path $SourceRoot "patches\SystemCommandsAction.cpp.patch")
+)
 
 Write-Step "Set session telemetry opt-outs"
 $env:DOTNET_CLI_TELEMETRY_OPTOUT = "1"
@@ -247,6 +251,7 @@ if (Test-Path -LiteralPath $QtCacheRoot) {
 }
 
 Write-Step "Prepare Tasket++ source"
+Write-Host "Tasket++ source revision: $TasketRef (default: v2.3)"
 if (-not (Test-Path -LiteralPath $OriginalTasket)) {
     Write-Host "planned clone: git clone $TasketRepo `"$OriginalTasket`""
     if (-not $DryRun) {
@@ -258,15 +263,32 @@ if (-not (Test-Path -LiteralPath $OriginalTasket)) {
 }
 
 if (Test-Path -LiteralPath $OriginalTasket) {
-    $patchCheck = & git -C $OriginalTasket apply --reverse --check $PatchPath 2>$null
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host "ok: Task.h patch already applied."
-    } else {
-        Write-Host "planned patch: git -C `"$OriginalTasket`" apply `"$PatchPath`""
-        if (-not $DryRun) {
-            & git -C $OriginalTasket apply $PatchPath
-            if ($LASTEXITCODE -ne 0) { throw "Task.h patch failed." }
+    if (-not $DryRun) {
+        & git -C $OriginalTasket cat-file -e "$TasketRef^{commit}" 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            & git -C $OriginalTasket fetch $TasketRepo $TasketRef
+            if ($LASTEXITCODE -ne 0) { throw "Could not fetch Tasket++ revision $TasketRef." }
         }
+        # Remove only our known patches before switching, preserving all other edits.
+        foreach ($patch in $PatchPaths) {
+            & git -C $OriginalTasket apply --reverse --check $patch 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                & git -C $OriginalTasket apply --reverse $patch
+                if ($LASTEXITCODE -ne 0) { throw "Could not remove sidecar patch: $patch" }
+            }
+        }
+        & git -C $OriginalTasket checkout --detach $TasketRef
+        if ($LASTEXITCODE -ne 0) { throw "Could not select Tasket++ $TasketRef; check local source changes." }
+    } else {
+        Write-Host "planned checkout: git -C `"$OriginalTasket`" checkout --detach $TasketRef"
+    }
+}
+
+foreach ($patch in $PatchPaths) {
+    Write-Host "planned patch: git -C `"$OriginalTasket`" apply `"$patch`""
+    if (-not $DryRun) {
+        & git -C $OriginalTasket apply $patch
+        if ($LASTEXITCODE -ne 0) { throw "Sidecar patch failed: $patch" }
     }
 }
 

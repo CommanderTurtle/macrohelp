@@ -1,0 +1,12 @@
+--- a/actions/SystemCommandsAction.cpp
++++ b/actions/SystemCommandsAction.cpp
+@@ -89,8 +89,7 @@ void SystemCommandAction::runAction() const
+         break;
+         case SystemCommandType::ExecuteProgram:
+         {
+-            QString commandLine = "\""+m_param1+"\""+" "+m_param2;
+-            QProcess::startDetached(commandLine);
++            QProcess::startDetached(m_param1, QProcess::splitCommand(m_param2));
+         }
+         break;
+         case SystemCommandType::OpenUrl:

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(TasketHttpTrigger VERSION 1.8.0 LANGUAGES CXX)
+project(TasketHttpTrigger VERSION 2.3.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -8,7 +8,7 @@ set(CMAKE_AUTOMOC ON)
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-set(TASKETPP_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../original" CACHE PATH
+set(TASKETPP_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/original" CACHE PATH
     "Path to cloned Tasket++ source (git clone https://github.com/AmirHammouteneEI/ScheduledPasteAndKeys.git original)")
 
 set(TASKET_HTTP_PORT 7777 CACHE STRING "Default HTTP listening port")
