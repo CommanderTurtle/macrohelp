@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.commanderturtle.macrohelp",
+  "name": "Macrohelp",
+  "version": "0.1.0",
+  "author": "CommanderTurtle",
+  "license": "AGPL-3.0-only",
+  "description": "Pointer tools and an overlay client for a separately run controller.",
+  "kinds": ["service", "bar-widget"],
+  "keepLoaded": true,
+  "entryPoints": {"service":"runtime/source/wld/qml/Service.qml","barWidget":"runtime/source/wld/qml/Panel.qml"},
+  "dependencies": [
+    {"name":"cargo","package":"rust","why":"Build the overlay client"},
+    {"name":"cc","package":"gcc","why":"Link the overlay client"},
+    {"name":"wl-paste","package":"wl-clipboard","why":"Clipboard input for optional Regedited append"},
+    {"name":"zenity","package":"zenity","why":"Environment import and export"}
+  ],
+  "barWidget":{"displayName":"Macrohelp","category":"Productivity","aliases":["overlay","cursor","macros"],"allowMultiple":false,"defaultSection":"right"}
+}

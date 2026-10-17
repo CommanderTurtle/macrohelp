@@ -9,14 +9,14 @@ The resulting `bin` folder includes `tasket-httpd.exe`, Qt DLLs, and Qt plugin f
 Use the live Tasket++ saved task folder:
 
 ```powershell
-cd tasket-http-daemon/bin
+cd http-daemon/bin
 .\tasket-httpd.exe --port 7777 --bind 127.0.0.1 --dir "$env:APPDATA\Tasket++\saved_tasks" --default-delay 1
 ```
 
 Use the package (after build):
 
 ```powershell
-cd tasket-http-daemon/bin
+cd http-daemon/bin
 .\tasket-httpd.exe --port 7777 --bind 127.0.0.1 --dir "folder\of\tasks" --default-delay 1
 ```
 

@@ -1,0 +1,6 @@
+# Preserve existing Windows source bytes across folder moves.
+http-daemon/** -text
+runtime/source/** -text
+http-daemon/*.md text eol=lf
+http-daemon/wld/** text eol=lf
+runtime/source/wld/** text eol=lf

@@ -1,0 +1,154 @@
+import QtQuick
+import Quickshell
+import Quickshell.Io
+import qs.Commons
+import "model/Workflow.js" as Workflow
+
+Item {
+  id: root
+  property var shell: null
+  property var manifest: null
+  property var settings: ({})
+  property bool ready: false
+  property bool connected: false
+  property bool refreshing: false
+  property bool hidden: false
+  property bool busy: false
+  property bool localBusy: false
+  property string error: ""
+  property string message: ""
+  property string page: "Workflow"
+  property string endpoint: ""
+  property var environment: ({})
+  property var cursor: ({x:0,y:0})
+  property var monitors: []
+  property var tasks: []
+  property var status: ({})
+  property var history: []
+  property var path: []
+  property bool recordingPath: false
+  property double pathTime: 0
+  property var circleOrigin: [0,0]
+  property real radius: 100
+  property real angle: 0
+  property string unit: "degrees"
+  property int pointIndex: 0
+  property string zoneSlot: "Z"
+  property var zoneStart: null
+  property int serial: 0
+  property int generation: 0
+  property var callbacks: ({})
+  property var steps: []
+  property int stepIndex: 0
+  property var currentJob: null
+  property var pending: null
+  property var pickerCallback: null
+  readonly property string helper: (Quickshell.env("XDG_DATA_HOME") || Quickshell.env("HOME")+"/.local/share")+"/macrohelp/overlay/bin/macrohelpctl"
+  readonly property var helperCommand: [helper,"session"].concat(settings&&settings.envFile?["--env",String(settings.envFile)]:[])
+  readonly property var circleTarget: Workflow.circle(circleOrigin,radius,angle,unit)
+  signal showPanel()
+  signal hidePanel()
+  signal clipboardRequested(var callback)
+  function call(request,callback) {
+    if(!runtime.running){error="Build the overlay client, then reload the Macrohelp plugin.";if(callback)callback(null,error);return}
+    request.id=++serial;if(callback)callbacks[request.id]=callback
+    runtime.write(JSON.stringify(request)+"\n")
+  }
+  function http(verb,path,body,callback){call({method:"http",verb:verb,path:path,body:body||{}},callback)}
+  function remember(text){history=history.concat([text]).slice(-6)}
+  function change(section,key,value){var next=Workflow.copy(environment);if(section)next[section][key]=value;else next[key]=value;environment=next;persist.restart()}
+  function save(){if(ready)call({method:"save-state",state:environment})}
+  function refresh(){
+    if(refreshing)return
+    refreshing=true
+    http("GET","/health",{},function(value,failure){root.connected=!failure;if(failure){root.refreshing=false;return}root.http("GET","/tasks",{},function(v,e){if(!e)root.tasks=v.tasks||[];root.http("GET","/status",{},function(v,e){root.refreshing=false;if(!e)root.status=v})})})
+  }
+  function panel(name){page=name;showPanel()}
+  function stop(){generation++;steps=[];currentJob=null;busy=false;localBusy=false;pending=null;hidden=false;startDelay.stop();poll.stop();if(!emergency.running)emergency.running=true;message="";remember("Stop requested")}
+  function queue(actions,callback,delay,name,saveOnly){
+    if(!actions.length){if(callback)callback(null,"No actions");return}
+    var id=name||("Macrohelp-"+Date.now()+"-"+(serial+1))
+    http("POST","/temp-task",{name:id,delay:delay===undefined?1:delay,run:!saveOnly,cleanup:!saveOnly,task:{actions:actions}},function(v,e){
+      if(!e&&v.task){root.change("","last_task",v.task);root.remember(id+" #"+v.task.task_number)}
+      if(callback)callback(v,e)
+    })
+  }
+  function later(actions){if(busy||localBusy||pending){error="An operation is already pending";return}hidePanel();pending=function(){root.queue(actions)};startDelay.restart()}
+  function pointer(){if(!ready)return;var p=[Math.round(cursor.x),Math.round(cursor.y)];change("points",pointIndex,p);remember("Point "+(pointIndex+1)+": "+p.join(", "))}
+  function corner(){var p=[Math.round(cursor.x),Math.round(cursor.y)];if(!zoneStart){zoneStart=p;message="First corner saved"}else{change("zones",zoneSlot,zoneStart.concat(p));zoneStart=null;message="Zone "+zoneSlot+" saved"}}
+  function togglePath(){recordingPath=!recordingPath;if(recordingPath){path=[[0,0,Math.round(cursor.x),Math.round(cursor.y)]];pathTime=Date.now();message="Recording pointer path"}else message="Path: "+path.length+" points"}
+  function click(button){later([Workflow.keys(button)])}
+  function runSaved(name){hidePanel();http("POST","/run",{task:name},function(v,e){if(!e){root.change("","last_task",v);root.message="Scheduled #"+v.task_number}})}
+  function play(source){
+    if(busy||localBusy||pending){error="Stop the current operation first";return}
+    var token=generation
+    refreshContext(function(context){
+      if(token!==root.generation)return
+      try {var plan=Workflow.compile(source,root.environment,context);root.environment=plan.state;root.save();root.steps=plan.steps;root.stepIndex=0;root.busy=true;root.generation++;root.hidePanel();root.pending=function(){root.nextStep(root.generation)};startDelay.restart()}
+      catch(e){root.error=e.message}
+    })
+  }
+  function refreshContext(callback){http("GET","/tasks",{},function(t,e){if(e)return;http("GET","/status",{},function(s,e){if(e)return;root.call({method:"bindings"},function(bindings,e){if(e)return;try{callback({tasks:t.tasks,status:s,shortcuts:Workflow.desktopShortcuts(bindings,root.settings.shortcuts)})}catch(failure){root.error=failure.message}})})})}
+  function saveSchedule(name){refreshContext(function(context){try{var plan=Workflow.compile(root.environment.script,root.environment,context);if(plan.steps.some(function(s){return s.kind!=="input"}))throw Error("Clipboard/registry steps run through Play. Save the workflow with Export environment.");var actions=[];plan.steps.forEach(function(s){actions=actions.concat(s.actions)});root.queue(actions,function(v,e){if(!e){root.message="Saved "+name;root.refresh()}},1,name,true)}catch(e){root.error=e.message}})}
+  function nextStep(token){
+    if(token!==generation||!busy)return
+    if(stepIndex>=steps.length){busy=false;hidden=false;message="Finished";save();refresh();return}
+    var step=steps[stepIndex++]
+    function done(value,error){if(token!==root.generation)return;if(error){root.busy=false;root.hidden=false;if(root.connected)root.error=error;return}if(step.slot&&value&&value.text!==undefined)root.change(/^[ASDF]$/.test(step.slot)?"vars":"buffers",step.slot,value.text);root.nextStep(token)}
+    if(step.kind==="input"){hidden=!!step.capture;queue(Workflow.resolve(step.actions,environment),function(v,e){if(token!==root.generation)return;if(e){done(null,e);return}root.currentJob=v.task;poll.restart()},0)}
+    else if(step.kind==="clipboard")readClipboard(function(v,e){if(token!==root.generation)return;root.hidePanel();root.pending=function(){done(v,e)};startDelay.restart()})
+    else if(step.kind==="regedited")call({method:"regedited",action:step.action,file:step.file,reference:step.reference},done)
+  }
+  function readClipboard(callback){if(localBusy){if(callback)callback(null,"Clipboard operation already active");return}localBusy=true;page="Buffers";showPanel();clipboardRequested(function(v,e){root.localBusy=false;if(callback)callback(v,e)})}
+  function useZone(slot,method,target){play(target?"{zonebuf "+slot+","+method+","+target+"}":"{zone "+slot+","+method+"}")}
+  function chooseFile(save,callback){if(picker.running)return;pickerCallback=callback;picker.command=["zenity","--file-selection","--title=Macrohelp environment"].concat(save?["--save","--filename=macrohelp-environment.json"]:[]);picker.running=true}
+  function exportState(){chooseFile(true,function(path){root.call({method:"export",path:path,state:root.environment},function(v,e){if(!e)root.message="Exported"})})}
+  function importState(){chooseFile(false,function(path){root.call({method:"import",path:path},function(v,e){if(!e){root.environment=v;root.save();root.message="Imported"}})})}
+  Timer {id:persist;interval:400;onTriggered:root.save()}
+  Timer {id:startDelay;interval:250;onTriggered:{var f=root.pending;root.pending=null;if(f)f()}}
+  Timer {id:poll;interval:120;onTriggered:{
+    var token=root.generation,job=root.currentJob;if(!job)return
+    root.http("GET","/check?id="+job.task_number,{},function(v,e){
+      if(token!==root.generation)return
+      if(e){root.busy=false;root.hidden=false;root.currentJob=null;return}
+      if(v.session!==job.session){root.busy=false;root.hidden=false;root.currentJob=null;root.error="Omarsket restarted; workflow stopped";return}
+      if(v.state==="scheduled"||v.state==="running"){poll.restart();return}
+      root.currentJob=null;root.hidden=false
+      if(v.state!=="finished"){root.busy=false;root.error=v.error||v.state;return}
+      root.nextStep(token)
+    })
+  }}
+  Process {id:picker;stdout:StdioCollector{id:picked;waitForEnd:true} onExited:function(code){var f=root.pickerCallback;root.pickerCallback=null;if(code===0&&f)f(String(picked.text).trim())}}
+  Process {
+    id:emergency
+    command:[root.helper,"stop"].concat(root.settings&&root.settings.envFile?["--env",String(root.settings.envFile)]:[])
+  }
+  Process {
+    id:runtime;command:root.helperCommand;stdinEnabled:true;running:true
+    onStarted:root.call({method:"hello"},function(value,failure){if(failure)return;root.environment=value.state;root.monitors=value.monitors;root.endpoint=value.endpoint;root.ready=true;root.refresh()})
+    stdout:SplitParser {onRead:function(line){
+      var r;try{r=JSON.parse(line)}catch(e){root.error="Invalid controller response";return}
+      if(r.event==="cursor"){
+        root.cursor=r.cursor
+        if(root.recordingPath){if(root.path.length>=10000){root.recordingPath=false;root.error="Path limit reached"}else{var now=Date.now();root.path=root.path.concat([[0,Math.max(1,now-root.pathTime),Math.round(r.cursor.x),Math.round(r.cursor.y)]]);root.pathTime=now}}
+        return
+      }
+      if(r.event==="monitors"){root.monitors=r.monitors;return}
+      var callback=root.callbacks[r.id];delete root.callbacks[r.id]
+      if(r.offline){root.connected=false;root.error="";if(callback)callback(null,"offline");return}
+      else if(!r.ok)root.error=r.error
+      else root.error=""
+      if(callback)callback(r.result,r.ok?null:r.error)
+    }}
+    stderr:SplitParser{onRead:function(line){root.error=line}}
+    onExited:function(code){root.ready=false;root.connected=false;root.refreshing=false;root.busy=false;root.hidden=false;root.currentJob=null;root.generation++;var all=root.callbacks;root.callbacks=({});for(var id in all)all[id](null,"Controller stopped");if(code!==0)root.error="Controller exited ("+code+")"}
+  }
+  Hud {service:root}
+  ShellIpc {
+    target:"io.github.commanderturtle.macrohelp"
+    function point():void{root.pointer()}
+    function click(button:string):void{root.click(button)}
+    function stop():void{root.stop()}
+    function page(name:string):void{root.panel(name)}
+  }
+}

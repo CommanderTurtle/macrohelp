@@ -2,8 +2,8 @@
 
 This package intentionally has two runtime folders:
 
-- `macrohelp-runtime` - Macrohelp / CursorOverlay source
-- `tasket-http-daemon` - Tasket++ HTTP daemon source
+- `runtime` - Macrohelp / CursorOverlay source
+- `http-daemon` - Tasket++ HTTP daemon source
 
 <details>
   <summary>Show quick build</summary>
@@ -21,7 +21,7 @@ cd macrohelp
 Build httpd:
 
 ```powershell
-cd tasket-http-daemon
+cd http-daemon
 .\build.ps1 -DryRun
 # Then..
 .\build.ps1
@@ -30,7 +30,7 @@ cd tasket-http-daemon
 Build overlay:
 
 ```
-cd macrohelp-runtime/source
+cd runtime/source
 cmake -S . -B build-vs2026 -G "Visual Studio 18 2026" -A x64
 cmake --build build-vs2026 --config Release
 ```
@@ -45,8 +45,8 @@ cmake --build build-vs2026 --config Release
 The expected flow is:
 
 1. Start Tasket++ normally.
-2. Start `tasket-http-daemon`.
-3. Start `macrohelp-runtime`.
+2. Start `http-daemon`.
+3. Start `runtime`.
 4. Use Macrohelp hotkeys. Macrohelp writes temporary Tasket schedules through the daemon; Tasket performs the real mouse, keyboard, paste, snip, zone, and schedule work.
 
 ## Open two PowerShell tabs:
@@ -54,14 +54,14 @@ The expected flow is:
 Tab 1 (httpd):
 
 ```powershell
-cd tasket-http-daemon/bin
+cd http-daemon/bin
 .\tasket-httpd.exe --port 7777 --bind 127.0.0.1 --dir "$env:APPDATA\Tasket++\saved_tasks" --default-delay 1
 ```
 
 Tab 2 (overlay):
 
 ```powershell
-cd macrohelp-runtime/bin
+cd runtime/bin
 .\CursorOverlay.exe
 ```
 
@@ -99,3 +99,96 @@ For persistance:
 
 Macrohelp also exposes `Shift+Alt+7` as the emergency stop hotkey for active Tasket tasks through the daemon.
 - (7/2/26) patched to Tasket 1.9+ behavior
+
+---
+
+<details>
+<summary>Wayland / Omarchy</summary>
+
+The HTTP server and overlay are separate builds. The server requires an initialized
+[Omarsket](https://github.com/CommanderTurtle/omarsket) backend with local socket
+support; the optional overlay runs inside Omarchy Quattro's existing shell.
+
+```sh
+sudo pacman -S --needed rust gcc zenity
+git clone https://github.com/CommanderTurtle/macrohelp.git
+cd macrohelp
+bash http-daemon/wld/build.sh --omarsket /absolute/path/to/omarsket
+```
+
+This builds only `macrohelp-httpd`, creates a private `.env` if absent, and prints
+the manual launch command. `--env PATH` selects another configuration. The example
+is `.env-example`; defaults are loopback `127.0.0.1:7777` with a generated API key.
+It never clones, initializes or starts Omarsket, and never starts an HTTP process.
+With the existing Omarsket backend running, start the server yourself:
+
+```sh
+"${XDG_DATA_HOME:-$HOME/.local/share}/macrohelp/http-daemon/bin/macrohelp-httpd"
+```
+
+The saved `.env` path is reused automatically. Keep it private (`chmod 600`).
+Requests use `X-Tasket-Key`. The Qt contract remains: `/health`, `/tasks`, GET/POST
+`/run`, `/temp-task`, `/check` (`/task`), `/status`, POST `/stop`, `/entrypoint`,
+`/entrypoints`, and GET/POST `/grid`. Authenticated `/` lists parameters/examples.
+Task IDs, delays, loops and cancellation come from Omarsket. `cleanup:true` temp
+tasks stay in memory; saved tasks use `.omscht` and never overwrite existing names.
+Ctrl+C stops HTTP-owned runs; it does not stop independent backend jobs.
+
+Optional overlay plugin:
+
+```sh
+omarchy plugin add https://github.com/CommanderTurtle/macrohelp.git
+# Leave disabled until its client is built:
+cd ~/.config/omarchy/plugins/io.github.commanderturtle.macrohelp
+bash runtime/source/wld/build.sh
+omarchy plugin enable io.github.commanderturtle.macrohelp
+```
+
+The overlay build contains only the client. It never builds, starts or supervises
+the HTTP server or Omarsket. HUD/local tools remain available without a server;
+unanswered HTTP requests are silent. It uses the shell's live theme and rendering,
+not a separate Quickshell instance. The `envFile` plugin setting can override the
+saved `.env` path when necessary. The key remains in the native client, not QML.
+
+The bar panel provides workflows, 16 points, pointer paths, circle/vector math,
+timed keys and clicks, buffers, zones, task status and view controls. The HUD is
+click-through and follows Hyprland's monitor geometry. To opt into shortcuts,
+copy/adapt `runtime/source/wld/bindings.lua` in `~/.config/hypr/bindings.lua`
+(or `dofile` it from the installed plugin path). These use quiet shell IPC:
+Shift+Alt+0 saves a point; 1 buffers; 2 workflow; 3 pointer tools; 4/5/6 clicks;
+7 stop through HTTP; 8 view; 9 focused key recorder.
+
+Zone slots and methods are independent: `{zone Z,X}` uses zone Z with OCR;
+`{zonebuf Z,X,V}` pastes that result into buffer V. Methods Z/X/C/V use the desktop's
+screenshot/OCR/custom-OCR/copy actions. Macrohelp sends shortcut and drag macros
+through HTTP; it does not capture images or run an OCR engine. Your existing OCR
+binding, including PP-OCR, stays in charge. Clipboard buffers use the native editor.
+Registry helpers remain unchanged and require `rgd` on PATH (`wl-paste` for append,
+already supplied by Omarchy). Import/export transfers environments, including Windows
+Registry Hub text exports; adjust Windows paths and shell aliases before use.
+Workflow conditions evaluate on Play/Save. Clipboard/OCR/registry workflow steps
+use Play; Export environment preserves those workflows. Input-only workflows may
+also be saved as native schedules. Shell aliases open the desktop terminal shortcut
+before typing; they do not open Windows shells or enable arbitrary system execution.
+Key recording is focused-only; the HUD shows Macrohelp command history, not
+global keystrokes. No privileged input access, telemetry or remote listener.
+
+Desktop shortcuts are read from active Hyprland bindings, including remaps in
+`~/.config/hypr/bindings.lua`; Macrohelp never edits those bindings. Optional
+`shortcuts` settings on the plugin entry in `~/.config/omarchy/shell.json` override
+`screenshot`, `ocr`, `singleLine`, `copy`, `terminal` (key chords), and `captureWaitMs`.
+C reuses normal OCR unless your tool has a separate single-line binding; Macrohelp
+does not reformat the result. Unrecognized/keycode-only bindings need an explicit
+shortcut override, rather than silently invoking a different desktop action.
+
+The two binaries live under `$XDG_DATA_HOME/macrohelp/http-daemon/bin` and
+`$XDG_DATA_HOME/macrohelp/overlay/bin`; build caches are similarly separated under
+`$XDG_CACHE_HOME/macrohelp`. Standard home defaults apply. Overlay state is
+`$XDG_DATA_HOME/macrohelp/overlay.json`. Rebuild each component after its updates;
+restart the Omarchy shell after changing a kept-loaded overlay service.
+
+Remove using `omarchy plugin remove io.github.commanderturtle.macrohelp`, stop the
+foreground HTTP process separately and remove any sourced bindings. State/binaries
+and build caches remain under the paths above for optional manual removal.
+
+</details>

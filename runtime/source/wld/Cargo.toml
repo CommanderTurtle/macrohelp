@@ -1,0 +1,20 @@
+[package]
+name = "macrohelp-overlay"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+
+[dependencies]
+serde_json = "1"
+dotenvy = "0.15"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[[bin]]
+name = "macrohelpctl"
+path = "src/helper_main.rs"
+
+[profile.release]
+lto = true
+strip = true

@@ -1,18 +1,18 @@
 # Build outputs
-/macrohelp-runtime/source/build/
-/macrohelp-runtime/source/build_mingw/
-/macrohelp-runtime/source/cmake-build-*/
-/macrohelp-runtime/source/out/
-/macrohelp-runtime/source/Debug/
-/macrohelp-runtime/source/Release/
-/macrohelp-runtime/source/x64/
-/macrohelp-runtime/source/x86/
-/macrohelp-runtime/source/build-vs2026/
+/runtime/source/build/
+/runtime/source/build_mingw/
+/runtime/source/cmake-build-*/
+/runtime/source/out/
+/runtime/source/Debug/
+/runtime/source/Release/
+/runtime/source/x64/
+/runtime/source/x86/
+/runtime/source/build-vs2026/
 
-/tasket-http-daemon/build-msvc/
-/tasket-http-daemon/original/
-/tasket-http-daemon/aqtinstall.log
-/tasket-http-daemon/QT_VERSION.txt
+/http-daemon/build-msvc/
+/http-daemon/original/
+/http-daemon/aqtinstall.log
+/http-daemon/QT_VERSION.txt
 
 # Compiled files
 *.exe
@@ -37,3 +37,9 @@
 # Temporary
 *.tmp
 *.log
+/.work/
+/.env
+/http-daemon/wld/target/
+/runtime/source/wld/target/
+__pycache__/
+*.pyc
