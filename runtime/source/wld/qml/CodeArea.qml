@@ -8,6 +8,7 @@ QQC.ScrollView {
   id: root
   property alias text: editor.text
   property alias input: editor
+  property alias readOnly: editor.readOnly
   property string hint: ""
   signal edited(string value)
   function pasteClipboard(callback) {

@@ -106,6 +106,15 @@ The optional [Macrohelp bindings](../runtime/source/wld/bindings.lua) are exampl
 not an automatic overwrite of the user's configuration. No new capture packages
 or input-method packages are needed for these actions. Rgd remains independent.
 
+Omarsket's input editor reads and writes the native personal `bindings.lua` or
+`input.lua` directly. There is no parallel binding database, generated include,
+or callback registry. Packaged defaults are read-only. Privileged personal files
+open through the native terminal and `sudoedit`; their text is not exposed to the
+unprivileged editor. Saves check for outside edits, preflight Lua syntax, reload
+the compositor, and roll back newly rejected configuration without discarding
+subsequent outside edits. IPC metadata is for display/conflict warnings, not for
+reconstructing arbitrary Lua actions or changing their flags.
+
 ## Lifecycle and shell behavior
 
 [`Hud.qml`](../runtime/source/wld/qml/Hud.qml) uses Omarchy's theme/font/spacing

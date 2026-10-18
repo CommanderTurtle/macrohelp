@@ -59,7 +59,7 @@ Ui.Panel {
       Ui.PanelHero {title:"Macrohelp";meta:root.app&&root.app.connected?root.app.endpoint:"Controller disconnected";foreground:root.fg;fontFamily:Style.font.family}
       Flow {
         width:parent.width;spacing:Style.space(5)
-        Repeater {model:["Workflow","Pointer","Keys","Buffers","Zones","Tasks","View"];Ui.Button{required property string modelData;text:modelData;foreground:root.app&&root.app.page===modelData?Commons.Color.accent:root.fg;onClicked:if(root.app)root.app.page=modelData}}
+        Repeater {model:["Workflow","Pointer","Keys","Buffers","Zones","Tasks","Presets","View"];Ui.Button{required property string modelData;text:modelData;foreground:root.app&&root.app.page===modelData?Commons.Color.accent:root.fg;onClicked:if(root.app)root.app.page=modelData}}
         Ui.Button {text:"Stop";onClicked:if(root.app)root.app.stop()}
         Ui.Button {text:"×";onClicked:root.close()}
       }
@@ -80,6 +80,7 @@ Ui.Panel {
               Ui.Button{text:"Import environment…";onClicked:root.app.importState()}
               Ui.Button{text:"Export environment…";onClicked:root.app.exportState()}
             }
+            CodeArea {visible:root.app&&root.app.resolvedScript!=="";width:parent.width;implicitHeight:Style.space(125);readOnly:true;text:root.app?root.app.resolvedScript:"";hint:"Resolved workflow"}
             Text {width:parent.width;wrapMode:Text.Wrap;textFormat:Text.PlainText;text:"{wait ms}  {type text}  {point 1…16}  {paste A,Z}  {buf Z}  {enter A}  {CTRL+S}\n{click on|off}  {left|right|middle}  {play name}  {wheelup 3}\n{if A contains text}…{else}…{endif}  {set A value}\n{zone Z,X}  {zonebuf Z,X,V}  {rgdclip ref}  {rgdappend ref}";color:root.fg;font.family:Style.font.family;font.pixelSize:Style.font.caption}
             Ui.TextField {width:parent.width;text:String(root.env.registry||"");placeholderText:"Regedited file path (optional; rgd on PATH)";onTextEdited:root.app.change("","registry",text)}
             Ui.TextField {width:parent.width;text:root.referenceText;placeholderText:"Regedited reference";onTextEdited:root.referenceText=text}
@@ -176,6 +177,7 @@ Ui.Panel {
               }
             }
           }
+          Loader {width:parent.width;active:!!root.app&&root.app.page==="Presets";sourceComponent:Component {Presets {width:parent.width;service:root.app}}}
           Column {
             width:parent.width;spacing:Style.space(8);visible:root.app&&root.app.page==="View"
             Repeater {model:[{key:"crosshair",label:"Crosshair"},{key:"grid",label:"Grid"},{key:"coordinates",label:"Coordinates"},{key:"keys",label:"Key display"},{key:"coordinates_only",label:"Coordinates only"}];Ui.Toggle{required property var modelData;width:parent.width;label:modelData.label;checked:root.env.view?root.env.view[modelData.key]:false;onClicked:root.app.change("view",modelData.key,!checked)}}

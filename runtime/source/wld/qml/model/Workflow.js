@@ -96,20 +96,50 @@ function condition(text,state,context) {
   if(m)return compare(reference(m[1].toUpperCase(),state),m[2],expand(m[3],state))
   throw Error("Invalid condition: "+text)
 }
+function presetName(name,profiles) {
+  var names=Object.keys(profiles||{}),exact=names.filter(function(k){return k.toLowerCase()===name.toLowerCase()})
+  if(exact.length===1)return exact[0]
+  var matches=names.filter(function(k){var lower=k.toLowerCase(),prefix=name.toLowerCase();return [" ","-","_"].some(function(separator){return lower.indexOf(prefix+separator)===0})})
+  if(matches.length!==1)throw Error(matches.length?"Ambiguous preset: "+name:"Preset not found: "+name)
+  return matches[0]
+}
+function mergePreset(original,data) {
+  var state=copy(original)
+  Object.keys(data).forEach(function(section){
+    if(["script","registry","shells","vars","buffers","zones","points","view"].indexOf(section)<0)throw Error("Unknown preset section")
+    if(section==="script")return
+    if(["shells","vars","buffers","zones","view"].indexOf(section)>=0){Object.keys(data[section]).forEach(function(key){if(!Object.prototype.hasOwnProperty.call(state[section],key))throw Error("Unknown preset setting");state[section][key]=copy(data[section][key])})}
+    else state[section]=copy(data[section])
+  })
+  return state
+}
 function compile(source,original,context) {
-  var state=copy(original),steps=[],stack=[],enabled=true,focusClick=false,at=0,live={}
-  function emit(action) { var last=steps[steps.length-1];if(!last||last.kind!=="input"){last={kind:"input",actions:[]};steps.push(last)}last.actions.push(action);if(last.actions.length>10000)throw Error("Too many actions") }
+  var state=copy(original),steps=[],stack=[],enabled=true,focusClick=false,live={},actions=0
+  function emit(action) { var last=steps[steps.length-1];if(!last||last.kind!=="input"){last={kind:"input",actions:[]};steps.push(last)}last.actions.push(action);if(++actions>10000)throw Error("Too many actions") }
   function local(step){steps.push(step)}
   function buffers(text){return text.split(/[,\s]+/).filter(Boolean).map(function(k){return reference(k.toUpperCase(),state)}).join("")}
-  var token=/\{([^{}]*)\}/g,match
+  function scan(source,ancestry){
+  if(source.length>1000000)throw Error("Expanded workflow exceeds 1 MiB")
+  var token=/\{([^{}]*)\}/g,match,at=0,initialDepth=stack.length,expanded=""
+  function append(text){if(expanded.length+text.length>1000000)throw Error("Expanded workflow exceeds 1 MiB");expanded+=text}
   while((match=token.exec(source))){
     if(source.slice(at,match.index).trim())throw Error("Use {type text} for literal text")
     at=token.lastIndex;var raw=match[1].trim(),parts=raw.split(/\s+/),op=parts.shift().toLowerCase(),arg=parts.join(" ")
-    if(op==="if"){if(stack.length>=16)throw Error("Conditions nested too deeply");var value=enabled?condition(arg,state,context):false;stack.push({parent:enabled,value:value,otherwise:false});enabled=enabled&&value;continue}
-    if(op==="else"){if(!stack.length||stack[stack.length-1].otherwise)throw Error("Unexpected else");var frame=stack[stack.length-1];frame.otherwise=true;enabled=frame.parent&&!frame.value;continue}
-    if(op==="endif"){if(!stack.length)throw Error("Unexpected endif");enabled=stack.pop().parent;continue}
-    if(!enabled)continue
+    if(op==="if"){if(stack.length>=16)throw Error("Conditions nested too deeply");var value=enabled?condition(arg,state,context):false;stack.push({parent:enabled,value:value,otherwise:false});enabled=enabled&&value;append(match[0]);continue}
+    if(op==="else"){if(stack.length<=initialDepth||stack[stack.length-1].otherwise)throw Error("Unexpected else");var frame=stack[stack.length-1];frame.otherwise=true;enabled=frame.parent&&!frame.value;append(match[0]);continue}
+    if(op==="endif"){if(stack.length<=initialDepth)throw Error("Unexpected endif");enabled=stack.pop().parent;append(match[0]);continue}
+    if(!enabled){append(match[0]);continue}
     var rawArg=arg;arg=expand(arg,state)
+    if(op==="profile"){
+      if(context.profileError)throw Error(context.profileError)
+      var name=presetName(arg,context.profiles),data=context.profiles[name]
+      if(ancestry.indexOf(name)>=0||ancestry.length>=16)throw Error("Recursive preset: "+name)
+      state=mergePreset(state,data)
+      ;["vars","buffers"].forEach(function(section){Object.keys(data[section]||{}).forEach(function(k){delete live[k]})})
+      append(scan(String(data.script||""),ancestry.concat([name])))
+      continue
+    }
+    append("{"+op+(arg?" "+arg:"")+"}")
     if(op==="set"){
       var setting=arg.match(/^(?:(var|paste|zone|point|shell)\s+)?([^=\s]+)\s*(?:=\s*|\s+)(.*)$/i)
       if(!setting)throw Error("Use {set A value}, {set paste Z value}, {set point 1 x,y}")
@@ -161,6 +191,9 @@ function compile(source,original,context) {
     else emit(keys(raw))
   }
   if(source.slice(at).trim())throw Error("Use {type text} for literal text")
-  if(stack.length)throw Error("Missing endif")
-  return {state:state,steps:steps}
+  if(stack.length!==initialDepth)throw Error("Missing endif")
+  return expanded
+  }
+  var expanded=scan(String(source),[])
+  return {state:state,steps:steps,expanded:expanded}
 }

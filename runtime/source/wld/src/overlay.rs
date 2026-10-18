@@ -419,6 +419,11 @@ fn handle(config: &Config, r: &Value) -> Result<Value> {
         }
         "import" => read_state(Path::new(string(r, "path")?)),
         "bindings" => Ok(hypr("binds").unwrap_or(json!([]))),
+        "profile-list" => crate::profiles::list(&config.state_dir.join("profiles")),
+        "profile-save" => crate::profiles::save(&config.state_dir.join("profiles"), r),
+        "profile-import" => {
+            crate::profiles::import(&config.state_dir.join("profiles"), string(r, "name")?)
+        }
         "regedited" => {
             let action = string(r, "action")?;
             let file = string(r, "file")?;

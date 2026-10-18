@@ -30,6 +30,9 @@ Item {
   property bool keyFeedAvailable: false
   property var heatmapState: ({version:1,active:null,sessions:[]})
   property string heatmapError: ""
+  property var profileLibrary: ({presets:{},directory:""})
+  property string profileError: ""
+  property string resolvedScript: ""
   property double keyClock: Date.now()
   readonly property bool keysEnabled: ready&&!hidden&&!!environment.view&&environment.view.keys&&!environment.view.coordinates_only
   readonly property var keyRows: KeyDisplay.rows(keyDisplay,keyClock)
@@ -78,7 +81,7 @@ Item {
     refreshing=true
     http("GET","/health",{},function(value,failure){root.connected=!failure;if(failure){root.refreshing=false;return}root.http("GET","/tasks",{},function(v,e){if(!e)root.tasks=v.tasks||[];root.http("GET","/status",{},function(v,e){root.refreshing=false;if(!e)root.status=v})})})
   }
-  function panel(name){if(["Workflow","Pointer","Keys","Buffers","Zones","Tasks","View"].indexOf(name)<0)return;page=name;activePanel=null;showPanel()}
+  function panel(name){if(["Workflow","Pointer","Keys","Buffers","Zones","Tasks","Presets","View"].indexOf(name)<0)return;page=name;activePanel=null;showPanel()}
   function cancelWork(){generation++;steps=[];stepIndex=0;currentJob=null;busy=false;localBusy=false;pending=null;hidden=false;recordingPath=false;clipboardCallback=null;startDelay.stop();poll.stop();clipboardTimeout.stop()}
   function stop(){cancelWork();if(!emergency.running)emergency.running=true;message="";remember("Stop requested")}
   function reconnect(){if(!runtime.running)runtime.running=true;else refresh()}
@@ -104,11 +107,14 @@ Item {
     refreshContext(function(context,failure){
       if(token!==root.generation)return
       if(failure){root.busy=false;return}
-      try {var plan=Workflow.compile(source,root.environment,context);root.environment=plan.state;root.save();root.steps=plan.steps;root.stepIndex=0;root.hidePanel();root.pending=function(){root.nextStep(token)};startDelay.restart()}
+      try {var plan=Workflow.compile(source,root.environment,context);root.resolvedScript=plan.expanded;root.environment=plan.state;root.save();root.steps=plan.steps;root.stepIndex=0;root.hidePanel();root.pending=function(){root.nextStep(token)};startDelay.restart()}
       catch(e){root.busy=false;root.error=e.message}
     })
   }
-  function refreshContext(callback){http("GET","/tasks",{},function(t,e){if(e){callback(null,e);return}root.http("GET","/status",{},function(s,e){if(e){callback(null,e);return}root.call({method:"bindings"},function(bindings,e){if(e){callback(null,e);return}var context;try{context={tasks:t.tasks,status:s,shortcuts:Workflow.desktopShortcuts(bindings,root.settings.shortcuts)}}catch(failure){root.error=failure.message;callback(null,failure.message);return}callback(context,null)})})})}
+  function loadProfiles(callback){call({method:"profile-list"},function(v,e){root.profileError=e||"";if(!e)root.profileLibrary=v;if(callback)callback(v,e)})}
+  function saveProfile(name,fields,replace){call({method:"profile-save",name:name,fields:fields,replace:!!replace,state:environment},function(v,e){root.profileError=e||"";if(!e)root.profileLibrary=v})}
+  function importProfile(name){if(busy||localBusy||pending){error="Stop the current operation first";return}var token=generation;call({method:"profile-import",name:name},function(v,e){if(token!==root.generation)return;if(!e){root.environment=v;root.save()}})}
+  function refreshContext(callback){http("GET","/tasks",{},function(t,e){if(e){callback(null,e);return}root.http("GET","/status",{},function(s,e){if(e){callback(null,e);return}root.call({method:"bindings"},function(bindings,e){if(e){callback(null,e);return}var context;try{context={tasks:t.tasks,status:s,shortcuts:Workflow.desktopShortcuts(bindings,root.settings.shortcuts)}}catch(failure){root.error=failure.message;callback(null,failure.message);return}root.loadProfiles(function(v,e){context.profiles=v?v.presets:{};context.profileError=e||"";callback(context,null)})})})})}
   function saveSchedule(name){
     if(busy||localBusy||pending){error="Stop the current operation first";return}
     localBusy=true;var token=generation
@@ -217,5 +223,7 @@ Item {
       root.call(value,function(v,e){root.heatmapError=e||"";if(!e)root.heatmapState=v})
       return JSON.stringify({pending:true})
     }
+    function profiles():string {return JSON.stringify({names:Object.keys(root.profileLibrary.presets||{}),directory:root.profileLibrary.directory,error:root.profileError})}
+    function profile(name:string):void {if(!name||/[{}\x00-\x1f]/.test(name)){root.error="Invalid preset name";return}root.play("{profile "+name+"}")}
   }
 }
