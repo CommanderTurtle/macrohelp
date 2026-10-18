@@ -123,7 +123,7 @@ pub fn hypr(command: &str) -> Result<Value> {
     }
 }
 pub fn default_state() -> Value {
-    json!({"version":1,"script":"","registry":"","shells":{"X":"bash","C":"sh","G":"uv run python"},"vars":{"A":"","S":"","D":"","F":""},"buffers":{"Z":"","X":"","C":"","V":""},"zones":{"Z":null,"X":null,"C":null,"V":null},"points":vec![Value::Null;16],"view":{"crosshair":true,"grid":false,"coordinates":true,"keys":true,"coordinates_only":false},"last_task":null})
+    json!({"version":1,"script":"","registry":"","shells":{"X":"bash","C":"sh","G":"uv run python","P":"pwsh","T":""},"vars":{"A":"","S":"","D":"","F":""},"buffers":{"Z":"","X":"","C":"","V":""},"zones":{"Z":null,"X":null,"C":null,"V":null},"points":vec![Value::Null;16],"view":{"crosshair":true,"grid":false,"coordinates":true,"keys":true,"coordinates_only":false},"last_task":null})
 }
 pub fn validate_state(value: &Value) -> Result<()> {
     if value["version"] != 1
@@ -154,6 +154,15 @@ pub fn validate_state(value: &Value) -> Result<()> {
             if !value[key][name].is_string() {
                 return Err(ApiError::new(400, "Missing text buffer/variable/alias"));
             }
+        }
+    }
+    // Optional additions preserve existing v1 environments and preset exports.
+    for key in ["P", "T"] {
+        if value["shells"].get(key).is_some_and(|v| !v.is_string()) {
+            return Err(ApiError::new(
+                400,
+                "Invalid shell command/terminal shortcut",
+            ));
         }
     }
     for point in value["points"].as_array().unwrap() {
@@ -242,12 +251,17 @@ fn read_state(path: &Path) -> Result<Value> {
         ));
     }
     let text = fs::read_to_string(path).map_err(io_error)?;
-    let state = if text.trim_start().starts_with('{') {
+    let mut state: Value = if text.trim_start().starts_with('{') {
         serde_json::from_str(&text).map_err(|e| ApiError::new(400, e.to_string()))?
     } else {
         import_legacy(&text)?
     };
     validate_state(&state)?;
+    for key in ["P", "T"] {
+        if state["shells"].get(key).is_none() {
+            state["shells"][key] = default_state()["shells"][key].clone();
+        }
+    }
     Ok(state)
 }
 pub fn import_legacy(text: &str) -> Result<Value> {
@@ -709,9 +723,34 @@ mod tests {
         assert_eq!(v["vars"]["A"], "hello");
         assert_eq!(v["points"][0], json!([10, 20]));
         assert_eq!(v["zones"]["Z"], json!([1, 2, 30, 40]));
+        assert_eq!(v["shells"]["P"], "pwsh");
+        assert_eq!(v["shells"]["T"], "");
         assert!(v["script"].as_str().unwrap().contains('\n'));
         validate_state(&v).unwrap();
         assert!(import_legacy("nothing").is_err());
+    }
+    #[test]
+    fn older_environments_gain_shell_settings_without_overwriting_commands() {
+        let mut old = default_state();
+        old["shells"].as_object_mut().unwrap().remove("P");
+        old["shells"].as_object_mut().unwrap().remove("T");
+        old["shells"]["X"] = json!("fish -l");
+        let file = std::env::temp_dir().join(format!(
+            "macrohelp-shells-{}-{}.json",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::write(&file, old.to_string()).unwrap();
+        let state = read_state(&file).unwrap();
+        fs::remove_file(file).unwrap();
+        assert_eq!(state["shells"]["X"], "fish -l");
+        assert_eq!(state["shells"]["P"], "pwsh");
+        assert_eq!(state["shells"]["T"], "");
+        old["shells"]["P"] = json!(12);
+        assert!(validate_state(&old).is_err());
     }
     #[test]
     fn rejects_invalid_coordinates() {

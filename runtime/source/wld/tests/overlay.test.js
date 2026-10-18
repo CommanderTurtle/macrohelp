@@ -61,7 +61,21 @@ test("environment point, zone and shell edits",()=>{
   const p=compile("{set point 2 -20,30}{set zone C 1,2,3,4}{set shell X fish}{shell X}")
   expect(p.state.points[1]).toEqual([-20,30]);expect(p.state.zones.C).toEqual([1,2,3,4])
   expect(p.steps[0].actions[0].keysmap[0][1]).toEqual(["WINDOWS","ENTER"])
-  expect(p.steps[0].actions[2].content).toBe("fish")
+  expect(p.steps[0].actions[2]).toEqual({type:"type",text:"fish",interval_ms:0})
+})
+test("shells use user commands and terminal chords, never native process execution",()=>{
+  const s=state();s.shells.P="pwsh -NoLogo";s.shells.T="SUPER+F12"
+  const actions=W.compile("{pwsh}",s,context).steps[0].actions
+  expect(actions.map(a=>a.type)).toEqual(["keyssequence","wait","type","keyssequence"])
+  expect(actions[0].keysmap[0][1]).toEqual(["WINDOWS","F12"])
+  expect(actions[2].text).toBe("pwsh -NoLogo")
+  expect(actions[3].keysmap[0][1]).toEqual(["ENTER"])
+  expect(compile("{pwsh}").steps[0].actions[2].text).toBe("pwsh")
+  expect(compile("{powershell}").steps).toEqual(compile("{pwsh}").steps)
+  expect(compile("{terminal}").steps[0].actions).toHaveLength(2)
+  s.shells.X="";expect(W.compile("{bash}",s,context).steps[0].actions).toHaveLength(2)
+  expect(()=>W.compile("{bash}",state(),{shortcuts:{}})).toThrow("terminal shortcut")
+  s.shells.P="pwsh\nunsafe";expect(()=>W.compile("{pwsh}",s,context)).toThrow("single line")
 })
 test("overlay uses native theme, empty input mask and non-secret helper",()=>{
   const base=new URL("../qml/",import.meta.url)

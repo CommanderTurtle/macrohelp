@@ -88,7 +88,8 @@ Ui.Panel {
               Ui.Button{text:"Copy reference";onClicked:root.app.call({method:"regedited",action:"clip",file:root.env.registry,reference:root.referenceText})}
               Ui.Button{text:"Append clipboard";onClicked:root.app.call({method:"regedited",action:"append",file:root.env.registry,reference:root.referenceText})}
             }
-            Repeater {model:["X","C","G"];Ui.TextField{required property string modelData;width:parent.width;text:root.env.shells?root.env.shells[modelData]:"";placeholderText:"Shell "+modelData;onTextEdited:root.app.change("shells",modelData,text)}}
+            Text {width:parent.width;wrapMode:Text.Wrap;text:"Shells open the terminal shortcut, type the command, then press Enter. Blank commands use the terminal's default shell.";color:root.fg;font.family:Style.font.family;font.pixelSize:Style.font.caption}
+            Repeater {model:[{id:"T",label:"Terminal shortcut · blank = native binding"},{id:"X",label:"Shell X · {bash}"},{id:"C",label:"Shell C · {cmd}"},{id:"G",label:"Shell G · {python} / {regedited}"},{id:"P",label:"Shell P · {pwsh} / {powershell}"}];Column{required property var modelData;width:parent.width;spacing:Style.space(4);Text{text:modelData.label;color:root.fg;font.family:Style.font.family;font.pixelSize:Style.font.caption} Ui.TextField{width:parent.width;text:root.env.shells&&root.env.shells[modelData.id]!==undefined?String(root.env.shells[modelData.id]):modelData.id==="P"?"pwsh":"";onTextEdited:root.app.change("shells",modelData.id,text)}}}
           }
           Column {
             width:parent.width;spacing:Style.space(8);visible:root.app&&root.app.page==="Pointer"

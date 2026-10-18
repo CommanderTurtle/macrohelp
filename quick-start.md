@@ -1,5 +1,8 @@
 # Macrohelp Package Manifest Info
 
+See the [HTTP daemon and overlay parity tables](docs/feature-parity.md) for exact
+Windows/Wayland counterparts and outstanding menu differences.
+
 This package intentionally has two runtime folders:
 
 - `runtime` - Macrohelp / CursorOverlay source
@@ -170,8 +173,9 @@ Workflow conditions evaluate on Play/Save. Clipboard/OCR/registry workflow steps
 use Play; Export environment preserves those workflows. Input-only workflows may
 also be saved as native schedules. Shell aliases open the desktop terminal shortcut
 before typing; they do not open Windows shells or enable arbitrary system execution.
-Key recording is focused-only; the HUD shows Macrohelp command history, not
-global keystrokes. No privileged input access, telemetry or remote listener.
+Key recording is focused-only; the separate PromptFont HUD shows live native
+keypresses with transient history, not saved keystroke logs. No raw-device access,
+telemetry or remote listener is added by the overlay.
 
 Desktop shortcuts are read from active Hyprland bindings, including remaps in
 `~/.config/hypr/bindings.lua`; Macrohelp never edits those bindings. Optional
@@ -180,6 +184,13 @@ Desktop shortcuts are read from active Hyprland bindings, including remaps in
 C reuses normal OCR unless your tool has a separate single-line binding; Macrohelp
 does not reformat the result. Unrecognized/keycode-only bindings need an explicit
 shortcut override, rather than silently invoking a different desktop action.
+
+Workflow's terminal shortcut field overrides discovery for that environment
+(normally Super+Enter). `{terminal}` opens it without entering another shell.
+`{bash}` uses X; `{cmd}` uses C; `{python}` / `{regedited}` use G;
+`{pwsh}` / `{powershell}` use P (default `pwsh`). Each command is editable:
+terminal chord → wait → type the command → Enter. A blank command retains the
+terminal's default shell. Install any desired shell yourself; Macrohelp does not.
 
 The two binaries live under `$XDG_DATA_HOME/macrohelp/http-daemon/bin` and
 `$XDG_DATA_HOME/macrohelp/overlay/bin`; build caches are similarly separated under

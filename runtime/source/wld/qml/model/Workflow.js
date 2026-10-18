@@ -105,6 +105,8 @@ function presetName(name,profiles) {
 }
 function mergePreset(original,data) {
   var state=copy(original)
+  if(state.shells.P===undefined)state.shells.P="pwsh"
+  if(state.shells.T===undefined)state.shells.T=""
   Object.keys(data).forEach(function(section){
     if(["script","registry","shells","vars","buffers","zones","points","view"].indexOf(section)<0)throw Error("Unknown preset section")
     if(section==="script")return
@@ -146,7 +148,7 @@ function compile(source,original,context) {
       var kind=(setting[1]||"").toLowerCase(),k=setting[2].toUpperCase(),v=setting[3]
       if((!kind||kind==="var")&&/^[ASDF]$/.test(k)){state.vars[k]=v;delete live[k]}
       else if((!kind||kind==="paste")&&/^[ZXCV]$/.test(k)){state.buffers[k]=v;delete live[k]}
-      else if(kind==="shell"&&/^[XCG]$/.test(k))state.shells[k]=v
+      else if(kind==="shell"&&/^[XCGPT]$/.test(k))state.shells[k]=v
       else if(k==="REGISTRY")state.registry=v
       else if(kind==="point"||kind==="zone"){
         var a=v.split(/[,\s]+/).filter(Boolean).map(function(n){return Math.round(numeric(n,-100000,100000,"Coordinate"))})
@@ -180,14 +182,16 @@ function compile(source,original,context) {
       steps[steps.length-1].capture=true
       if(destination)local({kind:"clipboard",slot:destination})
     }else if(op==="rgdclip"||op==="rgdappend")local({kind:"regedited",action:op==="rgdclip"?"clip":"append",file:state.registry,reference:arg})
-    else if(op==="shell"||["bash","cmd","python","py","regedited","regbin"].indexOf(op)>=0){
-      var alias=op==="shell"?arg.toUpperCase():op==="bash"?"X":op==="cmd"?"C":"G"
-      if(!/^[XCG]$/.test(alias))throw Error("Shell alias must be X, C or G")
-      if(!state.shells[alias])throw Error("Configure shell alias "+alias+" first")
-      if(!context.shortcuts||!context.shortcuts.terminal)throw Error("Choose a terminal shortcut in the Macrohelp plugin's shortcuts setting")
-      emit(copy(context.shortcuts.terminal));emit(wait(700))
-      emit(paste(state.shells[alias]));emit(keys("ENTER"))
-    }else if(["exec","system","sys","powershell"].indexOf(op)>=0)throw Error("No implicit system/Windows commands; use an explicitly permitted Omarsket task")
+    else if(op==="shell"||["terminal","pwsh","powershell","bash","cmd","python","py","regedited","regbin"].indexOf(op)>=0){
+      var alias=op==="shell"?arg.toUpperCase():op==="bash"?"X":op==="cmd"?"C":op==="pwsh"||op==="powershell"?"P":"G"
+      if(!/^[XCGP]$/.test(alias))throw Error("Shell alias must be X, C, G or P")
+      var terminal=state.shells.T?keys(state.shells.T,100):context.shortcuts&&context.shortcuts.terminal
+      if(!terminal)throw Error("Choose a terminal shortcut in Workflow or the plugin's shortcuts setting")
+      emit(copy(terminal));emit(wait(700))
+      var command=op==="terminal"?"":state.shells[alias]===undefined&&alias==="P"?"pwsh":state.shells[alias]||""
+      if(/[\r\n\x00-\x1f\x7f]/.test(command))throw Error("Shell command must be a single line")
+      if(command){emit({type:"type",text:String(command),interval_ms:0});emit(keys("ENTER"))}
+    }else if(["exec","system","sys"].indexOf(op)>=0)throw Error("No implicit system commands; use an explicitly permitted Omarsket task")
     else emit(keys(raw))
   }
   if(source.slice(at).trim())throw Error("Use {type text} for literal text")

@@ -21,6 +21,9 @@ Column {
     }
   }
   Ui.Toggle {label:"Replace existing preset";checked:root.replace;onClicked:root.replace=!checked}
+  Flow {width:parent.width;spacing:Style.space(8)
+    Repeater {model:[{id:"shells.P",label:"Shell P"},{id:"shells.T",label:"Terminal shortcut"}];Ui.Toggle {required property var modelData;label:modelData.label;checked:root.fields.indexOf(modelData.id)>=0;onClicked:root.fields=checked?root.fields.filter(function(f){return f!==modelData.id}):root.fields.concat([modelData.id])}}
+  }
   Ui.Button {text:"Export preset";enabled:root.name.trim()!==""&&root.fields.length>0;onClicked:root.service.saveProfile(root.name,root.fields,root.replace)}
   Text {width:parent.width;wrapMode:Text.Wrap;text:root.service.profileLibrary.directory||"";textFormat:Text.PlainText;color:Commons.Color.foreground;font.family:Style.font.family;font.pixelSize:Style.font.caption}
   Ui.Dropdown {width:parent.width;label:"Saved preset";options:Object.keys(root.service.profileLibrary.presets||{});value:root.selected;onChanged:function(v){root.selected=v}}

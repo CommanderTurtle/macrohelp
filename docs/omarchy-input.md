@@ -1,5 +1,8 @@
 # Omarchy input integration
 
+The menu-by-menu and endpoint-by-endpoint [feature parity tables](feature-parity.md)
+track Windows counterparts and remaining gaps separately from this input audit.
+
 Source review: 2026-10-18. This describes the Wayland overlay's integration
 boundaries, not a replacement desktop input stack. Windows behavior is unchanged.
 
@@ -92,6 +95,14 @@ Changing the desktop OCR implementation does not require Macrohelp to acquire
 an OCR engine. Screenshot, OCR, ordinary copy, and terminal-aware universal copy
 remain distinct actions. A normal OCR shortcut is not automatically a separate
 single-line OCR implementation.
+
+Shell launches use the same queue: the chosen terminal chord, a focus wait, typed
+command text, then Enter. Workflow's editable T shortcut overrides native discovery;
+blank T follows the current desktop terminal binding. X/C/G/P hold user commands
+for Bash, command shell, Python/custom and PowerShell respectively. `{terminal}`
+opens only the terminal; blank command aliases retain its default shell. `{pwsh}`
+does not probe for or install PowerShell, and never bypasses the backend with a
+direct process launch.
 
 Current discovery supports global, symbol-based bindings with the standard
 Shift/Ctrl/Alt/Super modifiers. It does not guess from keycode-only, mouse-only,
