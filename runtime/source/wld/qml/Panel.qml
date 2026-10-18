@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls as QQC
+import Quickshell
 import qs.Commons
 import qs.Commons as Commons
 import qs.Ui as Ui
@@ -33,22 +34,28 @@ Ui.Panel {
   function coords(text,count){var a=text.split(/[,\s]+/).filter(Boolean);if(a.length!==count)throw Error("Expected "+count+" coordinates");return a.map(function(n){return Math.round(Workflow.numeric(n,-100000,100000,"Coordinate"))})}
   function capture(f){if(!app)return;captureAction=f;captureMessage="Capture in 3 seconds";close();captureDelay.restart()}
   function append(actions){if(!app)return;app.later(actions)}
-  onOpenedChanged:if(opened&&app)app.refresh()
+  function atCursor(){if(!app||!panel.screen)return false;var g=app.monitors.find(function(m){return m.name===panel.screen.name});return g?Workflow.containsPoint(app.cursor,g,panel.screen.width,panel.screen.height):Quickshell.screens.length>0&&Quickshell.screens[0].name===panel.screen.name}
+  onOpenedChanged:if(opened&&app){app.activePanel=root;app.refresh()}
+  Component.onDestruction:if(app&&app.activePanel===root)app.activePanel=null
   Timer {interval:1000;repeat:true;running:root.opened&&root.app&&root.app.page==="Tasks";onTriggered:root.app.refresh()}
   Connections {
     target:root.app
-    function onShowPanel(){root.open()}
+    function onShowPanel(){if(root.app.activePanel===root||(!root.app.activePanel&&root.atCursor()))root.open()}
     function onHidePanel(){root.close()}
-    function onClipboardRequested(callback){root.open();Qt.callLater(function(){bufferEditor.pasteClipboard(callback)})}
+    function onActivePanelChanged(){if(root.app.activePanel!==root)root.close()}
+    function onGenerationChanged(){captureDelay.stop();root.captureAction=null;root.captureMessage=""}
+    function onClipboardRequested(callback){if(root.app.activePanel===root)Qt.callLater(function(){bufferEditor.pasteClipboard(callback)})}
   }
   Timer {id:captureDelay;interval:3000;onTriggered:{root.captureMessage="";var f=root.captureAction;root.captureAction=null;if(f&&root.app)f([Math.round(root.app.cursor.x),Math.round(root.app.cursor.y)])}}
   Ui.WidgetButton {id:button;anchors.fill:parent;bar:root.bar;text:"󰍽";tooltipText:"Macrohelp · right-click to stop";onPressed:function(mouseButton){if(mouseButton===Qt.RightButton&&root.app)root.app.stop();else root.toggle()}}
   Ui.KeyboardPanel {
-    id:panel;anchorItem:button;owner:root;bar:root.bar;open:root.opened;focusTarget:taskName
+    id:panel;anchorItem:button;owner:root;bar:root.bar;open:root.opened
+    focusTarget:root.app&&root.app.page==="Workflow"?workflowEditor.input:root.app&&root.app.page==="Buffers"?bufferEditor.input:body
     contentWidth:panel.fittedContentWidth(Style.space(650))
     contentHeight:panel.fittedContentHeight(Style.space(780),Style.space(780))
     Column {
-      anchors.fill:parent;spacing:Style.space(8)
+      id:body;anchors.fill:parent;spacing:Style.space(8)
+      Keys.onEscapePressed:root.close()
       Ui.PanelHero {title:"Macrohelp";meta:root.app&&root.app.connected?root.app.endpoint:"Controller disconnected";foreground:root.fg;fontFamily:Style.font.family}
       Flow {
         width:parent.width;spacing:Style.space(5)
@@ -58,14 +65,15 @@ Ui.Panel {
       }
       Text {width:parent.width;wrapMode:Text.Wrap;textFormat:Text.PlainText;color:Commons.Color.accent;font.family:Style.font.family;font.pixelSize:Style.font.caption;text:root.localError||(root.app?(root.app.error||root.app.message):"Enable the Macrohelp service");visible:text!==""}
       QQC.ScrollView {
-        width:parent.width;height:Math.max(Style.space(100),parent.height-y);clip:true
+        id:scroll;contentWidth:availableWidth
+        width:parent.width;height:Math.max(0,parent.height-y);clip:true
         Column {
-          width:parent.width;spacing:Style.space(10)
+          width:scroll.availableWidth;spacing:Style.space(10)
           enabled:root.app&&root.app.ready
           Column {
             width:parent.width;spacing:Style.space(8);visible:root.app&&root.app.page==="Workflow"
             Ui.TextField {id:taskName;width:parent.width;text:root.scheduleName;placeholderText:"Schedule name";onTextEdited:root.scheduleName=text}
-            CodeArea {width:parent.width;implicitHeight:Style.space(240);text:String(root.env.script||"");hint:"{point 1}{click}{paste A}{wait 200}{CTRL+S}";onEdited:function(value){root.app.change("","script",value)}}
+            CodeArea {id:workflowEditor;width:parent.width;implicitHeight:Style.space(240);text:String(root.env.script||"");hint:"{point 1}{click}{paste A}{wait 200}{CTRL+S}";onEdited:function(value){root.app.change("","script",value)}}
             Flow {width:parent.width;spacing:Style.space(6)
               Ui.Button{text:root.app&&root.app.busy?"Running…":"Play";enabled:root.app&&!root.app.busy&&root.app.connected;onClicked:root.app.play(root.env.script)}
               Ui.Button{text:"Save schedule";enabled:root.app&&root.app.connected;onClicked:root.app.saveSchedule(root.scheduleName)}
@@ -109,7 +117,7 @@ Ui.Panel {
               Ui.Button{text:"Play path";onClicked:root.append([{type:"cursormovements",cursormovsmap:root.app.path,cursorMovsId:"",optionalkeysstroke:[],loop:1}])}
               Ui.Button{text:"Clear path";onClicked:root.app.path=[]}
             }
-            Text {textFormat:Text.PlainText;text:root.app?root.app.path.length+" path points · Shift+Alt+0 saves a pointer point":"";color:root.fg;font.family:Style.font.family;font.pixelSize:Style.font.caption}
+            Text {width:parent.width;wrapMode:Text.Wrap;textFormat:Text.PlainText;text:root.app?root.app.path.length+" path points":"";color:root.fg;font.family:Style.font.family;font.pixelSize:Style.font.caption}
           }
           Column {
             width:parent.width;spacing:Style.space(8);visible:root.app&&root.app.page==="Keys"
@@ -159,7 +167,7 @@ Ui.Panel {
           Column {
             width:parent.width;spacing:Style.space(8);visible:root.app&&root.app.page==="Tasks"
             Ui.Button{text:"Refresh";onClicked:root.app.refresh()}
-            Repeater {model:root.app?root.app.tasks:[];Row{required property var modelData;spacing:Style.space(6);Text{textFormat:Text.PlainText;text:modelData.name;color:root.fg;font.family:Style.font.family;font.pixelSize:Style.font.body} Ui.Button{text:"Run";onClicked:root.app.runSaved(parent.modelData.name)}}}
+            Repeater {model:root.app?root.app.tasks:[];Row{required property var modelData;width:parent.width;spacing:Style.space(6);Text{width:Math.max(0,parent.width-runButton.width-parent.spacing);elide:Text.ElideRight;textFormat:Text.PlainText;text:modelData.name;color:root.fg;font.family:Style.font.family;font.pixelSize:Style.font.body} Ui.Button{id:runButton;text:"Run";onClicked:root.app.runSaved(parent.modelData.name)}}}
             Repeater {
               model:root.app?(root.app.status.scheduled||[]).concat(root.app.status.running||[],root.app.status.finished||[]).slice(-30):[]
               Column {required property var modelData;width:parent.width
@@ -171,7 +179,7 @@ Ui.Panel {
           Column {
             width:parent.width;spacing:Style.space(8);visible:root.app&&root.app.page==="View"
             Repeater {model:[{key:"crosshair",label:"Crosshair"},{key:"grid",label:"Grid"},{key:"coordinates",label:"Coordinates"},{key:"keys",label:"Command history"},{key:"coordinates_only",label:"Coordinates only"}];Ui.Toggle{required property var modelData;width:parent.width;label:modelData.label;checked:root.env.view?root.env.view[modelData.key]:false;onClicked:root.app.change("view",modelData.key,!checked)}}
-            Ui.Button{text:"Reconnect HTTP";onClicked:root.app.refresh()}
+            Ui.Button{text:"Reconnect";onClicked:root.app.reconnect()}
           }
         }
       }

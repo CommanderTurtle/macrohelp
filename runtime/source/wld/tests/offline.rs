@@ -78,3 +78,45 @@ fn missing_server_is_silent_and_local_state_remains_available() {
         assert!(stop.stderr.is_empty());
     }
 }
+
+#[test]
+fn local_storage_failures_are_not_reported_as_http_offline() {
+    let path = std::env::temp_dir().join(format!(
+        "macrohelp-state-file-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    // A file cannot be the parent directory for overlay.json.
+    std::fs::write(&path, b"not a directory").unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_macrohelpctl"))
+        .args(["session", "--env"])
+        .arg(path.join("missing.env"))
+        .env("MACROHELP_API_KEY", "")
+        .env("MACROHELP_BIND", "127.0.0.1")
+        .env("MACROHELP_PORT", "7777")
+        .env("MACROHELP_STATE_DIR", &path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let request = serde_json::json!({"id":1,"method":"save-state","state":macrohelp_overlay::overlay::default_state()});
+    writeln!(child.stdin.take().unwrap(), "{request}").unwrap();
+    let output = child.wait_with_output().unwrap();
+    std::fs::remove_file(&path).unwrap();
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let replies: Vec<Value> = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let reply = replies.iter().find(|r| r["id"] == 1).unwrap();
+    assert_eq!(reply["ok"], false);
+    assert_eq!(reply["code"], 500);
+    assert!(reply["error"].is_string());
+    assert!(reply.get("offline").is_none());
+}

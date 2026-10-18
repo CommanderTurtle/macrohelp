@@ -2,7 +2,7 @@ import { test, expect } from "bun:test"
 import { readFileSync } from "node:fs"
 import { runInNewContext } from "node:vm"
 const model = new URL("../qml/model/Workflow.js", import.meta.url)
-const W = runInNewContext(readFileSync(model,"utf8")+"\n({compile,keys,circle,move,drag,resolve,desktopShortcuts,zone})")
+const W = runInNewContext(readFileSync(model,"utf8")+"\n({compile,keys,circle,move,drag,resolve,desktopShortcuts,zone,containsPoint})")
 const state=()=>({version:1,script:"",registry:"/tmp/data.md",shells:{X:"bash",C:"sh",G:"uv run python"},vars:{A:"hello",S:"",D:"",F:""},buffers:{Z:"world",X:"",C:"",V:""},zones:{Z:[1,2,30,40],X:[1,2,30,40],C:null,V:[1,2,30,40]},points:[[10,20],...Array(15).fill(null)],last_task:{task_number:1}})
 const bindings=[{modmask:68,key:"Print",description:"Extract text (OCR)",dispatcher:"__lua"},{modmask:0,key:"Print",description:"Screenshot"},{modmask:64,key:"Return",description:"Terminal"},{modmask:64,key:"C",description:"Universal copy"}]
 const context={tasks:[{name:"Saved"}],status:{scheduled:[],running:[],finished:[{task_number:1,state:"finished"}]},shortcuts:W.desktopShortcuts(bindings)}
@@ -133,5 +133,45 @@ test("capture is only a shortcut, waits and coordinate actions over the existing
   const service=readFileSync(new URL("runtime/source/wld/qml/Service.qml",root),"utf8")
   expect(service).not.toContain('method:"zone"')
   expect(service).toContain('method:"bindings"')
-  expect(readFileSync(new URL("runtime/source/wld/qml/CodeArea.qml",root),"utf8")).toContain("editor.paste()")
+  const editor=readFileSync(new URL("runtime/source/wld/qml/CodeArea.qml",root),"utf8")
+  expect(editor).toContain("clipboard.paste()")
+  expect(editor).not.toMatch(/editor\.(?:paste|undo|selectAll)\(/)
+})
+
+test("pointer HUD belongs to exactly one logical output, including negative origins",()=>{
+  const left={x:-1920,y:0},right={x:0,y:0}
+  expect(W.containsPoint({x:-1,y:100},left,1920,1080)).toBe(true)
+  expect(W.containsPoint({x:0,y:100},left,1920,1080)).toBe(false)
+  expect(W.containsPoint({x:0,y:100},right,1280,720)).toBe(true)
+  expect(W.containsPoint({x:1280,y:100},right,1280,720)).toBe(false)
+  expect(W.containsPoint({x:200,y:720},right,1280,720)).toBe(false)
+  expect(W.containsPoint({x:0,y:0},null,1920,1080)).toBe(false)
+})
+
+test("native panel bounds, wrapping, focus and multi-output clipboard ownership",()=>{
+  const base=new URL("../qml/",import.meta.url)
+  const panel=readFileSync(new URL("Panel.qml",base),"utf8")
+  expect(panel).toContain("panel.fittedContentWidth")
+  expect(panel).toContain("panel.fittedContentHeight")
+  expect(panel).toContain("contentWidth:availableWidth")
+  expect(panel).toContain("width:scroll.availableWidth")
+  expect(panel).toContain("Keys.onEscapePressed:root.close()")
+  expect(panel).toContain("workflowEditor.input")
+  expect(panel).toContain("bufferEditor.input")
+  expect(panel).toContain("if(root.app.activePanel===root)Qt.callLater")
+  const editor=readFileSync(new URL("CodeArea.qml",base),"utf8")
+  expect(editor).toContain("contentWidth: availableWidth")
+  expect(editor).toContain("Border.controlSpec")
+  expect(editor).toContain("Style.selectionFillFor")
+})
+
+test("focused key recording uses key identities, not Ctrl-generated control text",()=>{
+  const source=readFileSync(new URL("../qml/KeyRecorder.qml",import.meta.url),"utf8")
+  const line=source.split("\n").find(line=>line.trim().startsWith("function key(event)"))
+  const key=runInNewContext(line+"\nkey")
+  expect(key({key:65,text:"\x01"})).toBe("A")
+  expect(key({key:16777225,text:""})).toBe("PRINT_SCREEN")
+  expect(key({key:16777222,text:""})).toBe("INSERT")
+  expect(key({key:0,text:""})).toBe("")
+  expect(source).toContain("root.recording?root.finish():root.start()")
 })

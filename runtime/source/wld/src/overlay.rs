@@ -110,6 +110,7 @@ pub fn validate_state(value: &Value) -> Result<()> {
     if value["version"] != 1
         || !value["script"].is_string()
         || !value["registry"].is_string()
+        || !value["zones"].is_object()
         || value["points"].as_array().is_none_or(|p| p.len() != 16)
     {
         return Err(ApiError::new(400, "Invalid Macrohelp environment"));
@@ -142,6 +143,9 @@ pub fn validate_state(value: &Value) -> Result<()> {
         }
     }
     for key in ["Z", "X", "C", "V"] {
+        if value["zones"].get(key).is_none() {
+            return Err(ApiError::new(400, "Missing zone slot"));
+        }
         if !value["zones"][key].is_null() {
             coordinates(&value["zones"][key], 4)?;
         }
@@ -505,7 +509,10 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
                         };
                         match result {
                             Ok(value) => json!({"id":r["id"],"ok":true,"result":value}),
-                            Err(e) if e.status >= 500 => {
+                            Err(e)
+                                if e.status >= 500
+                                    && matches!(r["method"].as_str(), Some("http" | "stop")) =>
+                            {
                                 json!({"id":r["id"],"ok":false,"offline":true})
                             }
                             Err(e) => {
@@ -557,6 +564,12 @@ mod tests {
     fn rejects_invalid_coordinates() {
         let mut v = default_state();
         v["points"][0] = json!(["bad", 2]);
+        assert!(validate_state(&v).is_err());
+        let mut v = default_state();
+        v["zones"] = json!([]);
+        assert!(validate_state(&v).is_err());
+        let mut v = default_state();
+        v["zones"].as_object_mut().unwrap().remove("Z");
         assert!(validate_state(&v).is_err());
     }
 }

@@ -1,4 +1,5 @@
 function copy(v) { return JSON.parse(JSON.stringify(v)) }
+function containsPoint(point,origin,width,height) { return !!point&&!!origin&&point.x>=origin.x&&point.y>=origin.y&&point.x<origin.x+width&&point.y<origin.y+height }
 function numeric(v,min,max,label) { var n=Number(v);if(!isFinite(n)||n<min||n>max)throw Error(label+" must be "+min+"…"+max);return n }
 function wait(ms) { return {type:"wait",duration:numeric(ms,0,86400000,"Wait")/1000} }
 function paste(text) { return {type:"paste",content:String(text),contentId:"",loop:1} }
