@@ -11,6 +11,7 @@ function feed.stop()
   if timer then timer:set_enabled(false) end
 end
 local function on_key(xkb_code, _, state)
+  if state ~= 0 and state ~= 1 then return end -- Native repeat (2) is not a release.
   local code = tonumber(xkb_code)
   if not code or code < 8 or code > 775 then return end
   code = code - 8 -- hl.on exposes XKB codes, not evdev codes.

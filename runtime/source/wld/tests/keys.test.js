@@ -36,6 +36,7 @@ test("display data is bounded, fades and is discarded after five seconds",()=>{
 test("native hook is ephemeral, has a consumer lease, and does not touch files or configs",()=>{
   const lua=readFileSync(new URL("input.lua",base),"utf8")
   expect(lua).toContain("pcall(hl.on, 'input.keyboard.key'")
+  expect(lua).toContain("if state ~= 0 and state ~= 1 then return end")
   expect(lua).toContain("code = code - 8")
   expect(lua).toContain("feed.subscription:remove()")
   expect(lua).toContain("if feed.idle >= 2 then feed.stop() end")

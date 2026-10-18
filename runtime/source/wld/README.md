@@ -6,6 +6,7 @@ engine, and does not build or launch either. Unavailable HTTP requests are silen
 the HUD and local tools still load. Theme/rendering come from the existing shell.
 
 Configuration and server startup: [Quick start](../../../quick-start.md).
+Input integration and source review: [Omarchy input](../../../docs/omarchy-input.md).
 
 Left-click the bar widget to open its panel; right-click stops macros. The workflow
 editor is inside the popup, not a permanent bottom-screen textbox. Omarchy owns bar
