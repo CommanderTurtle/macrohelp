@@ -3,6 +3,7 @@ import Quickshell
 import Quickshell.Io
 import qs.Commons
 import "model/Workflow.js" as Workflow
+import "model/KeyDisplay.js" as KeyDisplay
 
 Item {
   id: root
@@ -25,6 +26,11 @@ Item {
   property var tasks: []
   property var status: ({})
   property var history: []
+  property var keyDisplay: KeyDisplay.create()
+  property bool keyFeedAvailable: false
+  property double keyClock: Date.now()
+  readonly property bool keysEnabled: ready&&!hidden&&!!environment.view&&environment.view.keys&&!environment.view.coordinates_only
+  readonly property var keyRows: KeyDisplay.rows(keyDisplay,keyClock)
   property var path: []
   property bool recordingPath: false
   property double pathTime: 0
@@ -52,6 +58,10 @@ Item {
   signal showPanel()
   signal hidePanel()
   signal clipboardRequested(var callback)
+  onKeysEnabledChanged: {
+    keyDisplay=KeyDisplay.create()
+    if(runtime.running)call({method:"keys",enabled:keysEnabled})
+  }
   function call(request,callback) {
     if(!runtime.running){error="Build the overlay client, then reload the Macrohelp plugin.";if(callback)callback(null,error);return}
     request.id=++serial;if(callback)callbacks[request.id]=callback
@@ -122,6 +132,10 @@ Item {
   function exportState(){chooseFile(true,function(path){root.call({method:"export",path:path,state:root.environment},function(v,e){if(!e)root.message="Exported"})})}
   function importState(){if(busy||localBusy||pending){error="Stop the current operation first";return}var token=generation;chooseFile(false,function(path){if(token!==root.generation)return;root.call({method:"import",path:path},function(v,e){if(token!==root.generation)return;if(!e){root.environment=v;root.save();root.message="Imported"}})})}
   Timer {id:persist;interval:400;onTriggered:root.save()}
+  Timer {
+    interval:100;repeat:true;running:root.keysEnabled&&root.keyDisplay.entries.length>0
+    onTriggered:{root.keyClock=Date.now();root.keyDisplay=KeyDisplay.accept(root.keyDisplay,[],Object.keys(root.keyDisplay.held).map(Number),root.keyClock)}
+  }
   Timer {id:clipboardTimeout;interval:3000;onTriggered:root.finishClipboard(null,"Clipboard panel unavailable")}
   Timer {id:startDelay;interval:250;onTriggered:{var f=root.pending;root.pending=null;if(f)f()}}
   Timer {id:poll;interval:120;onTriggered:{
@@ -152,6 +166,13 @@ Item {
         return
       }
       if(r.event==="monitors"){root.monitors=r.monitors;return}
+      if(r.event==="keys"){
+        root.keyFeedAvailable=!!r.sample.available
+        root.keyClock=Date.now()
+        if(!root.keysEnabled||r.sample.locked||!root.keyFeedAvailable)root.keyDisplay=KeyDisplay.create()
+        else root.keyDisplay=KeyDisplay.accept(root.keyDisplay,r.sample.events||[],r.sample.held||[],root.keyClock)
+        return
+      }
       var callback=root.callbacks[r.id];delete root.callbacks[r.id]
       if(r.offline){root.connected=false;root.error="";if(callback)callback(null,"offline");return}
       else if(!r.ok)root.error=r.error

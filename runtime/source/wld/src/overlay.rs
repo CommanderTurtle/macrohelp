@@ -65,6 +65,22 @@ pub fn http(config: &Config, method: &str, path: &str, body: &Value) -> Result<V
 fn io_error(e: std::io::Error) -> ApiError {
     ApiError::new(500, e.to_string())
 }
+fn input_sample(enabled: bool) -> Result<Value> {
+    let active = enabled && hypr("locked")?["locked"] == false;
+    let code = format!(
+        "repl return _G.__macrohelp_input and _G.__macrohelp_input.sample({active}) or '{{\"initialize\":true}}'"
+    );
+    let mut value = hypr(&code)?;
+    if value["initialize"] == true {
+        let boot = hypr(&format!("repl {}", include_str!("../input.lua")))?;
+        if boot["ready"] != true {
+            return Err(ApiError::new(503, "Native key events unavailable"));
+        }
+        value = hypr(&code)?;
+    }
+    value["locked"] = json!(!active && enabled);
+    Ok(value)
+}
 pub fn hypr(command: &str) -> Result<Value> {
     #[cfg(unix)]
     {
@@ -380,7 +396,7 @@ fn command(program: &str, args: &[&str], input: Option<Vec<u8>>) -> Result<Vec<u
 fn handle(config: &Config, r: &Value) -> Result<Value> {
     match string(r, "method")? {
         "hello" => Ok(
-            json!({"state":if config.state_dir.join("overlay.json").exists(){read_state(&config.state_dir.join("overlay.json"))?}else{default_state()},"monitors":hypr("monitors").unwrap_or(json!([])),"endpoint":format!("http://{}",config.address),"global_key_capture":false}),
+            json!({"state":if config.state_dir.join("overlay.json").exists(){read_state(&config.state_dir.join("overlay.json"))?}else{default_state()},"monitors":hypr("monitors").unwrap_or(json!([])),"endpoint":format!("http://{}",config.address)}),
         ),
         "http" => {
             let verb = string(r, "verb")?;
@@ -493,6 +509,9 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
         }
     });
     let mut tracking = true;
+    let mut keys = false;
+    let mut input_available = None;
+    let mut last_input = Instant::now() - Duration::from_secs(1);
     let mut last = json!(null);
     let mut last_poll = Instant::now() - Duration::from_secs(1);
     let mut last_monitors = Instant::now() - Duration::from_secs(6);
@@ -503,6 +522,12 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
                     Ok(r) => {
                         let result = if r["method"] == "tracking" {
                             tracking = r["enabled"].as_bool().unwrap_or(false);
+                            Ok(json!(true))
+                        } else if r["method"] == "keys" {
+                            keys = r["enabled"].as_bool().unwrap_or(false);
+                            if !keys {
+                                let _ = input_sample(false);
+                            }
                             Ok(json!(true))
                         } else {
                             handle(&config, &r)
@@ -536,6 +561,32 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 last = cursor;
             }
         }
+        if keys && last_input.elapsed() >= Duration::from_millis(33) {
+            last_input = Instant::now();
+            match input_sample(true) {
+                Ok(sample) => {
+                    let available = sample["available"] == true;
+                    if input_available != Some(available)
+                        || sample["locked"] == true
+                        || sample["events"].as_array().is_some_and(|a| !a.is_empty())
+                    {
+                        println!("{}", json!({"event":"keys","sample":sample}));
+                    }
+                    input_available = Some(available);
+                }
+                Err(_) => {
+                    if input_available != Some(false) {
+                        println!(
+                            "{}",
+                            json!({"event":"keys","sample":{"available":false,"events":[],"held":[]}})
+                        );
+                    }
+                    input_available = Some(false);
+                    // Capability retry, not package-version branching.
+                    last_input = Instant::now() + Duration::from_millis(1900);
+                }
+            }
+        }
         if tracking && last_monitors.elapsed() >= Duration::from_secs(5) {
             last_monitors = Instant::now();
             if let Ok(monitors) = hypr("monitors") {
@@ -543,6 +594,9 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
             }
         }
         std::io::stdout().flush()?;
+    }
+    if keys {
+        let _ = input_sample(false);
     }
     Ok(())
 }

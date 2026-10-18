@@ -1,0 +1,48 @@
+import { test, expect } from "bun:test"
+import { readFileSync } from "node:fs"
+import { runInNewContext } from "node:vm"
+const base=new URL("../",import.meta.url)
+const K=runInNewContext(readFileSync(new URL("qml/model/KeyDisplay.js",base),"utf8")+"\n({name,glyph,create,accept,rows})")
+test("PromptFont matches the existing Windows glyphs including distinct numpad keys",()=>{
+  expect(K.glyph(K.name(30))).toBe("\uff21")
+  expect(K.glyph(K.name(29))).toBe("\u244d")
+  expect(K.glyph(K.name(82))).toBe("\u247d")
+  expect(K.glyph(K.name(98))).toBe("\u2482")
+  expect(K.name(115)).toBe("VOLUME_UP")
+  expect(K.name(600)).toBe("KEY_600")
+})
+test("fast taps between samples and held-modifier chords all reach the HUD",()=>{
+  const state=K.accept(K.create(),[[29,1],[30,1],[30,0],[48,1],[48,0],[29,0]],[],100)
+  expect(K.rows(state,100).map(r=>r.keys)).toEqual([["CONTROL_LEFT","A"],["CONTROL_LEFT","B"]])
+  expect(Object.keys(state.held)).toHaveLength(0)
+  expect(K.create().entries).toHaveLength(0)
+})
+test("standalone modifiers appear, repeats do not flood, state recovers after overflow",()=>{
+  let state=K.accept(K.create(),[[42,1],[42,0],[30,1],[30,1]],[30],100)
+  expect(K.rows(state,100).map(r=>r.keys)).toEqual([["SHIFT_LEFT"],["A"]])
+  state=K.accept(state,[],[],200)
+  expect(Object.keys(state.held)).toHaveLength(0)
+  state=K.accept(state,[[48,1],[48,0]],[],300)
+  expect(state.entries.at(-1).keys).toEqual(["B"])
+})
+test("display data is bounded, fades and is discarded after five seconds",()=>{
+  let state=K.create()
+  for(let i=0;i<50;i++)state=K.accept(state,[[30,1],[30,0]],[],i*100)
+  expect(state.entries).toHaveLength(15)
+  expect(K.rows(state,4900)).toHaveLength(11)
+  expect(K.rows(state,9900)).toHaveLength(0)
+  expect(K.accept(state,[],[],9900).entries).toHaveLength(0)
+})
+test("native hook is ephemeral, has a consumer lease, and does not touch files or configs",()=>{
+  const lua=readFileSync(new URL("input.lua",base),"utf8")
+  expect(lua).toContain("pcall(hl.on, 'input.keyboard.key'")
+  expect(lua).toContain("code = code - 8")
+  expect(lua).toContain("feed.subscription:remove()")
+  expect(lua).toContain("if feed.idle >= 2 then feed.stop() end")
+  expect(lua).not.toMatch(/io\.|os\.|print\(|exec|\.json|\.log/)
+  const hud=readFileSync(new URL("qml/Hud.qml",base),"utf8")
+  expect(hud).toContain('Qt.resolvedUrl("../../res/promptfont.ttf")')
+  expect(hud).not.toContain("service.history")
+  expect(hud).toContain("window.pointerX-width")
+  expect(readFileSync(new URL("../res/promptfont.ttf",base)).length).toBeGreaterThan(1000)
+})

@@ -4,10 +4,12 @@ import Quickshell.Wayland
 import qs.Commons
 import qs.Commons as Commons
 import "model/Workflow.js" as Workflow
+import "model/KeyDisplay.js" as KeyDisplay
 
 Item {
   id: root
   required property var service
+  FontLoader {id:promptFont;source:Qt.resolvedUrl("../../res/promptfont.ttf")}
   Variants {
     model: Quickshell.screens
     PanelWindow {
@@ -72,10 +74,37 @@ Item {
         Text {id:tag;anchors.centerIn:parent;textFormat:Text.PlainText;text:Math.round(root.service.cursor.x)+", "+Math.round(root.service.cursor.y);color:Commons.Color.foreground;font.family:Style.font.family;font.pixelSize:Style.font.caption}
       }
       Rectangle {
-        visible:window.view.keys&&!window.view.coordinates_only&&root.service.history.length>0&&window.containsPointer
-        anchors {left:parent.left;bottom:parent.bottom;margins:Style.space(20)}
-        width:Math.max(0,Math.min(window.width-Style.space(40),log.implicitWidth+Style.space(20)));height:log.implicitHeight+Style.space(16);color:Commons.Color.background;radius:Style.cornerRadius
-        Text {id:log;anchors.centerIn:parent;width:Math.max(0,parent.width-Style.space(20));elide:Text.ElideRight;textFormat:Text.PlainText;text:root.service.history.join("\n");color:Commons.Color.foreground;font.family:Style.font.family;font.pixelSize:Style.font.caption}
+        visible:root.service.keysEnabled&&root.service.keyRows.length>0&&window.containsPointer
+        x:Math.max(0,Math.min(window.pointerX+width+Style.space(18)>window.width?window.pointerX-width-Style.space(18):window.pointerX+Style.space(18),window.width-width))
+        y:Math.max(0,Math.min(window.pointerY-height-Style.space(12),window.height-height))
+        width:Math.max(0,Math.min(window.width-Style.space(16),keyStack.implicitWidth+Style.spacing.controlPaddingX*2))
+        height:keyStack.implicitHeight+Style.spacing.controlPaddingY*2
+        color:"transparent";clip:true
+        Column {
+          id:keyStack
+          x:Style.spacing.controlPaddingX;y:Style.spacing.controlPaddingY;spacing:Style.space(3)
+          Repeater {
+            model:root.service.keyRows
+            Row {
+              required property var modelData
+              opacity:modelData.opacity;spacing:Style.space(3)
+              Repeater {
+                model:parent.modelData.keys
+                Rectangle {
+                  required property string modelData
+                  width:keyLabel.implicitWidth+Style.space(10);height:keyLabel.implicitHeight+Style.space(6)
+                  color:Commons.Color.background;radius:Style.cornerRadius
+                  Text {
+                    id:keyLabel;anchors.centerIn:parent;text:KeyDisplay.glyph(parent.modelData);textFormat:Text.PlainText
+                    color:Commons.Color.foreground
+                    font.family:promptFont.status===FontLoader.Ready?promptFont.name:Style.font.family
+                    font.pixelSize:Style.font.subtitle
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     }
   }
