@@ -1,5 +1,6 @@
 //! Private overlay state, authenticated loopback client and Hyprland read-only IPC.
 use crate::client::{ApiError, Config, Result, string};
+use crate::heatmap;
 use serde_json::{Value, json};
 use std::{
     fs,
@@ -65,10 +66,12 @@ pub fn http(config: &Config, method: &str, path: &str, body: &Value) -> Result<V
 fn io_error(e: std::io::Error) -> ApiError {
     ApiError::new(500, e.to_string())
 }
-fn input_sample(enabled: bool) -> Result<Value> {
-    let active = enabled && hypr("locked")?["locked"] == false;
+fn input_sample(display: bool, heatmap: bool) -> Result<Value> {
+    let unlocked = (!display && !heatmap) || hypr("locked")?["locked"] == false;
     let code = format!(
-        "repl return _G.__macrohelp_input and _G.__macrohelp_input.sample({active}) or '{{\"initialize\":true}}'"
+        "repl return _G.__macrohelp_input and _G.__macrohelp_input.sample({},{}) or '{{\"initialize\":true}}'",
+        display && unlocked,
+        heatmap && unlocked
     );
     let mut value = hypr(&code)?;
     if value["initialize"] == true {
@@ -78,7 +81,7 @@ fn input_sample(enabled: bool) -> Result<Value> {
         }
         value = hypr(&code)?;
     }
-    value["locked"] = json!(!active && enabled);
+    value["locked"] = json!(!unlocked);
     Ok(value)
 }
 pub fn hypr(command: &str) -> Result<Value> {
@@ -444,6 +447,17 @@ fn handle(config: &Config, r: &Value) -> Result<Value> {
         _ => Err(ApiError::new(400, "Unknown overlay request")),
     }
 }
+fn reply(request: &Value, result: Result<Value>) -> Value {
+    match result {
+        Ok(value) => json!({"id":request["id"],"ok":true,"result":value}),
+        Err(e)
+            if e.status >= 500 && matches!(request["method"].as_str(), Some("http" | "stop")) =>
+        {
+            json!({"id":request["id"],"ok":false,"offline":true})
+        }
+        Err(e) => json!({"id":request["id"],"ok":false,"error":e.message,"code":e.status}),
+    }
+}
 pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "--help") {
@@ -510,6 +524,15 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
     });
     let mut tracking = true;
     let mut keys = false;
+    let heatmap_path = config.state_dir.join("heatmap.json");
+    let (mut book, heatmap_load_error) = match heatmap::load(&heatmap_path) {
+        Ok(value) => (value, None),
+        Err(error) => (heatmap::empty(), Some(error.message)),
+    };
+    let mut requests: Vec<std::thread::JoinHandle<()>> = Vec::new();
+    let mut last_tick = Instant::now();
+    let mut last_save = Instant::now();
+    let mut heatmap_dirty = false;
     let mut input_available = None;
     let mut last_input = Instant::now() - Duration::from_secs(1);
     let mut last = json!(null);
@@ -518,36 +541,67 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
     while !STOP.load(Ordering::Relaxed) {
         match receiver.recv_timeout(Duration::from_millis(if tracking { 16 } else { 100 })) {
             Ok(line) => {
-                let reply = match serde_json::from_str::<Value>(&line) {
+                let response = match serde_json::from_str::<Value>(&line) {
+                    Ok(r)
+                        if matches!(r["method"].as_str(), Some("http" | "stop" | "regedited")) =>
+                    {
+                        // Slow controller/tools I/O must not stall the pointer/key HUD.
+                        requests.retain(|worker| !worker.is_finished());
+                        if requests.len() >= 8 {
+                            Some(reply(&r, Err(ApiError::new(429, "Local client is busy"))))
+                        } else {
+                            let config = config.clone();
+                            requests.push(std::thread::spawn(move || {
+                                println!("{}", reply(&r, handle(&config, &r)));
+                                let _ = std::io::stdout().flush();
+                            }));
+                            None
+                        }
+                    }
                     Ok(r) => {
                         let result = if r["method"] == "tracking" {
                             tracking = r["enabled"].as_bool().unwrap_or(false);
                             Ok(json!(true))
                         } else if r["method"] == "keys" {
                             keys = r["enabled"].as_bool().unwrap_or(false);
-                            if !keys {
-                                let _ = input_sample(false);
+                            if !keys && !heatmap::active(&book) {
+                                let _ = input_sample(false, false);
                             }
                             Ok(json!(true))
+                        } else if r["method"] == "heatmap" && heatmap_load_error.is_some() {
+                            Err(ApiError::new(400, heatmap_load_error.as_deref().unwrap()))
+                        } else if r["method"] == "heatmap"
+                            && r["action"].as_str().unwrap_or("snapshot") == "snapshot"
+                        {
+                            Ok(book.clone())
+                        } else if r["method"] == "heatmap" {
+                            // Flush old-session aggregates before switching the active session.
+                            if let Ok(sample) = input_sample(keys, heatmap::collecting(&book)) {
+                                heatmap::add(&mut book, &sample["counts"]);
+                            }
+                            let mut next = book.clone();
+                            let now = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs();
+                            heatmap::command(&mut next, &r, now).and_then(|()| {
+                                heatmap::save(&heatmap_path, &next)?;
+                                book = next;
+                                heatmap_dirty = false;
+                                last_tick = Instant::now();
+                                let _ = input_sample(keys, heatmap::collecting(&book));
+                                Ok(book.clone())
+                            })
                         } else {
                             handle(&config, &r)
                         };
-                        match result {
-                            Ok(value) => json!({"id":r["id"],"ok":true,"result":value}),
-                            Err(e)
-                                if e.status >= 500
-                                    && matches!(r["method"].as_str(), Some("http" | "stop")) =>
-                            {
-                                json!({"id":r["id"],"ok":false,"offline":true})
-                            }
-                            Err(e) => {
-                                json!({"id":r["id"],"ok":false,"error":e.message,"code":e.status})
-                            }
-                        }
+                        Some(reply(&r, result))
                     }
-                    Err(e) => json!({"ok":false,"error":e.to_string()}),
+                    Err(e) => Some(json!({"ok":false,"error":e.to_string()})),
                 };
-                println!("{reply}");
+                if let Some(response) = response {
+                    println!("{response}");
+                }
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
             Err(mpsc::RecvTimeoutError::Timeout) => (),
@@ -561,10 +615,17 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 last = cursor;
             }
         }
-        if keys && last_input.elapsed() >= Duration::from_millis(33) {
+        let tick_due = last_tick.elapsed() >= Duration::from_secs(1);
+        let input_interval = Duration::from_millis(if keys { 33 } else { 500 });
+        if (keys || heatmap::active(&book)) && (last_input.elapsed() >= input_interval || tick_due)
+        {
             last_input = Instant::now();
-            match input_sample(true) {
+            match input_sample(keys, heatmap::collecting(&book)) {
                 Ok(sample) => {
+                    if sample["counts"].as_object().is_some_and(|m| !m.is_empty()) {
+                        heatmap::add(&mut book, &sample["counts"]);
+                        heatmap_dirty = true;
+                    }
                     let available = sample["available"] == true;
                     if input_available != Some(available)
                         || sample["locked"] == true
@@ -587,6 +648,29 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
+        if tick_due {
+            let seconds = last_tick.elapsed().as_secs();
+            last_tick += Duration::from_secs(seconds);
+            if heatmap::active(&book) {
+                let collecting = heatmap::collecting(&book);
+                heatmap::tick(&mut book, seconds);
+                if collecting != heatmap::collecting(&book) {
+                    let _ = input_sample(keys, heatmap::collecting(&book));
+                }
+                heatmap_dirty = true;
+                println!(
+                    "{}",
+                    json!({"event":"heatmap-session","active":book["active"],"session":heatmap::current(&book)})
+                );
+            }
+        }
+        if heatmap_dirty && last_save.elapsed() >= Duration::from_secs(5) {
+            match heatmap::save(&heatmap_path, &book) {
+                Ok(()) => heatmap_dirty = false,
+                Err(e) => println!("{}", json!({"event":"heatmap-error","error":e.message})),
+            }
+            last_save = Instant::now();
+        }
         if tracking && last_monitors.elapsed() >= Duration::from_secs(5) {
             last_monitors = Instant::now();
             if let Ok(monitors) = hypr("monitors") {
@@ -595,8 +679,18 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
         }
         std::io::stdout().flush()?;
     }
-    if keys {
-        let _ = input_sample(false);
+    if keys || heatmap::active(&book) {
+        if let Ok(sample) = input_sample(keys, heatmap::collecting(&book)) {
+            heatmap::add(&mut book, &sample["counts"]);
+        }
+        let _ = input_sample(false, false);
+    }
+    if heatmap_dirty || heatmap::active(&book) {
+        heatmap::save(&heatmap_path, &book)?;
+    }
+    STOP.store(true, Ordering::Relaxed);
+    for worker in requests {
+        let _ = worker.join();
     }
     Ok(())
 }

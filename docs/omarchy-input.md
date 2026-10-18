@@ -125,7 +125,8 @@ Compositor control requests are synchronous, including direct socket requests:
 avoiding the `hyprctl` subprocess does not make them free. The current HUD batches
 events between samples rather than making an IPC call per key, stops display
 sampling when disabled, and backs off if the native interface is unavailable.
-Aggregate-only collection should not require display-rate sampling. Slow HTTP
+Aggregate-only samples use a 500 ms cadence, with a flush before timer phase
+changes; the key HUD retains its faster cadence. Slow HTTP
 work must not block key/pointer updates or execute in a compositor callback.
 
 Virtual keyboard teardown is another separate concern. Hyprland exposes

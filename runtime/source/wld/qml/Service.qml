@@ -28,6 +28,8 @@ Item {
   property var history: []
   property var keyDisplay: KeyDisplay.create()
   property bool keyFeedAvailable: false
+  property var heatmapState: ({version:1,active:null,sessions:[]})
+  property string heatmapError: ""
   property double keyClock: Date.now()
   readonly property bool keysEnabled: ready&&!hidden&&!!environment.view&&environment.view.keys&&!environment.view.coordinates_only
   readonly property var keyRows: KeyDisplay.rows(keyDisplay,keyClock)
@@ -157,7 +159,7 @@ Item {
   }
   Process {
     id:runtime;command:root.helperCommand;stdinEnabled:true;running:true
-    onStarted:root.call({method:"hello"},function(value,failure){if(failure)return;root.environment=value.state;root.monitors=value.monitors;root.endpoint=value.endpoint;root.ready=true;root.refresh()})
+    onStarted:root.call({method:"hello"},function(value,failure){if(failure)return;root.environment=value.state;root.monitors=value.monitors;root.endpoint=value.endpoint;root.ready=true;root.refresh();root.call({method:"heatmap",action:"snapshot"},function(v,e){if(!e)root.heatmapState=v;else root.heatmapError=e})})
     stdout:SplitParser {onRead:function(line){
       var r;try{r=JSON.parse(line)}catch(e){root.error="Invalid controller response";return}
       if(r.event==="cursor"){
@@ -166,6 +168,12 @@ Item {
         return
       }
       if(r.event==="monitors"){root.monitors=r.monitors;return}
+      if(r.event==="heatmap-session"){
+        var book=Object.assign({},root.heatmapState);book.active=r.active
+        book.sessions=(book.sessions||[]).map(function(s){return s.id===r.active?r.session:s})
+        root.heatmapState=book;return
+      }
+      if(r.event==="heatmap-error"){root.heatmapError=r.error;return}
       if(r.event==="keys"){
         root.keyFeedAvailable=!!r.sample.available
         root.keyClock=Date.now()
@@ -189,5 +197,25 @@ Item {
     function click(button:string):void{root.click(button)}
     function stop():void{root.stop()}
     function page(name:string):void{root.panel(name)}
+    function hotkey(number:string):void {
+      if(number==="0")root.pointer()
+      else if(number==="1")root.panel("Buffers")
+      else if(number==="2")root.panel("Workflow")
+      else if(number==="3")root.panel("Pointer")
+      else if(number==="4")root.click("LEFT_MOUSE")
+      else if(number==="5")root.click("RIGHT_MOUSE")
+      else if(number==="6")root.click("MIDDLE_MOUSE")
+      else if(number==="7")root.stop()
+      else if(number==="8")root.panel("View")
+      else if(number==="9")root.panel("Keys")
+    }
+    function heatmap(request:string):string {
+      var value
+      try{value=JSON.parse(request)}catch(e){return JSON.stringify({error:"Invalid heatmap request"})}
+      if(!value.action||value.action==="snapshot")return JSON.stringify({state:root.heatmapState,error:root.heatmapError,available:root.keyFeedAvailable})
+      value.method="heatmap"
+      root.call(value,function(v,e){root.heatmapError=e||"";if(!e)root.heatmapState=v})
+      return JSON.stringify({pending:true})
+    }
   }
 }

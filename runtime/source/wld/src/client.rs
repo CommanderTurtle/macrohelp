@@ -46,6 +46,7 @@ pub fn default_env() -> PathBuf {
                 .unwrap_or_else(|_| PathBuf::from(".env"))
         })
 }
+#[derive(Clone)]
 pub struct Config {
     pub address: SocketAddr,
     pub key: String,
