@@ -123,7 +123,7 @@ pub fn hypr(command: &str) -> Result<Value> {
     }
 }
 pub fn default_state() -> Value {
-    json!({"version":1,"script":"","registry":"","shells":{"X":"bash","C":"sh","G":"uv run python","P":"pwsh","T":""},"vars":{"A":"","S":"","D":"","F":""},"buffers":{"Z":"","X":"","C":"","V":""},"zones":{"Z":null,"X":null,"C":null,"V":null},"points":vec![Value::Null;16],"view":{"crosshair":true,"grid":false,"coordinates":true,"keys":true,"coordinates_only":false},"last_task":null})
+    json!({"version":1,"script":"","registry":"","paths":{"import":"","export":""},"shells":{"X":"bash","C":"sh","G":"uv run python","P":"pwsh","T":""},"vars":{"A":"","S":"","D":"","F":""},"buffers":{"Z":"","X":"","C":"","V":""},"zones":{"Z":null,"X":null,"C":null,"V":null},"points":vec![Value::Null;16],"view":{"crosshair":true,"grid":false,"coordinates":true,"panel":true,"keys":true,"coordinates_only":false},"last_task":null})
 }
 pub fn validate_state(value: &Value) -> Result<()> {
     if value["version"] != 1
@@ -163,6 +163,16 @@ pub fn validate_state(value: &Value) -> Result<()> {
                 400,
                 "Invalid shell command/terminal shortcut",
             ));
+        }
+    }
+    if value["view"].get("panel").is_some_and(|v| !v.is_boolean()) {
+        return Err(ApiError::new(400, "Invalid coordinate panel preference"));
+    }
+    if let Some(paths) = value.get("paths") {
+        for key in ["import", "export"] {
+            if !paths[key].is_string() {
+                return Err(ApiError::new(400, "Invalid transfer path"));
+            }
         }
     }
     for point in value["points"].as_array().unwrap() {
@@ -262,6 +272,12 @@ fn read_state(path: &Path) -> Result<Value> {
             state["shells"][key] = default_state()["shells"][key].clone();
         }
     }
+    if state.get("paths").is_none() {
+        state["paths"] = default_state()["paths"].clone();
+    }
+    if state["view"].get("panel").is_none() {
+        state["view"]["panel"] = json!(true);
+    }
     Ok(state)
 }
 pub fn import_legacy(text: &str) -> Result<Value> {
@@ -286,15 +302,22 @@ pub fn import_legacy(text: &str) -> Result<Value> {
             "shellaliasx" => v["shells"]["X"] = json!(value),
             "shellaliasc" => v["shells"]["C"] = json!(value),
             "shellaliasg" => v["shells"]["G"] = json!(value),
+            "shellaliasp" => v["shells"]["P"] = json!(value),
+            "shellaliast" => v["shells"]["T"] = json!(value),
+            "importpath" => v["paths"]["import"] = json!(value),
+            "exportpath" => v["paths"]["export"] = json!(value),
+            "lasttaskettaskstate" => v["last_task"]["state"] = json!(value),
+            "lasttaskettaskmessage" => v["last_task"]["message"] = json!(value),
             "lasttaskettasknumber" => {
                 if let Ok(n) = value.parse::<u64>() {
-                    v["last_task"] = json!({"task_number":n});
+                    v["last_task"]["task_number"] = json!(n);
                 }
             }
             "crosshairvisible" => v["view"]["crosshair"] = json!(value == "1" || value == "true"),
             "gridvisible" => v["view"]["grid"] = json!(value == "1" || value == "true"),
             "keyhudvisible" => v["view"]["keys"] = json!(value == "1" || value == "true"),
-            "coordinatepanelvisible" => {
+            "coordinatepanelvisible" => v["view"]["panel"] = json!(value == "1" || value == "true"),
+            "cursorcoordinatesvisible" => {
                 v["view"]["coordinates"] = json!(value == "1" || value == "true")
             }
             "coordinatesonlymode" => {
@@ -428,9 +451,19 @@ fn handle(config: &Config, r: &Value) -> Result<Value> {
             Ok(json!(true))
         }
         "export" => {
-            write_state(Path::new(string(r, "path")?), &r["state"], false)?;
+            validate_state(&r["state"])?;
+            if r["format"] == "windows" {
+                crate::artifacts::write(
+                    Path::new(string(r, "path")?),
+                    &crate::artifacts::legacy(&r["state"]),
+                    None,
+                )?;
+            } else {
+                write_state(Path::new(string(r, "path")?), &r["state"], false)?;
+            }
             Ok(json!(true))
         }
+        "export-actions" => crate::artifacts::actions(r),
         "import" => read_state(Path::new(string(r, "path")?)),
         "bindings" => Ok(hypr("binds").unwrap_or(json!([]))),
         "profile-list" => crate::profiles::list(&config.state_dir.join("profiles")),
@@ -734,6 +767,8 @@ mod tests {
         let mut old = default_state();
         old["shells"].as_object_mut().unwrap().remove("P");
         old["shells"].as_object_mut().unwrap().remove("T");
+        old.as_object_mut().unwrap().remove("paths");
+        old["view"].as_object_mut().unwrap().remove("panel");
         old["shells"]["X"] = json!("fish -l");
         let file = std::env::temp_dir().join(format!(
             "macrohelp-shells-{}-{}.json",
@@ -749,6 +784,8 @@ mod tests {
         assert_eq!(state["shells"]["X"], "fish -l");
         assert_eq!(state["shells"]["P"], "pwsh");
         assert_eq!(state["shells"]["T"], "");
+        assert_eq!(state["paths"], json!({"import":"","export":""}));
+        assert_eq!(state["view"]["panel"], true);
         old["shells"]["P"] = json!(12);
         assert!(validate_state(&old).is_err());
     }

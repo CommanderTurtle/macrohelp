@@ -2,8 +2,14 @@
 
 Source audit: 2026-10-18. Each row compares the same feature in both implementations.
 **Present** means implemented in the inspected source, not tested on a live Omarchy
-desktop. **Partial**, **Absent**, and **Different** identify remaining work or an
-intentional platform boundary. These are not claims of 100% menu or runtime parity.
+desktop. **Different** records an intentional native-platform replacement or limit;
+it does not mean byte-identical behavior. **Partial** keeps remaining gaps visible.
+
+Implementation coverage: **HTTP 48/48 (100%)**, **overlay 76/77 (98.7%)**.
+The denominator excludes features absent from both baselines, additional Linux
+features, and the retired file bridge. Native functional replacements count;
+pointer-move dismissal does not. These are source coverage figures, not a live
+desktop pass rate. The row inventory and arithmetic are checked by tests.
 
 Daemon evidence: [Qt routes](../http-daemon/src/HttpServer.cpp),
 [Qt runner](../http-daemon/src/TaskRunner.cpp),
@@ -53,7 +59,7 @@ Overlay evidence: [Windows implementation](../runtime/source/src/main.cpp),
 | H28 · Unknown task/id/route | JSON errors with HTTP status | Present: 404; malformed arguments 400; backend unavailable 503/502 as appropriate |
 | H29 · Header authentication | Optional CLI `--key`, `X-Tasket-Key` | Different: required generated/private env key; missing 401, wrong 403 |
 | H30 · Listen address | CLI `--bind`; source default `0.0.0.0`, quick start explicitly uses loopback | Different: loopback-only env bind; port configurable |
-| H31 · Browser/CORS access | No application-level origin policy in route handlers | Different: rejects Origin / cross-site requests; no browser automation API exposed |
+| H31 · Browser/CORS access | No application-level origin policy in route handlers | Present: ordinary CORS/OPTIONS, including private-network preflight; no Origin/cross-site ban. Browser permission stays with the browser; action requests still require the configured key |
 | H32 · HTTP bounds | cpp-httplib transport defaults | Different: explicit 16KiB headers, 2MiB body, deadlines, four workers, duplicate-header/query rejection |
 | H33 · Input action: paste | `content`, `contentId`, `loop` | Present: backend clipboard paste; named reusable data resolved by Omarsket |
 | H34 · Input action: wait | `duration` seconds | Present; legacy `WaitAction` milliseconds normalized too |
@@ -63,7 +69,7 @@ Overlay evidence: [Windows implementation](../runtime/source/src/main.cpp),
 | H38 · Action: run another task | Name, delay, loops; Tasket stub forwards child request | Present: native nested plan; rejects cycles/depth overflow |
 | H39 · Native convenience actions | Not in Qt loader | Additional: move, click, scroll, hotkey, type |
 | H40 · Invalid action type | Qt loader skips unrecognized action entries | Different: rejects before queuing; never silently drops work |
-| H41 · Request hook | Qt `requestReceived` signal and console logging | Different: Rust dispatch/result handling; no equivalent Qt signal subscriber API |
+| H41 · Request hook | Qt `requestReceived` signal and console logging | Present: Rust dispatch/result handling + method/known-path/status console hook; never logs keys, query values or macro contents; no Qt signal API |
 | H42 · Scheduling hook | `executeRequested` → runner after QTimer | Present through Omarsket scheduler and socket requests; no Qt hook required |
 | H43 · Started / finished / failed hooks | Registry signals and runner completion wiring | Present through backend job state/events; HTTP clients query `/check` or `/status` |
 | H44 · Webhook callbacks / SSE / WebSocket | Not implemented | Not implemented; do not imply push subscriptions from lifecycle hooks |
@@ -82,28 +88,28 @@ Overlay evidence: [Windows implementation](../runtime/source/src/main.cpp),
 | Feature / control | Windows · CursorOverlay | Wayland · Omarchy overlay |
 | --- | --- | --- |
 | O01 · Entry point | Native executable, global hotkeys | Present as shell bar widget + opt-in native bindings; not a standalone window or separately registered tray icon |
-| O02 · Main editor placement | Modeless Registry Hub dialog and command router | Different: native popup with Workflow / Pointer / Keys / Buffers / Zones / Tasks / Presets / View pages |
+| O02 · Main editor placement | Modeless Registry Hub dialog and command router | Different: native popup with Workflow / Pointer / Keys / Buffers / Zones / Tasks / Presets / View / Help pages |
 | O03 · Theme, fonts, scale | Windows/GDI styling; optional scale env | Present through live Omarchy Color/Style, shell scaling and panel bounds; no custom refresh-rate control |
 | O04 · Multi-monitor | Physical Windows virtual-screen coordinates | Present using Hyprland logical coordinates, negative origins and per-screen nonfocusable HUDs |
 | O05 · Crosshair | Toggle crosshair / full-screen line windows | Present: View → Crosshair; drawing differs from Windows fast-line overlay |
 | O06 · Grid lines | View toggle | Present: View → Grid |
-| O07 · Coordinate display | Cursor coordinates + separate top-right coordinate panel | Partial: cursor-following coordinates present; no separate fixed top-right panel |
+| O07 · Coordinate display | Cursor coordinates + separate top-right coordinate panel | Present: independently toggled cursor label and fixed top-right panel per output, native logical coordinates |
 | O08 · Coordinates-only view | Visibility preset | Present: View → Coordinates only |
 | O09 · Live every-key PromptFont HUD | Native low-level/raw key input with transient history | Present: native Hyprland hook, bundled PromptFont, modifiers/numpad/media, fade; no raw keystroke files |
 | O10 · Key HUD disable / lock / shutdown | Windows visibility and process lifecycle | Present: collection gated independently, session-lock suppression, hook lease and cleanup |
 | O11 · Heatmap/Pomodoro | Not in Windows baseline | Additional: aggregate-only named sessions exposed to Omarsket; independent on/off/timers/persistence |
-| O12 · Shift+Alt+0 | Save Cursor Position dialog | Present: optional binding saves current point; Pointer has capture/manual point controls |
-| O13 · Save Cursor Position: named movement list | Name stage, Add Another, Save + Click, append action JSON file | Partial: 16 numbered points + timed path recording/replay; no equivalent named append-file dialog or Save + Click button |
+| O12 · Shift+Alt+0 | Save Cursor Position dialog | Present: optional binding saves current point and opens Pointer; capture/manual point controls remain available |
+| O13 · Save Cursor Position: named movement list | Name stage, Add Another, Save + Click, append action JSON file | Present: named movement list, Add another / saved point, Save + Click, JSON export/append; file picker replaces the fixed Downloads filename |
 | O14 · Shift+Alt+1 | Paste buffers / zone-buffer router | Present: Buffers; Zones is a separate page |
 | O15 · Paste Buffers: edit Z/X/C/V | Four text buffers | Present: buffer selector + multiline editor |
 | O16 · Paste Buffers: clipboard → slot | Store current clipboard | Present |
 | O17 · Paste Buffers: paste / paste + Enter | Slot actions and sequence router | Present: individual UI actions; multi-buffer sequences through `{buf Z,X}` / `{enter Z,X}` |
-| O18 · Paste Buffers: ordered sequence picker | Dedicated staged selection flow | Partial: same operation in workflow syntax; no staged sequence-picker UI |
+| O18 · Paste Buffers: ordered sequence picker | Dedicated staged selection flow | Present: add selected slots, reorder/remove, paste sequence with baseline focus-click/waits; skips empty buffers |
 | O19 · Paste Buffers: zone edit/play/store router | Z/X/C/V zones, method and target selection | Present on Zones page rather than single-character router |
 | O20 · Shift+Alt+2 | Registry Hub | Present: Workflow page |
 | O21 · Registry Hub: script editor | Script stage with Play | Present: multiline editor + Play; hides panel before execution |
-| O22 · Registry Hub: Clear | Clear script-local state, retain paste/zone buffers | Absent: no dedicated Clear action with those exact reset semantics; manual editing is not equivalent |
-| O23 · Registry Hub: H Help | Full Field Manual, examples, router and token reference | Partial: inline token hint only; no equivalent full help page/search |
+| O22 · Registry Hub: Clear | Clear script-local state, retain paste/zone buffers | Present: confirmed Clear resets script, registry path, variables, points, shells and transfer paths; buffers/zones/views/last task retained |
+| O23 · Registry Hub: H Help | Full Field Manual, examples, router and token reference | Present: searchable Help page covering menus, grammar, fields, capture, schedules, shells, keys and presets |
 | O24 · Registry Hub: R registry path | Stored rgd target file path | Present: Workflow → Regedited file path |
 | O25 · Registry Hub: X/C/G shell fields | User command aliases | Present: Workflow shell fields; Linux C defaults to `sh`, not unavailable Windows `cmd` |
 | O26 · Registry Hub: default terminal | Windows Win+Alt+Space launcher assumption | Present: active native terminal shortcut discovery; editable T shortcut overrides it, usually Super+Enter |
@@ -114,21 +120,21 @@ Overlay evidence: [Windows implementation](../runtime/source/src/main.cpp),
 | O31 · `{powershell}` | Windows-specific launcher, wait, Enter | Different: `{powershell}` / `{pwsh}` use editable P command, default `pwsh`, through native terminal; user installs shells |
 | O32 · Shell commands vs native processes | Visible macro flow; generic exec disabled | Present: no subprocess launch or package install for shell aliases; command must be single-line |
 | O33 · Registry Hub: A/S/D/F | Four script variables | Present: Buffers → Variable, plus `{set A ...}` |
-| O34 · Registry Hub: E/I path editors | Saved import/export path fields | Partial: native file picker import/export; no persistent separate E/I path-editor controls |
-| O35 · Registry Hub: Export/Import environment | Plaintext full-state export/import | Present for data: native JSON export and Windows plaintext import; no Windows-format export |
+| O34 · Registry Hub: E/I path editors | Saved import/export path fields | Present: persistent Import/Export fields, Browse and execution buttons; blank paths open the chooser |
+| O35 · Registry Hub: Export/Import environment | Plaintext full-state export/import | Present: JSON and Windows text export/import. New exports refuse an existing target; explicit action Append updates a valid action document |
 | O36 · Registry Hub: Save Schts | Emits compiled native schedules | Present: Save schedule for input-only workflows; local clipboard/rgd steps require Play or environment export |
 | O37 · Registry Hub: Q visibility router | Display toggles | Present: View page |
 | O38 · Registry Hub: points 1–16 | Important points and references | Present: Pointer selector, manual coordinates, capture and clear |
 | O39 · Registry Hub: N zones | Zone selection/editing | Present: Zones page |
-| O40 · Literal keys / chords | Unknown brace token becomes Tasket chord | Present: `{CTRL+S}`, key aliases; exact Windows alias vocabulary is not exhaustively ported |
+| O40 · Literal keys / chords | Unknown brace token becomes Tasket chord | Present: Windows normalizer's modifier, arrow, whitespace/hyphen, navigation and mouse aliases; preserves native keysyms |
 | O41 · Wait / pointer / click | `{wait}`, `{pt}` / `{point}`, `{left}` / `{right}` / `{middle}` | Present |
 | O42 · Text / buffers / Enter | `{type}`, `{paste}`, `{buf}`, `{enter}`, click-on/off | Present; ordinary text uses backend paste, shell commands use backend typing |
 | O43 · Counted modifier movement | `{ctrlmod}`, `{controlmod}`, `{shiftmod}` | Present |
-| O44 · Counted wheel aliases | Wheelup/down, scrollup/down, mousewheel aliases and canonical mouse-wheel tokens | Partial: wheelup/down and scrollup/down explicit; remaining aliases do not have full counted-token normalization |
-| O45 · References | Vars, buffers, points, registry, shells | Present for `$A/S/D/F`, `$Z/X/C/V`, `$1…16`, `$REGISTRY`, `$REGEDITED`, `$SHELLX/C/G` |
-| O46 · Set statements | Vars/buffers/registry/shell/point/zone | Present for direct values; shell P/T added; point/zone shorthand-copy variants below are incomplete |
-| O47 · Point copy shorthand | `{set point 4 3}` copies a point | Partial: explicit `$3` coordinates work; bare index-copy form absent |
-| O48 · Zone shorthand | Coordinates, two point references, copy another zone | Partial: explicit four coordinates and expanded point coordinates; bare zone-copy/index shorthand absent |
+| O44 · Counted wheel aliases | Wheelup/down, scrollup/down, mousewheel aliases and canonical mouse-wheel tokens | Present: shared canonical normalization, positive integer count, clamped to 1000 like Windows |
+| O45 · References | Vars, buffers, points, registry, shells | Present for `$A/S/D/F`, `$Z/X/C/V`, `$1…16`, `$REGISTRY`, `$REGEDITED`, `$SHELLX/C/G/P/T` |
+| O46 · Set statements | Vars/buffers/registry/shell/point/zone | Present for direct values, shell P/T and the shorthand-copy variants below |
+| O47 · Point copy shorthand | `{set point 4 3}` copies a point | Present: bare index, point/pt reference or explicit coordinates |
+| O48 · Zone shorthand | Coordinates, two point references, copy another zone | Present: four coordinates, two point numbers, or saved zone slot |
 | O49 · Conditions | Nested if/else/endif; empty/contains/string/numeric comparisons | Present; evaluated on Play/Save, not a live continuously running predicate engine |
 | O50 · Daemon-backed conditions | Task state/remaining/message, saved-task exists/count | Present using task/status snapshots and remembered last task |
 | O51 · Saved task chaining | `{play name[.scht]}` | Present; normalizes `.scht` / `.omscht` |
@@ -139,44 +145,41 @@ Overlay evidence: [Windows implementation](../runtime/source/src/main.cpp),
 | O56 · Shift+Alt+3 | Circle Placer | Present: Pointer page |
 | O57 · Circle Placer: radius | Radius, visible preview | Present |
 | O58 · Circle Placer: radians/degrees | Angle mode | Present |
-| O59 · Circle Placer: vector / scaled direction | `i+j` expression, scaled direction syntax | Partial: numeric `x,y` offset field; no equivalent scaled-direction expression parser |
-| O60 · Circle Placer: move / append / next circle | Three separate actions | Partial: move target, target → point, set origin present; named JSON append / chained staged circle UI absent |
+| O59 · Circle Placer: vector / scaled direction | `i+j` expression, scaled direction syntax | Present: screen x,y offsets, i+j (positive j up), radius @ direction; safe angle arithmetic, pi and parentheses; canonical circle Y orientation |
+| O60 · Circle Placer: move / append / next circle | Three separate actions | Present: move target, append action JSON, Next circle from target; target → point and origin capture retained |
 | O61 · Circle Placer: ZoneMake | Circle bounds into zone/capture flow | Present: Circle → zone, then Zones method controls |
 | O62 · Shift+Alt+4/5/6 | Manual Click: left/right/middle | Present: same optional hotkeys and Keys buttons |
 | O63 · Manual Click: delayed/repeated/held click | Click count and hold-duration behavior | Present: Keys → Hold ms / Repeat; timing is a queued backend action |
-| O64 · Manual Click: Z hold / X release | Separate indefinite hold and release controls | Absent as paired UI controls; bounded timed hold is not equivalent |
+| O64 · Manual Click: timed hold | Actual C++ uses a 100ms click or entered hold duration up to 600000ms; old resource hint is stale | Present: Hold ms 1–600000, repeat, queued release and Stop. Windows does not implement the previously inferred indefinite-hold pair |
 | O65 · Shift+Alt+7 | Stop all through HTTP | Present: optional binding, Stop button, bar right-click; independent emergency client path |
-| O66 · Shift+Alt+8 | Toggle top-right panel | Different: opens View; no top-right panel counterpart |
+| O66 · Shift+Alt+8 | Toggle top-right panel | Present: directly toggles the fixed coordinate panel; independent View control |
 | O67 · Shift+Alt+9 | Record Keys / manual-key dialogs | Present: Keys page, but recorder/picker differences below |
 | O68 · Record Keys: capture chord, timings | Capture Key / Add Step / step delay | Present: focused recording captures press/release timing; editable action JSON; not global recording |
-| O69 · Record Keys: text/paste blocks | Add Text/Paste inside recorded flow | Partial: workflow text/buffer tokens exist; no mixed-flow recorder button |
-| O70 · Manual Keys: categories / three-key picker | Mouse, numpad, navigation, functions, toggles, symbols | Absent: chord text field + focused recorder, not categorized picker |
-| O71 · Record Keys: named append-file output | Save action JSON to named file | Partial: editable JSON displayed and replayable; no direct named action-file export button |
-| O72 · Pointer path recording | Named recorded cursor-action lists | Present: timed path capture/replay; raw path not separately exported by a matching Windows dialog |
-| O73 · Closing behavior | Escape; several HUDs also close on pointer movement | Different: native popup dismissal/Escape; no universal pointer-move-to-close behavior |
+| O69 · Record Keys: text/paste blocks | Add Text/Paste inside recorded flow | Present: mixed key/text/paste/wait flow, editable steps, reorder/remove and replay |
+| O70 · Manual Keys: categories / three-key picker | Mouse, numpad, navigation, functions, toggles, symbols | Present: categorized up-to-three-key picker, mouse side buttons, keypad/operators, F1–F24 and symbols. Fn reports its firmware-only boundary |
+| O71 · Record Keys: named append-file output | Save action JSON to named file | Present: named JSON export/append; validates document shape and refuses accidental replacement |
+| O72 · Pointer path recording | Named recorded cursor-action lists | Present: timed capture/replay and named action JSON export |
+| O73 · Closing behavior | Escape; several HUDs also close on pointer movement | Partial: native popup dismissal/Escape; pointer-move-to-close is not implemented |
 | O74 · Workflow cancellation | Stop daemon tasks | Present: invalidates delayed/capture/clipboard callbacks as well as stopping backend jobs |
 | O75 · Offline server | HTTP execution unavailable | Present: unanswered HTTP is silent; HUD/local editing continue; local file/tool errors remain visible |
 | O76 · Saved workflow presets | Not in Windows baseline | Additional: Presets exports selected code/vars/buffers/zones/points/shells/view; import/run and `{profile name}` expansion |
-| O77 · External editor bridge | State/command/circle-preview files for web editor integration | Absent: Wayland uses native IPC; Windows external file protocol is not implemented |
+| O77 · External editor bridge | Legacy state/command/circle-preview files | Retired: no Linux file bridge/helper. The standalone static preview is an ordinary HTTP client; browser local-network permission remains browser-owned |
 | O78 · Task management page | Registry conditions + stop helper | Additional: Tasks lists saved tasks and recent jobs with per-job Stop |
 | O79 · Shell shortcut/config changes | Windows assumptions | Present: native bindings re-read for compilation; per-environment T override and plugin shortcuts respected |
 | O80 · Build / reload | CMake native executable | Present: independent Rust client build + shell QML; kept-loaded service/client rebuild requires shell reload |
-| O81 · Tray right-click menu | Visibility, buffers, keys, circle, clicks, stop, view, hub, cursor, Exit | Partial: equivalent actions distributed across bar/panel pages; right-click is Stop only, not a duplicate tray menu |
-| O82 · Tray Exit | Quit overlay executable | Native replacement: disable Macrohelp plugin; never exit the shared Omarchy shell |
+| O81 · Tray right-click menu | Visibility, buffers, keys, circle, clicks, stop, view, hub, cursor, Exit | Present: native Menu exposes these operations; bar right-click remains Stop rather than a duplicate tray menu |
+| O82 · Tray Exit | Quit overlay executable | Present: Exit overlay invokes native plugin disable; never exits the shared Omarchy shell or stops the separately hosted daemon |
 
 </details>
 
 ## Remaining parity checklist
 
-- [ ] Registry Hub full Help and Clear/reset controls (O22–23).
-- [ ] Named cursor/key action-file output, Save + Click, mixed key/paste recorder,
-  categorized manual picker and ordered paste selection UI (O13, O18, O69–71).
-- [ ] Separate top-right coordinate panel and its hotkey (O07, O66).
-- [ ] Separate indefinite mouse hold/release controls with safe cancellation (O64).
-- [ ] Remaining shorthand/alias grammar and scaled vector expressions (O40, O44,
-  O47–48, O59–60).
-- [ ] Persistent E/I controls and Windows external-editor bridge, if retaining those
-  Windows integration surfaces on Linux (O34, O77).
+- [x] Registry Hub Help/Clear, ordered paste, named action-file output, mixed
+  recording/manual picker, coordinate panel/hotkey, shorthand/vector grammar and
+  persistent E/I controls (O07, O13, O18, O22–23, O34–35, O40, O44, O47–48, O59–72).
+- [x] Correct stale hold/release audit against actual Windows C++ (O64).
+- [x] Retire the file bridge; preserve ordinary browser HTTP access (H31, O77).
+- [ ] Optional pointer-move dismissal parity for quick HUDs (O73).
 - [ ] Live Omarchy build/render/input checks. Source/model tests do not validate
   compositor focus, device input, IME, installed shell commands or real authorization.
 

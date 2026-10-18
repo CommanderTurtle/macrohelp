@@ -51,7 +51,7 @@ test("drag-copy and zone errors",()=>{
 })
 test("circle math, zero angle and negative multi-monitor points",()=>{
   expect(W.circle([-100,20],100,0,"degrees")).toEqual([0,20])
-  expect(W.circle([0,0],100,Math.PI/2,"radians")).toEqual([0,100])
+  expect(W.circle([0,0],100,Math.PI/2,"radians")).toEqual([0,-100])
   expect(W.move([-200,400],50).cursormovsmap[0]).toEqual([0,50,-200,400])
 })
 test("malformed conditions and commands fail before input",()=>{

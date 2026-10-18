@@ -229,25 +229,30 @@ impl App {
         if stream.set_nonblocking(false).is_err() {
             return;
         }
+        let mut preflight = false;
+        let mut trace = ("other".to_string(), "unknown".to_string());
         let result = (|| -> Result<Value> {
             let (method, target, headers, mut bytes) = read_headers(&mut stream)?;
+            let (path, query) = split_target(&target)?;
+            if ["GET", "POST", "OPTIONS"].contains(&method.as_str()) {
+                trace.0 = method.clone();
+            }
+            if ROUTES.iter().any(|(_, p)| *p == path) {
+                trace.1 = path.clone();
+            }
+            if method == "OPTIONS" {
+                if !ROUTES.iter().any(|(_, p)| *p == path) {
+                    return Err(ApiError::new(404, "Not Found"));
+                }
+                preflight = true;
+                return Ok(Value::Null);
+            }
             let key = headers
                 .get("x-tasket-key")
                 .ok_or_else(|| ApiError::new(401, "Missing X-Tasket-Key header"))?;
             if !same_key(key.as_bytes(), self.runner.config.key.as_bytes()) {
                 return Err(ApiError::new(403, "Invalid API key"));
             }
-            if headers
-                .get("sec-fetch-site")
-                .is_some_and(|v| v == "cross-site")
-                || headers.contains_key("origin")
-            {
-                return Err(ApiError::new(
-                    403,
-                    "Browser-origin requests are not enabled",
-                ));
-            }
-            let (path, query) = split_target(&target)?;
             if headers.contains_key("transfer-encoding") {
                 return Err(ApiError::new(
                     400,
@@ -288,15 +293,27 @@ impl App {
             self.dispatch(&method, &path, &query, &body)
         })();
         let (status, body) = match result {
-            Ok(v) => (200, v),
+            Ok(v) => (if preflight { 204 } else { 200 }, v),
             Err(e) => (e.status, failure(&e)),
         };
-        let body = body.to_string();
+        let body = if preflight {
+            String::new()
+        } else {
+            body.to_string()
+        };
+        // Request hook: never log credentials, query values or macro contents.
+        eprintln!("[HTTP] {} {} {}", trace.0, trace.1, status);
         let _ = stream.set_write_timeout(Some(Duration::from_secs(3)));
         let _ = write!(
             stream,
-            "HTTP/1.1 {status} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n{body}",
-            if status == 200 { "OK" } else { "Error" },
+            "HTTP/1.1 {status} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: X-Tasket-Key, Content-Type\r\nAccess-Control-Allow-Private-Network: true\r\nConnection: close\r\n\r\n{body}",
+            if status == 204 {
+                "No Content"
+            } else if status == 200 {
+                "OK"
+            } else {
+                "Error"
+            },
             body.len()
         );
         // Send FIN before dropping a rejected upload; an unread body must not

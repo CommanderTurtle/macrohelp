@@ -13,7 +13,7 @@ function service(overrides={}) {
     save(){},hidePanel(){},showPanel(){},remember(){},change(){},refresh(){},
     emergency:{running:false},runtime:{running:true},...overrides}
   s.root=s
-  for(const name of ["play","cancelWork","stop","queue","runSaved","saveSchedule","refreshContext","readClipboard","finishClipboard","reconnect","panel"]) {
+  for(const name of ["play","cancelWork","stop","queue","runSaved","saveSchedule","refreshContext","readClipboard","finishClipboard","reconnect","panel","clearWorkflow","transferPath","importState","exportState","exportActions","exitOverlay"]) {
     const at=source.indexOf("  function "+name+"(")
     if(at<0)throw Error("Missing service function "+name)
     const tail=source.slice(at),end=tail.slice(1).search(/\n  (?:function |Timer |Process |Hud |ShellIpc )/)
@@ -107,4 +107,36 @@ test("stopped clients can reconnect without starting a server",()=>{
   const s=service();s.runtime.running=false;s.reconnect()
   expect(s.runtime.running).toBe(true)
   expect(source).toContain("root.cancelWork();persist.stop()")
+})
+
+test("imports block execution and stale responses cannot change a later environment",()=>{
+  let reply
+  const s=service({environment:{paths:{import:"/tmp/import.json"}}})
+  s.call=(request,callback)=>reply=callback
+  s.importState();expect(s.localBusy).toBe(true)
+  s.play("{click}");expect(s.error).toContain("Stop")
+  s.stop();s.environment={script:"new"};reply({script:"stale"},null)
+  expect(s.environment.script).toBe("new");expect(s.localBusy).toBe(false)
+  s.environment={paths:{import:"/tmp/import.json"}};s.importState();reply(null,"bad file")
+  expect(s.localBusy).toBe(false)
+})
+
+test("action export snapshots its flow, supports new append files, and respects Stop",()=>{
+  let choose,request
+  const s=service({Workflow:{copy:v=>JSON.parse(JSON.stringify(v))},chooseFile(save,callback){expect(save).toBe(true);choose=callback},call:r=>request=r})
+  const actions=[{type:"paste",content:"original"}]
+  s.exportActions("keys",actions,true);actions[0].content="changed";choose("/tmp/keys.json")
+  expect(request.method).toBe("export-actions");expect(request.append).toBe(true);expect(request.actions[0].content).toBe("original")
+  request=null;s.exportActions("keys",actions,false);s.stop();choose("/tmp/other.json");expect(request).toBeNull()
+})
+
+test("Exit disables only the overlay plugin, not the host shell or daemon",()=>{
+  const s=service({disablePlugin:{running:false},busy:true})
+  s.exitOverlay();expect(s.disablePlugin.running).toBe(true);expect(s.busy).toBe(false);expect(s.emergency.running).toBe(false)
+})
+
+test("Clear invalidates pending capture/file callbacks and never resets a running workflow",()=>{
+  const s=service({environment:{script:"original"},Workflow:{clearState(){return {script:""}}}})
+  s.clearWorkflow();expect(s.environment.script).toBe("");expect(s.generation).toBe(1)
+  s.busy=true;s.environment.script="running";s.clearWorkflow();expect(s.environment.script).toBe("running");expect(s.generation).toBe(1)
 })

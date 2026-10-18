@@ -74,14 +74,17 @@ Item {
   }
   function http(verb,path,body,callback){call({method:"http",verb:verb,path:path,body:body||{}},callback)}
   function remember(text){history=history.concat([text]).slice(-6)}
-  function change(section,key,value){var next=Workflow.copy(environment);if(section)next[section][key]=value;else next[key]=value;environment=next;persist.restart()}
+  function change(section,key,value){var next=Workflow.copy(environment);if(section){if(!next[section])next[section]={};next[section][key]=value}else next[key]=value;environment=next;persist.restart()}
   function save(){if(ready)call({method:"save-state",state:environment})}
   function refresh(){
     if(refreshing)return
     refreshing=true
     http("GET","/health",{},function(value,failure){root.connected=!failure;if(failure){root.refreshing=false;return}root.http("GET","/tasks",{},function(v,e){if(!e)root.tasks=v.tasks||[];root.http("GET","/status",{},function(v,e){root.refreshing=false;if(!e)root.status=v})})})
   }
-  function panel(name){if(["Workflow","Pointer","Keys","Buffers","Zones","Tasks","Presets","View"].indexOf(name)<0)return;page=name;activePanel=null;showPanel()}
+  function panel(name){if(["Workflow","Pointer","Keys","Buffers","Zones","Tasks","Presets","View","Help"].indexOf(name)<0)return;page=name;activePanel=null;showPanel()}
+  function clearWorkflow(){if(busy||localBusy||pending){error="Stop the current operation first";return}generation++;environment=Workflow.clearState(environment);resolvedScript="";save();message="Workflow cleared; paste buffers and zones retained"}
+  function vector(text){var v=Workflow.vector(text,circleOrigin);radius=v.radius;angle=v.angle;unit="radians"}
+  function exitOverlay(){cancelWork();hidePanel();if(!disablePlugin.running)disablePlugin.running=true}
   function cancelWork(){generation++;steps=[];stepIndex=0;currentJob=null;busy=false;localBusy=false;pending=null;hidden=false;recordingPath=false;clipboardCallback=null;startDelay.stop();poll.stop();clipboardTimeout.stop()}
   function stop(){cancelWork();if(!emergency.running)emergency.running=true;message="";remember("Stop requested")}
   function reconnect(){if(!runtime.running)runtime.running=true;else refresh()}
@@ -136,9 +139,26 @@ Item {
   function finishClipboard(value,failure){var callback=clipboardCallback;clipboardCallback=null;clipboardTimeout.stop();localBusy=false;if(callback)callback(value,failure)}
   function readClipboard(callback){if(localBusy){if(callback)callback(null,"Clipboard operation already active");return}localBusy=true;var token=generation,request=++clipboardSerial;page="Buffers";clipboardCallback=callback;showPanel();if(!activePanel){finishClipboard(null,"Open the Macrohelp bar panel to read the clipboard");return}clipboardTimeout.restart();clipboardRequested(function(v,e){if(token===root.generation&&request===root.clipboardSerial&&root.clipboardCallback)root.finishClipboard(v,e)})}
   function useZone(slot,method,target){play(target?"{zonebuf "+slot+","+method+","+target+"}":"{zone "+slot+","+method+"}")}
-  function chooseFile(save,callback){if(picker.running)return;pickerCallback=callback;picker.command=["zenity","--file-selection","--title=Macrohelp environment"].concat(save?["--save","--filename=macrohelp-environment.json"]:[]);picker.running=true}
-  function exportState(){chooseFile(true,function(path){root.call({method:"export",path:path,state:root.environment},function(v,e){if(!e)root.message="Exported"})})}
-  function importState(){if(busy||localBusy||pending){error="Stop the current operation first";return}var token=generation;chooseFile(false,function(path){if(token!==root.generation)return;root.call({method:"import",path:path},function(v,e){if(token!==root.generation)return;if(!e){root.environment=v;root.save();root.message="Imported"}})})}
+  function chooseFile(save,callback,filename){if(picker.running){error="File chooser already open";return}pickerCallback=callback;picker.command=["zenity","--file-selection","--title=Macrohelp"].concat(save?["--save"]:[]).concat(filename?["--filename="+filename]:[]);picker.running=true}
+  function transferPath(kind){var paths=environment.paths||{};return String(paths[kind]||"").trim()}
+  function browsePath(kind){var token=generation;chooseFile(kind==="export",function(path){if(token===root.generation)root.change("paths",kind,path)},transferPath(kind)|| (kind==="export"?"macrohelp-environment.json":""))}
+  function exportState(format){
+    var token=generation,snapshot=Workflow.copy(environment)
+    function run(path){if(token!==root.generation)return;root.change("paths","export",path);snapshot.paths=Workflow.copy(root.environment.paths);root.call({method:"export",path:path,state:snapshot,format:format||"json"},function(v,e){if(token!==root.generation)return;if(!e)root.message="Exported "+path})}
+    var path=transferPath("export");if(path)run(path);else chooseFile(true,run,format==="windows"?"macrohelp-environment.txt":"macrohelp-environment.json")
+  }
+  function importState(){
+    if(busy||localBusy||pending){error="Stop the current operation first";return}
+    var token=generation
+    function run(path){if(token!==root.generation)return;root.localBusy=true;root.call({method:"import",path:path},function(v,e){if(token!==root.generation)return;root.localBusy=false;if(!e){root.environment=v;root.change("paths","import",path);root.save();root.message="Imported"}})}
+    var path=transferPath("import");if(path)run(path);else chooseFile(false,run)
+  }
+  function exportActions(name,actions,append){
+    if(!actions.length){error="No actions to export";return}
+    var snapshot=Workflow.copy(actions),token=generation
+    var filename=String(name||"actions").replace(/[^a-zA-Z0-9 _.-]/g,"_").slice(0,100)+".json"
+    chooseFile(true,function(path){if(token!==root.generation)return;root.call({method:"export-actions",path:path,actions:snapshot,append:!!append},function(v,e){if(token!==root.generation)return;if(!e)root.message="Saved "+v.count+" actions · "+v.path})},filename)
+  }
   Timer {id:persist;interval:400;onTriggered:root.save()}
   Timer {
     interval:100;repeat:true;running:root.keysEnabled&&root.keyDisplay.entries.length>0
@@ -163,6 +183,7 @@ Item {
     id:emergency
     command:[root.helper,"stop"].concat(root.settings&&root.settings.envFile?["--env",String(root.settings.envFile)]:[])
   }
+  Process {id:disablePlugin;command:["omarchy","plugin","disable","io.github.commanderturtle.macrohelp"]}
   Process {
     id:runtime;command:root.helperCommand;stdinEnabled:true;running:true
     onStarted:root.call({method:"hello"},function(value,failure){if(failure)return;root.environment=value.state;root.monitors=value.monitors;root.endpoint=value.endpoint;root.ready=true;root.refresh();root.call({method:"heatmap",action:"snapshot"},function(v,e){if(!e)root.heatmapState=v;else root.heatmapError=e})})
@@ -204,15 +225,15 @@ Item {
     function stop():void{root.stop()}
     function page(name:string):void{root.panel(name)}
     function hotkey(number:string):void {
-      if(number==="0")root.pointer()
+      if(number==="0"){root.pointer();root.panel("Pointer")}
       else if(number==="1")root.panel("Buffers")
       else if(number==="2")root.panel("Workflow")
-      else if(number==="3")root.panel("Pointer")
+      else if(number==="3"){root.circleOrigin=[Math.round(root.cursor.x),Math.round(root.cursor.y)];root.panel("Pointer")}
       else if(number==="4")root.click("LEFT_MOUSE")
       else if(number==="5")root.click("RIGHT_MOUSE")
       else if(number==="6")root.click("MIDDLE_MOUSE")
       else if(number==="7")root.stop()
-      else if(number==="8")root.panel("View")
+      else if(number==="8"&&root.ready)root.change("view","panel",!root.environment.view.panel)
       else if(number==="9")root.panel("Keys")
     }
     function heatmap(request:string):string {
