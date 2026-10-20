@@ -590,6 +590,7 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let mut last = json!(null);
     let mut last_poll = Instant::now() - Duration::from_secs(1);
     let mut last_monitors = Instant::now() - Duration::from_secs(6);
+    let mut scale: f64 = 1.0;
     while !STOP.load(Ordering::Relaxed) {
         match receiver.recv_timeout(Duration::from_millis(if tracking { 16 } else { 100 })) {
             Ok(line) => {
@@ -658,12 +659,16 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
             Err(mpsc::RecvTimeoutError::Timeout) => (),
         }
-        if tracking && last_poll.elapsed() >= Duration::from_millis(33) {
+        if tracking && last_poll.elapsed() >= Duration::from_millis(8) {
             last_poll = Instant::now();
             if let Ok(cursor) = hypr("cursorpos")
                 && cursor != last
             {
-                println!("{}", json!({"event":"cursor","cursor":cursor}));
+                let physical = json!({
+                    "x": cursor["x"].as_f64().unwrap_or(0.0) * scale,
+                    "y": cursor["y"].as_f64().unwrap_or(0.0) * scale,
+                });
+                println!("{}", json!({"event":"cursor","cursor":cursor,"physical":physical}));
                 last = cursor;
             }
         }
@@ -726,6 +731,11 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
         if tracking && last_monitors.elapsed() >= Duration::from_secs(5) {
             last_monitors = Instant::now();
             if let Ok(monitors) = hypr("monitors") {
+                if let Some(first) = monitors.as_array().and_then(|a| a.first()) {
+                    if let Some(s) = first["scale"].as_f64() {
+                        scale = s;
+                    }
+                }
                 println!("{}", json!({"event":"monitors","monitors":monitors}));
             }
         }

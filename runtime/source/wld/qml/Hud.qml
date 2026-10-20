@@ -34,22 +34,21 @@ Item {
         anchors.fill:parent
         readonly property string labelFont:Style.font.caption+"px "+Style.font.family
         onLabelFontChanged:requestPaint()
-        function paint(){requestPaint()}
         Connections {
           target:root.service
-          function onCursorChanged(){drawing.paint()}
-          function onEnvironmentChanged(){drawing.paint()}
-          function onRadiusChanged(){drawing.paint()}
-          function onAngleChanged(){drawing.paint()}
-          function onUnitChanged(){drawing.paint()}
-          function onCircleOriginChanged(){drawing.paint()}
-          function onPageChanged(){drawing.paint()}
-          function onMonitorsChanged(){drawing.paint()}
+          function onCursorChanged(){drawing.requestPaint()}
+          function onEnvironmentChanged(){drawing.requestPaint()}
+          function onRadiusChanged(){drawing.requestPaint()}
+          function onAngleChanged(){drawing.requestPaint()}
+          function onUnitChanged(){drawing.requestPaint()}
+          function onCircleOriginChanged(){drawing.requestPaint()}
+          function onPageChanged(){drawing.requestPaint()}
+          function onMonitorsChanged(){drawing.requestPaint()}
         }
         Connections {
           target:Commons.Color
-          function onAccentChanged(){drawing.paint()}
-          function onForegroundChanged(){drawing.paint()}
+          function onAccentChanged(){drawing.requestPaint()}
+          function onForegroundChanged(){drawing.requestPaint()}
         }
         onWidthChanged:requestPaint()
         onHeightChanged:requestPaint()
@@ -68,16 +67,10 @@ Item {
         }
       }
       Rectangle {
-        visible:window.view.panel&&!window.view.coordinates_only
-        anchors.top:parent.top;anchors.right:parent.right;anchors.margins:Style.space(12)
-        width:fixedTag.implicitWidth+Style.spacing.controlPaddingX*2;height:fixedTag.implicitHeight+Style.spacing.controlPaddingY*2;radius:Style.cornerRadius;color:Commons.Color.background
-        Text {id:fixedTag;anchors.centerIn:parent;textFormat:Text.PlainText;text:Math.round(root.service.cursor.x)+", "+Math.round(root.service.cursor.y);color:Commons.Color.foreground;font.family:Style.font.family;font.pixelSize:Style.font.caption}
-      }
-      Rectangle {
         visible:window.view.coordinates&&window.containsPointer
         x:Math.min(Math.max(0,window.pointerX+Style.space(18)),Math.max(0,window.width-width));y:Math.min(Math.max(0,window.pointerY+Style.space(18)),Math.max(0,window.height-height))
         width:tag.implicitWidth+Style.spacing.controlPaddingX*2;height:tag.implicitHeight+Style.spacing.controlPaddingY*2;radius:Style.cornerRadius;color:Commons.Color.background
-        Text {id:tag;anchors.centerIn:parent;textFormat:Text.PlainText;text:Math.round(root.service.cursor.x)+", "+Math.round(root.service.cursor.y);color:Commons.Color.foreground;font.family:Style.font.family;font.pixelSize:Style.font.caption}
+        Text {id:tag;anchors.centerIn:parent;textFormat:Text.PlainText;text:Math.round(root.service.physicalCursor.x)+", "+Math.round(root.service.physicalCursor.y);color:Commons.Color.foreground;font.family:Style.font.family;font.pixelSize:Style.font.caption}
       }
       Rectangle {
         visible:root.service.keysEnabled&&root.service.keyRows.length>0&&window.containsPointer

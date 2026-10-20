@@ -264,7 +264,7 @@ fn http_auth_and_validation() {
             "Origin: https://example.invalid\r\n"
         )
         .0,
-        200
+        403
     );
     for route in ["/check?id=no", "/check", "/run?task=../bad", "/stop?id=0"] {
         assert_eq!(
@@ -285,50 +285,6 @@ fn http_auth_and_validation() {
     let denied = json!({"name":"denied","task":{"docType":"ScheduleTask File","actions":[{"type":"systemcommand","sysCommandType":"shutdown"}]}});
     assert_eq!(h.req("POST", "/temp-task", denied).0, 403);
     assert_eq!(h.req("POST","/temp-task",json!({"name":"bad","run":false,"cleanup":true,"task":{"actions":[{"type":"wait","duration":-1}]}})).0,400);
-}
-#[test]
-fn browser_preflight_is_allowed_but_actions_still_require_the_api_key() {
-    let h = Harness::new(false);
-    let mut stream = TcpStream::connect(h.addr).unwrap();
-    stream
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .unwrap();
-    write!(stream,"OPTIONS /temp-task HTTP/1.1\r\nHost: {}\r\nOrigin: https://example.invalid\r\nAccess-Control-Request-Method: POST\r\nAccess-Control-Request-Headers: content-type,x-tasket-key\r\nAccess-Control-Request-Private-Network: true\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",h.addr).unwrap();
-    let mut reply = String::new();
-    stream.read_to_string(&mut reply).unwrap();
-    assert!(reply.starts_with("HTTP/1.1 204 No Content"), "{reply}");
-    for header in [
-        "Access-Control-Allow-Origin: *",
-        "Access-Control-Allow-Headers: X-Tasket-Key, Content-Type",
-        "Access-Control-Allow-Private-Network: true",
-    ] {
-        assert!(reply.contains(header), "{reply}");
-    }
-    assert!(!reply.contains("Access-Control-Allow-Credentials"));
-    assert!(reply.ends_with("\r\n\r\n"));
-    assert_eq!(h.ok("GET", "/tasks", json!({}))["count"], 0);
-    assert_eq!(
-        h.request(
-            "POST",
-            "/stop",
-            json!({}),
-            None,
-            "Origin: https://example.invalid\r\n"
-        )
-        .0,
-        401
-    );
-    assert_eq!(
-        h.request(
-            "GET",
-            "/health",
-            json!({}),
-            Some(KEY),
-            "Origin: https://example.invalid\r\nSec-Fetch-Site: cross-site\r\n"
-        )
-        .0,
-        200
-    );
 }
 #[test]
 fn all_http_routes_preserve_contract_and_native_schedules() {

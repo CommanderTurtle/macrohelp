@@ -22,6 +22,7 @@ Item {
   property string endpoint: ""
   property var environment: ({})
   property var cursor: ({x:0,y:0})
+  property var physicalCursor: ({x:0,y:0})
   property var monitors: []
   property var tasks: []
   property var status: ({})
@@ -191,6 +192,7 @@ Item {
       var r;try{r=JSON.parse(line)}catch(e){root.error="Invalid controller response";return}
       if(r.event==="cursor"){
         root.cursor=r.cursor
+        if(r.physical)root.physicalCursor=r.physical
         if(root.recordingPath){if(root.path.length>=10000){root.recordingPath=false;root.error="Path limit reached"}else{var now=Date.now();root.path=root.path.concat([[0,Math.max(1,now-root.pathTime),Math.round(r.cursor.x),Math.round(r.cursor.y)]]);root.pathTime=now}}
         return
       }
@@ -218,33 +220,4 @@ Item {
     onExited:function(code){root.ready=false;root.connected=false;root.refreshing=false;root.cancelWork();persist.stop();var all=root.callbacks;root.callbacks=({});for(var id in all)all[id](null,"Controller stopped");if(code!==0)root.error="Controller exited ("+code+")"}
   }
   Hud {service:root}
-  ShellIpc {
-    target:"io.github.commanderturtle.macrohelp"
-    function point():void{root.pointer()}
-    function click(button:string):void{root.click(button)}
-    function stop():void{root.stop()}
-    function page(name:string):void{root.panel(name)}
-    function hotkey(number:string):void {
-      if(number==="0"){root.pointer();root.panel("Pointer")}
-      else if(number==="1")root.panel("Buffers")
-      else if(number==="2")root.panel("Workflow")
-      else if(number==="3"){root.circleOrigin=[Math.round(root.cursor.x),Math.round(root.cursor.y)];root.panel("Pointer")}
-      else if(number==="4")root.click("LEFT_MOUSE")
-      else if(number==="5")root.click("RIGHT_MOUSE")
-      else if(number==="6")root.click("MIDDLE_MOUSE")
-      else if(number==="7")root.stop()
-      else if(number==="8"&&root.ready)root.change("view","panel",!root.environment.view.panel)
-      else if(number==="9")root.panel("Keys")
-    }
-    function heatmap(request:string):string {
-      var value
-      try{value=JSON.parse(request)}catch(e){return JSON.stringify({error:"Invalid heatmap request"})}
-      if(!value.action||value.action==="snapshot")return JSON.stringify({state:root.heatmapState,error:root.heatmapError,available:root.keyFeedAvailable})
-      value.method="heatmap"
-      root.call(value,function(v,e){root.heatmapError=e||"";if(!e)root.heatmapState=v})
-      return JSON.stringify({pending:true})
-    }
-    function profiles():string {return JSON.stringify({names:Object.keys(root.profileLibrary.presets||{}),directory:root.profileLibrary.directory,error:root.profileError})}
-    function profile(name:string):void {if(!name||/[{}\x00-\x1f]/.test(name)){root.error="Invalid preset name";return}root.play("{profile "+name+"}")}
-  }
 }
