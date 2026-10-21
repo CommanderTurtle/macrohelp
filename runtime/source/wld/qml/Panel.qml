@@ -181,7 +181,7 @@ Ui.Panel {
           Loader {width:parent.width;active:!!root.app&&root.app.page==="Presets";sourceComponent:Component {Presets {width:parent.width;service:root.app}}}
           Column {
             width:parent.width;spacing:Style.space(8);visible:root.app&&root.app.page==="View"
-            Repeater {model:[{key:"crosshair",label:"Crosshair"},{key:"grid",label:"Grid"},{key:"coordinates",label:"Coordinates"},{key:"keys",label:"Key display"},{key:"coordinates_only",label:"Coordinates only"}];Ui.Toggle{required property var modelData;width:parent.width;label:modelData.label;checked:root.env.view?root.env.view[modelData.key]:false;onClicked:root.app.change("view",modelData.key,!checked)}}
+            Repeater {model:[{key:"crosshair",label:"Crosshair"},{key:"big_crosshair",label:"Bigger Crosshair"},{key:"grid",label:"Grid"},{key:"coordinates",label:"Coordinates"},{key:"keys",label:"Key display"},{key:"coordinates_only",label:"Coordinates only"}];Ui.Toggle{required property var modelData;width:parent.width;label:modelData.label;checked:root.env.view?root.env.view[modelData.key]:false;onClicked:root.app.change("view",modelData.key,!checked)}}
             Text {visible:root.app&&root.app.keysEnabled&&!root.app.keyFeedAvailable;text:"Native key events unavailable";color:Commons.Color.foreground;font.family:Style.font.family;font.pixelSize:Style.font.caption}
             Ui.Button{text:"Reconnect";onClicked:root.app.reconnect()}
           }

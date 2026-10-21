@@ -123,7 +123,7 @@ pub fn hypr(command: &str) -> Result<Value> {
     }
 }
 pub fn default_state() -> Value {
-    json!({"version":1,"script":"","registry":"","paths":{"import":"","export":""},"shells":{"X":"bash","C":"sh","G":"uv run python","P":"pwsh","T":""},"vars":{"A":"","S":"","D":"","F":""},"buffers":{"Z":"","X":"","C":"","V":""},"zones":{"Z":null,"X":null,"C":null,"V":null},"points":vec![Value::Null;16],"view":{"crosshair":true,"grid":false,"coordinates":true,"panel":true,"keys":true,"coordinates_only":false},"last_task":null})
+    json!({"version":1,"script":"","registry":"","paths":{"import":"","export":""},"shells":{"X":"bash","C":"sh","G":"uv run python","P":"pwsh","T":""},"vars":{"A":"","S":"","D":"","F":""},"buffers":{"Z":"","X":"","C":"","V":""},"zones":{"Z":null,"X":null,"C":null,"V":null},"points":vec![Value::Null;16],"view":{"crosshair":true,"big_crosshair":false,"grid":false,"coordinates":true,"panel":true,"keys":true,"coordinates_only":false},"last_task":null})
 }
 pub fn validate_state(value: &Value) -> Result<()> {
     if value["version"] != 1
@@ -136,6 +136,7 @@ pub fn validate_state(value: &Value) -> Result<()> {
     }
     for key in [
         "crosshair",
+        "big_crosshair",
         "grid",
         "coordinates",
         "keys",
@@ -266,6 +267,16 @@ fn read_state(path: &Path) -> Result<Value> {
     } else {
         import_legacy(&text)?
     };
+    let missing: Vec<(String, Value)> = default_state()["view"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .filter(|(k, _)| state["view"].get(k).is_none())
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    for (key, value) in missing {
+        state["view"][key] = value;
+    }
     validate_state(&state)?;
     for key in ["P", "T"] {
         if state["shells"].get(key).is_none() {

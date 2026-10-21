@@ -57,7 +57,7 @@ Item {
           if(!g)return
           c.lineWidth=1;c.strokeStyle=Qt.rgba(Commons.Color.accent.r,Commons.Color.accent.g,Commons.Color.accent.b,0.5)
           if(v.grid&&!v.coordinates_only){c.beginPath();for(var x=50;x<width;x+=50){c.moveTo(x,0);c.lineTo(x,height)}for(var y=50;y<height;y+=50){c.moveTo(0,y);c.lineTo(width,y)}c.stroke()}
-          if(v.crosshair&&!v.coordinates_only&&window.containsPointer){c.beginPath();c.moveTo(window.pointerX-14,window.pointerY);c.lineTo(window.pointerX+14,window.pointerY);c.moveTo(window.pointerX,window.pointerY-14);c.lineTo(window.pointerX,window.pointerY+14);c.stroke()}
+          if(v.crosshair&&!v.coordinates_only&&window.containsPointer){c.beginPath();if(v.big_crosshair){c.moveTo(0,window.pointerY);c.lineTo(width,window.pointerY);c.moveTo(window.pointerX,0);c.lineTo(window.pointerX,height)}else{c.moveTo(window.pointerX-14,window.pointerY);c.lineTo(window.pointerX+14,window.pointerY);c.moveTo(window.pointerX,window.pointerY-14);c.lineTo(window.pointerX,window.pointerY+14)}c.stroke()}
           if(!v.coordinates_only){
             var points=root.service.environment.points||[];c.fillStyle=Commons.Color.accent;c.font=labelFont
             points.forEach(function(pt,i){if(pt){var px=pt[0]-g.x,py=pt[1]-g.y;c.beginPath();c.arc(px,py,4,0,Math.PI*2);c.stroke();c.fillText(String(i+1),px+7,py-5)}})
