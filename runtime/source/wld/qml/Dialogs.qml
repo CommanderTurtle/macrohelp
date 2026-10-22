@@ -13,8 +13,14 @@ Item {
     property string dialogKind: ""
     property real anchorX: 0
     property real anchorY: 0
+    property int lastCloseTime: 0
 
+    property int openCount: 0
     function openDialog(kind) {
+        if (dialogOpen) return
+        if (Date.now() - lastCloseTime < 5000) return
+        openCount++
+        console.log("[macrohelp] openDialog #" + openCount + " kind=" + kind + " cursor=" + (service ? service.cursor.x + "," + service.cursor.y : "null"))
         dialogKind = kind
         dialogOpen = true
         if (service) {
@@ -24,9 +30,12 @@ Item {
     }
 
     function closeDialog() {
+        console.log("[macrohelp] closeDialog (was open=" + dialogOpen + ")")
+        lastCloseTime = Date.now()
         dialogOpen = false
         dialogKind = ""
     }
+
 
     // Layer shell overlay window (same pattern as Hud.qml)
     Variants {
@@ -43,21 +52,40 @@ Item {
             WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
             mask: Region {}
             visible: dlgRoot.dialogOpen && dlgRoot.service !== null
+            onVisibleChanged: console.log("[macrohelp] window visible=" + visible + " dialogOpen=" + dlgRoot.dialogOpen)
 
             // Mouse-leave-to-close: 700ms grace, 3px tolerance, 50ms poll
             Timer {
                 id: leaveTimer
-                interval: 50
-                running: dlgRoot.dialogOpen
                 repeat: true
-                onRunningChanged: { if(running) graceEnd = Date.now() + 700 }
+                running: dlgRoot.dialogOpen
+                property int graceEnd: 0
+                property int tickCount: 0
+                onRunningChanged: {
+                    tickCount = 0
+                    if (running) {
+                        graceEnd = Date.now() + 700
+                        console.log("[macrohelp] timer START")
+                    } else {
+                        console.log("[macrohelp] timer STOP (ticks=" + tickCount + ")")
+                    }
+                }
                 onTriggered: {
+                    tickCount++
+                    if (tickCount % 20 === 0) {
+                        var cx = dlgRoot.service ? dlgRoot.service.cursor.x : -1
+                        var cy = dlgRoot.service ? dlgRoot.service.cursor.y : -1
+                        console.log("[macrohelp] tick#" + tickCount + " cur=" + cx + "," + cy + " anch=" + dlgRoot.anchorX + "," + dlgRoot.anchorY)
+                    }
                     if (!dlgRoot.dialogOpen) return
                     if (Date.now() < graceEnd) return
                     if (!dlgRoot.service) return
                     var dx = Math.abs(dlgRoot.service.cursor.x - dlgRoot.anchorX)
                     var dy = Math.abs(dlgRoot.service.cursor.y - dlgRoot.anchorY)
-                    if (dx > 3 || dy > 3) dlgRoot.closeDialog()
+                    if (dx > 3 || dy > 3) {
+                        console.log("[macrohelp] MOUSE-LEAVE dx=" + dx + " dy=" + dy)
+                        dlgRoot.closeDialog()
+                    }
                 }
             }
 
@@ -70,10 +98,10 @@ Item {
             // Dialog box - bottom center
             Rectangle {
                 id: dialogBox
-                width: Style.space(300)
+                width: Style.space(380)
                 height: col.implicitHeight + Style.space(24)
                 x: (window.width - width) / 2
-                y: window.height - height - Style.space(60)
+                y: window.height - height - 30
                 radius: Style.cornerRadius
                 color: Commons.Color.background
                 opacity: 0.93
