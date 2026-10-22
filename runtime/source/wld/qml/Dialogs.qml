@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls as QQC
 import Quickshell
+import Quickshell.Wayland
 import qs.Commons
 import qs.Commons as Commons
 import qs.Ui as Ui
@@ -12,85 +13,109 @@ Item {
     property string dialogKind: ""
     property real anchorX: 0
     property real anchorY: 0
-    readonly property real cursorDist: (service ? Math.sqrt(Math.pow(service.cursor.x - anchorX, 2) + Math.pow(service.cursor.y - anchorY, 2)) : 0)
-    onCursorDistChanged: { if(dialogOpen && cursorDist > 10) closeDialog() }
 
     function openDialog(kind) {
         dialogKind = kind
         dialogOpen = true
-        if(service){anchorX=service.cursor.x;anchorY=service.cursor.y}
+        if (service) {
+            anchorX = service.cursor.x
+            anchorY = service.cursor.y
+        }
     }
 
     function closeDialog() {
         dialogOpen = false
         dialogKind = ""
     }
- 
-    // Save Cursor dialog - bottom center
-    Rectangle {
-        id: saveBox
-        visible: dlgRoot.dialogOpen && dlgRoot.dialogKind === "save_cursor"
-        width: Style.space(300)
-        height: saveCol.implicitHeight + Style.space(24)
-        x: ((dlgRoot.parent ? dlgRoot.parent.width : 0) - width) / 2
-        y: (dlgRoot.parent ? dlgRoot.parent.height : 0) - height - Style.space(60)
-        radius: Style.cornerRadius
-        color: Commons.Color.background
-        opacity: 0.95
 
-        Column {
-            id: saveCol
-            anchors.horizontalCenter: parent.horizontalCenter
-            y: Style.space(12)
-            spacing: Style.space(8)
-            width: parent.width - Style.space(24)
+    // Layer shell overlay window (same pattern as Hud.qml)
+    Variants {
+        model: Quickshell.screens
+        PanelWindow {
+            id: window
+            required property var modelData
+            screen: modelData
+            color: "transparent"
+            anchors { top: true; bottom: true; left: true; right: true }
+            exclusionMode: ExclusionMode.Ignore
+            WlrLayershell.namespace: "macrohelp-dialog"
+            WlrLayershell.layer: WlrLayer.Overlay
+            WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
+            mask: Region {}
+            visible: dlgRoot.dialogOpen && dlgRoot.service !== null
 
-            Text {
-                anchors.horizontalCenter: parent.horizontalCenter
-                text: "X: " + (dlgRoot.service ? Math.round(dlgRoot.service.cursor.x) : 0)
-                      + "  Y: " + (dlgRoot.service ? Math.round(dlgRoot.service.cursor.y) : 0)
-                color: Commons.Color.foreground
-                font.family: Style.font.family
-                font.pixelSize: Style.font.body
-            }
-
-            Text {
-                anchors.horizontalCenter: parent.horizontalCenter
-                text: "Point slot (1-16)"
-                color: Commons.Color.foreground
-                font.family: Style.font.family
-                font.pixelSize: Style.font.caption
-                opacity: 0.6
-            }
-
-            QQC.SpinBox {
-                id: slotBox
-                anchors.horizontalCenter: parent.horizontalCenter
-                width: Style.space(120)
-                from: 1
-                to: 16
-                value: dlgRoot.service ? dlgRoot.service.pointIndex + 1 : 1
-                editable: true
-            }
-
-            Row {
-                anchors.horizontalCenter: parent.horizontalCenter
-                spacing: Style.space(6)
-
-                Ui.Button {
-                    text: "Save"
-                    onClicked: {
-                        if (dlgRoot.service) {
-                            dlgRoot.service.pointIndex = slotBox.value - 1
-                            dlgRoot.service.pointer()
-                        }
-                        dlgRoot.closeDialog()
-                    }
+            // Mouse-leave-to-close: 700ms grace, 3px tolerance, 50ms poll
+            Timer {
+                id: leaveTimer
+                interval: 50
+                running: dlgRoot.dialogOpen
+                repeat: true
+                onRunningChanged: { if(running) graceEnd = Date.now() + 700 }
+                onTriggered: {
+                    if (!dlgRoot.dialogOpen) return
+                    if (Date.now() < graceEnd) return
+                    if (!dlgRoot.service) return
+                    var dx = Math.abs(dlgRoot.service.cursor.x - dlgRoot.anchorX)
+                    var dy = Math.abs(dlgRoot.service.cursor.y - dlgRoot.anchorY)
+                    if (dx > 3 || dy > 3) dlgRoot.closeDialog()
                 }
+            }
 
-                Ui.Button {
-                    text: "Cancel"
-                    onClicked: dlgRoot.closeDialog()
+            // Escape to close
+            Shortcut {
+                sequence: StandardKey.Cancel
+                onActivated: dlgRoot.closeDialog()
+            }
+
+            // Dialog box - bottom center
+            Rectangle {
+                id: dialogBox
+                width: Style.space(300)
+                height: col.implicitHeight + Style.space(24)
+                x: (window.width - width) / 2
+                y: window.height - height - Style.space(60)
+                radius: Style.cornerRadius
+                color: Commons.Color.background
+                opacity: 0.93
+
+                Column {
+                    id: col
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    y: Style.space(12)
+                    spacing: Style.space(8)
+                    width: parent.width - Style.space(24)
+
+                    Text {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        text: dlgRoot.dialogKind
+                        color: Commons.Color.foreground
+                        font.family: Style.font.family
+                        font.pixelSize: Style.font.body
+                        font.bold: true
+                    }
+
+                    Text {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        text: "X: " + (dlgRoot.service ? Math.round(dlgRoot.service.cursor.x) : 0)
+                              + "  Y: " + (dlgRoot.service ? Math.round(dlgRoot.service.cursor.y) : 0)
+                        color: Commons.Color.foreground
+                        font.family: Style.font.family
+                        font.pixelSize: Style.font.caption
+                        opacity: 0.6
+                    }
+
+                    Row {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        spacing: Style.space(6)
+                        Ui.Button {
+                            text: "OK"
+                            onClicked: dlgRoot.closeDialog()
+                        }
+                        Ui.Button {
+                            text: "Cancel"
+                            onClicked: dlgRoot.closeDialog()
+                        }
+                    }
                 }
             }
         }
