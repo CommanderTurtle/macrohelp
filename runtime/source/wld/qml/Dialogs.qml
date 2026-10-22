@@ -82,7 +82,7 @@ Item {
                     if (!dlgRoot.service) return
                     var dx = Math.abs(dlgRoot.service.cursor.x - dlgRoot.anchorX)
                     var dy = Math.abs(dlgRoot.service.cursor.y - dlgRoot.anchorY)
-                    if (dx > 3 || dy > 3) {
+                    if (dx > 60 || dy > 60) {
                         console.log("[macrohelp] MOUSE-LEAVE dx=" + dx + " dy=" + dy)
                         dlgRoot.closeDialog()
                     }
@@ -101,7 +101,7 @@ Item {
                 width: Style.space(380)
                 height: col.implicitHeight + Style.space(24)
                 x: (window.width - width) / 2
-                y: window.height - height - 30
+                y: window.height - height - 14
                 radius: Style.cornerRadius
                 color: Commons.Color.background
                 opacity: 0.93
