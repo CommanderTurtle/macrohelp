@@ -3,11 +3,18 @@ function containsPoint(point,origin,width,height) { return !!point&&!!origin&&po
 function numeric(v,min,max,label) { var n=Number(v);if(!isFinite(n)||n<min||n>max)throw Error(label+" must be "+min+"…"+max);return n }
 function wait(ms) { return {type:"wait",duration:numeric(ms,0,86400000,"Wait")/1000} }
 function paste(text) { return {type:"paste",content:String(text),contentId:"",loop:1} }
+function keyName(raw) {
+  var text=String(raw).trim(),k=text.toLowerCase().replace(/[_\s-]/g,"")
+  var groups={CONTROL_LEFT:"ctrl control leftctrl ctrlleft leftcontrol controlleft lctrl lcontrol",CONTROL_RIGHT:"rightctrl ctrlright rightcontrol controlright rctrl rcontrol",SHIFT_LEFT:"shift leftshift shiftleft lshift",SHIFT_RIGHT:"rightshift shiftright rshift",ALT_LEFT:"alt leftalt altleft lalt",ALT_GR:"rightalt altright altgr ralt",WINDOWS:"win windows leftwin rightwin lwin super meta",LEFT_ARROW:"left leftarrow arrowleft",RIGHT_ARROW:"right rightarrow arrowright",UP_ARROW:"up uparrow arrowup",DOWN_ARROW:"down downarrow arrowdown",SPACE:"space spacebar",ENTER:"return enter",ESCAPE:"escape esc",BACKSPACE:"backspace bksp",DELETE:"delete del",INSERT:"insert ins",PAGE_UP:"pageup pgup",PAGE_DOWN:"pagedown pgdn",PRINT_SCREEN:"print printscreen",LEFT_MOUSE:"leftmouse mouseleft lmouse leftclick",RIGHT_MOUSE:"rightmouse mouseright rmouse rightclick",MIDDLE_MOUSE:"middlemouse mousemiddle mmouse middleclick",MOUSE_WHEEL_UP:"mousewheelup wheelup scrollup",MOUSE_WHEEL_DOWN:"mousewheeldown wheeldown scrolldown"}
+  for(var name in groups)if(groups[name].split(" ").indexOf(k)>=0)return name
+  if(["tab","home","end"].indexOf(k)>=0)return k.toUpperCase()
+  if(/^[a-z0-9]$/i.test(text)||/^f\d{1,2}$/i.test(text))return text.toUpperCase()
+  return text
+}
 function keys(text,hold) {
-  var aliases={CTRL:"CONTROL_LEFT",CONTROL:"CONTROL_LEFT",SHIFT:"SHIFT_LEFT",ALT:"ALT_LEFT",ESC:"ESCAPE",RETURN:"ENTER",WIN:"WINDOWS",LWIN:"WINDOWS",SUPER:"WINDOWS",PRINT:"PRINT_SCREEN",PRINTSCREEN:"PRINT_SCREEN",SPACEBAR:"SPACE",LEFT:"LEFT_ARROW",RIGHT:"RIGHT_ARROW",UP:"UP_ARROW",DOWN:"DOWN_ARROW",LEFTCLICK:"LEFT_MOUSE",RIGHTCLICK:"RIGHT_MOUSE",MIDDLECLICK:"MIDDLE_MOUSE"}
-  var list=String(text).toUpperCase().split(/[+\s]+/).filter(Boolean).map(function(k){return aliases[k]||k})
+  var list=(Array.isArray(text)?text:String(text)==="+"?["plus"]:String(text).split(/[+\s]+/)).filter(Boolean).map(keyName)
   if(!list.length)throw Error("Enter a key or chord")
-  return {type:"keyssequence",keysmap:{"0":[Number(hold)||40,list]},keysSeqId:"",loop:1}
+  return {type:"keyssequence",keysmap:{"0":[numeric(hold===undefined?40:hold,1,600000,"Hold"),list]},keysSeqId:"",loop:1}
 }
 function move(point,ms) { if(!point||point.length!==2)throw Error("Save a point first");return {type:"cursormovements",cursormovsmap:[[0,Number(ms)||0,Math.round(point[0]),Math.round(point[1])]],cursorMovsId:"",optionalkeysstroke:[],loop:1} }
 function drag(rect) {
@@ -52,6 +59,29 @@ function circle(origin,radius,angle,unit) {
   var rad=unit==="radians"?angle:angle*Math.PI/180
   return [Math.round(origin[0]+radius*Math.cos(rad)),Math.round(origin[1]+radius*Math.sin(rad))]
 }
+function expression(text) {
+  var source=String(text).toLowerCase().replace(/\s/g,""),at=0,depth=0
+  if(source.length>512)throw Error("Expression too long")
+  function atom(){if(++depth>32)throw Error("Expression too deep");var v,c=source[at];if(c==="+"||c==="-"){at++;v=(c==="-"?-1:1)*atom()}else if(c==="("){at++;v=sum();if(source[at++]!==")")throw Error("Missing closing parenthesis")}else if(source.slice(at,at+2)==="pi"){at+=2;v=Math.PI}else{var m=source.slice(at).match(/^(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?/);if(!m)throw Error("Number expected");at+=m[0].length;v=Number(m[0])}depth--;return v}
+  function product(){var v=atom();while(at<source.length){var c=source[at];if(c==="*"||c==="/"){at++;var n=atom();v=c==="*"?v*n:v/n}else if(c==="("||c==="p")v*=atom();else break}return v}
+  function sum(){var v=product();while(source[at]==="+"||source[at]==="-"){var c=source[at++],n=product();v=c==="+"?v+n:v-n}return v}
+  var v=sum();if(at!==source.length||!isFinite(v))throw Error("Invalid numeric expression");return v
+}
+function vector(text,origin) {
+  var parts=String(text).toLowerCase().replace(/\s/g,"").split("@"),v=parts.pop(),dx=0,dy=0
+  if(parts.length>1)throw Error("Use radius @ i+j")
+  if(v.indexOf(",")>=0){var xy=v.split(",");if(xy.length!==2)throw Error("Use x,y or i+j");dx=expression(xy[0]);dy=-expression(xy[1])}
+  else {var rx=/([+-]?)(\d+(?:\.\d*)?|\.\d+)?([ij])/g,m,at=0;while((m=rx.exec(v))){if(m.index!==at)throw Error("Invalid vector");var n=(m[1]==="-"?-1:1)*Number(m[2]||1);if(m[3]==="i")dx+=n;else dy+=n;at=rx.lastIndex}if(!at||at!==v.length)throw Error("Use i+j vector terms")}
+  var length=Math.hypot(dx,dy)
+  if(!length||!isFinite(length))throw Error("Direction must be finite and nonzero")
+  var radius=numeric(parts.length?expression(parts[0]):length,0.000001,100000,"Radius")
+  dx=dx/length*radius;dy=dy/length*radius
+  return {radius:radius,angle:Math.atan2(dy,dx),target:[Math.round(origin[0]+dx),Math.round(origin[1]-dy)]}
+}
+function pointValue(text,state){var raw=String(text).trim().replace(/^\$/,""),p=/^(?:point|pt)?\s*(\d+)$/i.exec(raw);if(p){var saved=state.points[numeric(p[1],1,16,"Point")-1];if(!saved)throw Error("Save point first");return copy(saved)}var a=raw.split(/[,\s]+/).filter(Boolean);if(a.length!==2)throw Error("Use x,y or a point number");return a.map(function(n){return Math.round(numeric(n,-100000,100000,"Coordinate"))})}
+function zoneValue(text,state){var raw=String(text).trim(),slot=raw.toUpperCase().replace(/^ZONE[\s_-]*/,"");if(/^[ZXCV]$/.test(slot)){if(!state.zones[slot])throw Error("Save zone first");return copy(state.zones[slot])}var a=raw.split(/[,\s]+/).filter(Boolean);if(a.length===2)return pointValue(a[0],state).concat(pointValue(a[1],state));if(a.length!==4)throw Error("Use rectangle, two point numbers or zone slot");return a.map(function(n){return Math.round(numeric(n,-100000,100000,"Coordinate"))})}
+function clearState(original){var state=copy(original);state.script="";state.registry="";state.shells={X:"",C:"sh",G:"",P:"pwsh",T:""};state.vars={A:"",S:"",D:"",F:""};state.points=Array(16).fill(null);state.paths={import:"",export:""};return state}
+function pasteSequence(slots,state){if(!slots.length||slots.length>1000)throw Error("Choose 1–1000 buffers");slots.forEach(function(k){if(!/^[ZXCV]$/.test(k))throw Error("Unknown buffer")});slots.forEach(function(k){if(!state.buffers[k])throw Error("Buffer "+k+" is empty")});var chosen=slots;var actions=[wait(100),keys("LEFT_MOUSE"),wait(80)];chosen.forEach(function(k,i){if(i)actions.push(wait(80));actions.push(paste(state.buffers[k]))});actions.push(wait(100));return actions}
 function reference(s,state) {
   var k=String(s).replace(/^\$/,""),n=Number(k)
   if(Object.prototype.hasOwnProperty.call(state.vars,k))return state.vars[k]

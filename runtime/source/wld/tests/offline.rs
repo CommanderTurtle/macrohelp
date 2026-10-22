@@ -180,12 +180,20 @@ fn slow_http_does_not_block_the_local_overlay() {
         }
     });
     // The held HTTP response cannot be released until local hello is answered.
-    let first: Value =
-        serde_json::from_str(&receive.recv_timeout(Duration::from_secs(2)).unwrap()).unwrap();
+    let response = || -> Value {
+        loop {
+            let value: Value =
+                serde_json::from_str(&receive.recv_timeout(Duration::from_secs(2)).unwrap())
+                    .unwrap();
+            if value.get("id").is_some() {
+                return value;
+            }
+        }
+    };
+    let first = response();
     assert_eq!(first["id"], 2);
     release.send(()).unwrap();
-    let second: Value =
-        serde_json::from_str(&receive.recv_timeout(Duration::from_secs(2)).unwrap()).unwrap();
+    let second = response();
     assert_eq!(second["id"], 1);
     assert_eq!(second["ok"], true);
     drop(input);

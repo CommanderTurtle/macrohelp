@@ -44,6 +44,7 @@ Item {
           function onCircleOriginChanged(){drawing.requestPaint()}
           function onPageChanged(){drawing.requestPaint()}
           function onMonitorsChanged(){drawing.requestPaint()}
+          function onQuickCircleChanged(){drawing.requestPaint()}
         }
         Connections {
           target:Commons.Color
@@ -61,7 +62,12 @@ Item {
           if(!v.coordinates_only){
             var points=root.service.environment.points||[];c.fillStyle=Commons.Color.accent;c.font=labelFont
             points.forEach(function(pt,i){if(pt){var px=pt[0]-g.x,py=pt[1]-g.y;c.beginPath();c.arc(px,py,4,0,Math.PI*2);c.stroke();c.fillText(String(i+1),px+7,py-5)}})
-            if(root.service.page==="Pointer"){var origin=root.service.circleOrigin,target=root.service.circleTarget;c.beginPath();c.arc(origin[0]-g.x,origin[1]-g.y,root.service.radius,0,Math.PI*2);c.moveTo(origin[0]-g.x,origin[1]-g.y);c.lineTo(target[0]-g.x,target[1]-g.y);c.stroke()}
+            var quick=root.service.quickCircle
+            if(quick||root.service.page==="Pointer"){
+              var origin=quick?quick.origin:root.service.circleOrigin,target=quick?(quick.target||quick.origin):root.service.circleTarget,radius=quick?quick.radius:root.service.radius
+              c.beginPath();c.arc(origin[0]-g.x,origin[1]-g.y,radius,0,Math.PI*2);c.moveTo(origin[0]-g.x,origin[1]-g.y);c.lineTo(target[0]-g.x,target[1]-g.y);c.stroke()
+              if(quick&&quick.zoneStart){var corner=quick.zoneStart,end=quick.target||quick.origin;c.strokeRect(corner[0]-g.x,corner[1]-g.y,end[0]-corner[0],end[1]-corner[1])}
+            }
             Object.keys(root.service.environment.zones||{}).forEach(function(k){var r=root.service.environment.zones[k];if(r){c.strokeRect(r[0]-g.x,r[1]-g.y,r[2]-r[0],r[3]-r[1]);c.fillText(k,r[0]-g.x+4,r[1]-g.y+14)}})
           }
         }

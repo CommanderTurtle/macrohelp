@@ -8,10 +8,10 @@ function service(overrides={}) {
   const timer=()=>({running:false,restart(){this.running=true},stop(){this.running=false}})
   const s={generation:0,busy:false,localBusy:false,pending:null,steps:[],stepIndex:0,
     hidden:false,currentJob:null,recordingPath:false,error:"",message:"",environment:{},
-    clipboardCallback:null,clipboardSerial:0,activePanel:{},page:"Workflow",settings:{},
+    clipboardCallback:null,clipboardSerial:0,activePanel:{opened:true},page:"Workflow",settings:{},
     startDelay:timer(),poll:timer(),clipboardTimeout:timer(),persist:timer(),
     save(){},hidePanel(){},showPanel(){},remember(){},change(){},refresh(){},
-    emergency:{running:false},runtime:{running:true},...overrides}
+    emergency:{running:false},runtime:{running:true},dialogs:{closeDialog(){}},...overrides}
   s.root=s
   for(const name of ["play","cancelWork","stop","queue","runSaved","saveSchedule","refreshContext","readClipboard","finishClipboard","reconnect","panel"]) {
     const at=source.indexOf("  function "+name+"(")
@@ -86,7 +86,7 @@ test("clipboard is read once and a late timed-out read cannot complete a newer o
   const replies=[],seen=[]
   const s=service({clipboardRequested:callback=>replies.push(callback)})
   s.readClipboard((value,error)=>seen.push([value,error]))
-  expect(s.page).toBe("Buffers");expect(s.localBusy).toBe(true)
+  expect(s.page).toBe("Workflow");expect(s.localBusy).toBe(true)
   s.finishClipboard(null,"timeout")
   s.readClipboard((value,error)=>seen.push([value,error]))
   replies[0]({text:"old"},null)
@@ -96,11 +96,13 @@ test("clipboard is read once and a late timed-out read cannot complete a newer o
   expect(s.localBusy).toBe(false);expect(s.clipboardTimeout.running).toBe(false)
 })
 
-test("no widget can read the clipboard without an available native panel",()=>{
-  let result
-  const s=service({activePanel:null})
-  s.readClipboard((value,error)=>result=error)
-  expect(result).toContain("bar panel");expect(s.localBusy).toBe(false)
+test("quick dialog owns clipboard focus when the tray panel is closed",()=>{
+  let result,read
+  const s=service({activePanel:{opened:false},dialogs:{readClipboard(callback){read=callback}}})
+  s.readClipboard((value,error)=>result={value,error})
+  expect(s.localBusy).toBe(true);expect(result).toBeUndefined()
+  read({text:"captured text"},null)
+  expect(result.value.text).toBe("captured text");expect(s.localBusy).toBe(false)
 })
 
 test("stopped clients can reconnect without starting a server",()=>{

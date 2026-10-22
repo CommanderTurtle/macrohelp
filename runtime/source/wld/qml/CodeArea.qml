@@ -10,6 +10,10 @@ QQC.ScrollView {
   property alias input: editor
   property alias readOnly: editor.readOnly
   property string hint: ""
+  property bool submitOnReturn: false
+  property bool captureKeys: false
+  signal accepted()
+  signal cancelled()
   signal edited(string value)
   function pasteClipboard(callback) {
     editor.forceActiveFocus()
@@ -44,5 +48,12 @@ QQC.ScrollView {
     readonly property var fieldBorder:Border.controlSpec(activeFocus?"focus":hovered?"hover-cursor":"normal",Commons.Color.foreground,Commons.Color.accent)
     background:Ui.BorderSurface{color:Style.controlFill(editor.activeFocus,editor.hovered,Commons.Color.foreground,Commons.Color.accent);borderSpec:editor.fieldBorder;radius:Style.cornerRadius}
     onTextChanged:if(activeFocus)root.edited(text)
+    Keys.priority: Keys.BeforeItem
+    Keys.onPressed:function(event){
+      if(root.captureKeys){event.accepted=true;return}
+      if(!root.submitOnReturn)return
+      if(event.key===Qt.Key_Escape){event.accepted=true;root.cancelled()}
+      else if((event.key===Qt.Key_Return||event.key===Qt.Key_Enter)&&!(event.modifiers&Qt.ShiftModifier)){event.accepted=true;root.accepted()}
+    }
   }
 }

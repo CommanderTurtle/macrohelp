@@ -16,6 +16,46 @@ use std::{
 };
 const LIMIT: u64 = 16 * 1024 * 1024;
 static STOP: AtomicBool = AtomicBool::new(false);
+#[derive(Default)]
+struct DialogKeys {
+    held: std::collections::BTreeSet<u64>,
+}
+impl DialogKeys {
+    fn accept(&mut self, sample: &Value) -> Vec<u8> {
+        if sample["locked"] == true || sample["available"] != true {
+            self.held.clear();
+            return vec![];
+        }
+        let mut digits = vec![];
+        if let Some(events) = sample["events"].as_array() {
+            for event in events {
+                let Some(code) = event[0].as_u64() else {
+                    continue;
+                };
+                if event[1] == 1 {
+                    let fresh = self.held.insert(code);
+                    // Evdev 2..10 = 1..9, 11 = 0; right Alt is 100, not Down (108).
+                    if fresh
+                        && (2..=11).contains(&code)
+                        && (self.held.contains(&56) || self.held.contains(&100))
+                    {
+                        digits.push(if code == 11 { 0 } else { code as u8 - 1 });
+                    }
+                } else {
+                    self.held.remove(&code);
+                }
+            }
+        }
+        // Reconcile a bounded-buffer overrun without replaying held shortcuts.
+        self.held = sample["held"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_u64)
+            .collect();
+        digits
+    }
+}
 #[cfg(unix)]
 extern "C" fn interrupted(_: i32) {
     STOP.store(true, Ordering::Relaxed);
@@ -475,6 +515,7 @@ fn handle(config: &Config, r: &Value) -> Result<Value> {
             Ok(json!(true))
         }
         "export-actions" => crate::artifacts::actions(r),
+        "append-actions" => crate::artifacts::append_session(r),
         "import" => read_state(Path::new(string(r, "path")?)),
         "bindings" => Ok(hypr("binds").unwrap_or(json!([]))),
         "profile-list" => crate::profiles::list(&config.state_dir.join("profiles")),
@@ -587,7 +628,7 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
     });
     let mut tracking = true;
     let mut keys = false;
-    let mut last_dialog = String::new();
+    let mut dialog_keys = DialogKeys::default();
     let heatmap_path = config.state_dir.join("heatmap.json");
     let (mut book, heatmap_load_error) = match heatmap::load(&heatmap_path) {
         Ok(value) => (value, None),
@@ -629,7 +670,7 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
                             Ok(json!(true))
                         } else if r["method"] == "keys" {
                             keys = r["enabled"].as_bool().unwrap_or(false);
-                            if !keys && !heatmap::active(&book) {
+                            if !keys && !tracking && !heatmap::active(&book) {
                                 let _ = input_sample(false, false);
                             }
                             Ok(json!(true))
@@ -641,7 +682,9 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
                             Ok(book.clone())
                         } else if r["method"] == "heatmap" {
                             // Flush old-session aggregates before switching the active session.
-                            if let Ok(sample) = input_sample(keys, heatmap::collecting(&book)) {
+                            if let Ok(sample) =
+                                input_sample(keys || tracking, heatmap::collecting(&book))
+                            {
                                 heatmap::add(&mut book, &sample["counts"]);
                             }
                             let mut next = book.clone();
@@ -654,7 +697,7 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
                                 book = next;
                                 heatmap_dirty = false;
                                 last_tick = Instant::now();
-                                let _ = input_sample(keys, heatmap::collecting(&book));
+                                let _ = input_sample(keys || tracking, heatmap::collecting(&book));
                                 Ok(book.clone())
                             })
                         } else {
@@ -680,16 +723,20 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
                     "x": cursor["x"].as_f64().unwrap_or(0.0) * scale,
                     "y": cursor["y"].as_f64().unwrap_or(0.0) * scale,
                 });
-                println!("{}", json!({"event":"cursor","cursor":cursor,"physical":physical}));
+                println!(
+                    "{}",
+                    json!({"event":"cursor","cursor":cursor,"physical":physical})
+                );
                 last = cursor;
             }
         }
         let tick_due = last_tick.elapsed() >= Duration::from_secs(1);
-        let input_interval = Duration::from_millis(if keys { 33 } else { 500 });
-        if (keys || heatmap::active(&book)) && (last_input.elapsed() >= input_interval || tick_due)
+        let input_interval = Duration::from_millis(if keys || tracking { 33 } else { 500 });
+        if (keys || tracking || heatmap::active(&book))
+            && (last_input.elapsed() >= input_interval || tick_due)
         {
             last_input = Instant::now();
-            match input_sample(keys, heatmap::collecting(&book)) {
+            match input_sample(keys || tracking, heatmap::collecting(&book)) {
                 Ok(sample) => {
                     if sample["counts"].as_object().is_some_and(|m| !m.is_empty()) {
                         heatmap::add(&mut book, &sample["counts"]);
@@ -703,31 +750,8 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
                         println!("{}", json!({"event":"keys","sample":sample}));
                     }
                     input_available = Some(available);
-                    // Alt+digit dialog triggers (evdev: Alt=56/108, 1=2, 2=3, ...)
-                    if let Some(held) = sample["held"].as_array() {
-                        let has = |code: i64| held.iter().any(|v| v.as_i64() == Some(code));
-                        if !held.is_empty() {
-                            let _ = fs::OpenOptions::new().create(true).append(true).open("/tmp/macrohelp_debug.log").and_then(|mut f| write!(f, "held={:?}\n", held));
-                        }
-                        let alt = has(56) || has(108);
-                        if alt {
-                            for digit in 0..10u8 {
-                                let code = digit as i64 + 2;
-                                if has(code) {
-                                    let key = digit.to_string();
-                                    if key != last_dialog {
-                                        last_dialog = key.clone();
-                                        println!(
-                                            "{}",
-                                            json!({"event":"dialog","key":key})
-                                        );
-                                    }
-                                    break;
-                                }
-                            }
-                        } else if !last_dialog.is_empty() {
-                            last_dialog.clear();
-                        }
+                    for digit in dialog_keys.accept(&sample) {
+                        println!("{}", json!({"event":"dialog","key":digit.to_string()}));
                     }
                 }
                 Err(_) => {
@@ -750,7 +774,7 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
                 let collecting = heatmap::collecting(&book);
                 heatmap::tick(&mut book, seconds);
                 if collecting != heatmap::collecting(&book) {
-                    let _ = input_sample(keys, heatmap::collecting(&book));
+                    let _ = input_sample(keys || tracking, heatmap::collecting(&book));
                 }
                 heatmap_dirty = true;
                 println!(
@@ -779,8 +803,8 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
         }
         std::io::stdout().flush()?;
     }
-    if keys || heatmap::active(&book) {
-        if let Ok(sample) = input_sample(keys, heatmap::collecting(&book)) {
+    if keys || tracking || heatmap::active(&book) {
+        if let Ok(sample) = input_sample(keys || tracking, heatmap::collecting(&book)) {
             heatmap::add(&mut book, &sample["counts"]);
         }
         let _ = input_sample(false, false);
@@ -798,6 +822,42 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn dialog_shortcuts_use_physical_digits_and_accept_fast_taps() {
+        let mut keys = DialogKeys::default();
+        for digit in 0..10 {
+            let code = if digit == 0 { 11 } else { digit + 1 };
+            assert_eq!(
+                keys.accept(
+                    &json!({"available":true,"events":[[56,1],[code,1],[code,0],[56,0]],"held":[]})
+                ),
+                vec![digit as u8]
+            );
+        }
+        assert!(
+            keys.accept(&json!({"available":true,"events":[[108,1],[2,1]],"held":[108,2]}))
+                .is_empty()
+        );
+        keys.accept(&json!({"available":true,"events":[],"held":[]}));
+        assert_eq!(
+            keys.accept(&json!({"available":true,"events":[[100,1],[2,1]],"held":[100,2]})),
+            vec![1]
+        );
+        assert!(
+            keys.accept(&json!({"available":true,"events":[[2,1]],"held":[100,2]}))
+                .is_empty()
+        );
+        assert_eq!(
+            keys.accept(&json!({"available":true,"events":[[2,0],[2,1]],"held":[100,2]})),
+            vec![1]
+        );
+        assert!(
+            keys.accept(
+                &json!({"available":true,"locked":true,"events":[[56,1],[2,1]],"held":[56,2]})
+            )
+            .is_empty()
+        );
+    }
     #[test]
     fn state_and_legacy_transfer() {
         let v=import_legacy("MacrohelpRegistryHubExportVersion=1\nScript={paste A}\\n{ENTER}\nVarA=hello\nPasteZ=world\nPoint1=10,20\nZoneZ=1,2,30,40\n").unwrap();

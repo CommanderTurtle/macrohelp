@@ -59,56 +59,8 @@ TYPO_MAP = {
 
 
 def strip_comments_and_strings(text: str) -> str:
-    """Remove comments and string contents for analysis."""
-    result = []
-    i = 0
-    in_block = False
-    in_line = False
-    in_string = None
-
-    while i < len(text):
-        ch = text[i]
-        next_ch = text[i + 1] if i + 1 < len(text) else ''
-
-        if in_block:
-            if ch == '*' and next_ch == '/':
-                in_block = False
-                i += 2
-                continue
-            i += 1
-            continue
-        if in_line:
-            if ch == '\n':
-                in_line = False
-                result.append(ch)
-            i += 1
-            continue
-        if in_string:
-            if ch == '\\':
-                i += 2
-                continue
-            if ch == in_string:
-                in_string = None
-            i += 1
-            continue
-
-        if ch == '/' and next_ch == '*':
-            in_block = True
-            i += 2
-            continue
-        if ch == '/' and next_ch == '/':
-            in_line = True
-            i += 2
-            continue
-        if ch in ('"', "'"):
-            in_string = ch
-            i += 1
-            continue
-
- 
-        i += 1
-
-    return "".join(result)
+    from qml_lex import mask
+    return mask(text)
 
 
 def extract_imports(text: str) -> list[tuple[str, str, int]]:
@@ -132,8 +84,7 @@ def extract_ids(text: str) -> list[tuple[str, int, int]]:
     """Extract all id: declarations. Returns list of (id, line_number, column)."""
     ids = []
     for i, line in enumerate(text.splitlines(), 1):
-        m = re.search(r'\bid:\s*(\w+)', line)
-        if m:
+        for m in re.finditer(r'\bid:\s*(\w+)', line):
             ids.append((m.group(1), i, m.start() + 1))
     return ids
 
@@ -153,7 +104,7 @@ def extract_component_refs(text: str) -> list[tuple[str, int, int]]:
 def check_file(path: Path) -> list[dict]:
     """Check a QML file for semantic issues. Returns list of diagnostic dicts."""
     diagnostics = []
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     clean = strip_comments_and_strings(text)
 
     # 1. Check imports
@@ -212,7 +163,7 @@ def check_file(path: Path) -> list[dict]:
                     break
 
     # 4. Check for property typos
-    for i, line in enumerate(text.splitlines(), 1):
+    for i, line in enumerate(clean.splitlines(), 1):
         for m in re.finditer(r'(\w+)\s*:\s*', line):
             prop = m.group(1)
             if prop in TYPO_MAP:

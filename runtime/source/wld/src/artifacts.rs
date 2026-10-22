@@ -11,6 +11,37 @@ static SERIAL: AtomicU64 = AtomicU64::new(0);
 fn bad(message: &str) -> ApiError {
     ApiError::new(400, message)
 }
+pub fn append_session(r: &Value) -> Result<Value> {
+    let home = std::env::var_os("HOME")
+        .map(std::path::PathBuf::from)
+        .ok_or_else(|| bad("HOME is not configured"))?;
+    let config = std::env::var_os("XDG_CONFIG_HOME")
+        .map(std::path::PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .unwrap_or_else(|| home.join(".config"));
+    let download = fs::read_to_string(config.join("user-dirs.dirs"))
+        .ok()
+        .and_then(|text| {
+            text.lines().find_map(|line| {
+                let raw = line
+                    .trim()
+                    .strip_prefix("XDG_DOWNLOAD_DIR=")?
+                    .trim()
+                    .strip_prefix('"')?
+                    .strip_suffix('"')?;
+                let value = raw
+                    .strip_prefix("$HOME/")
+                    .map(|p| home.join(p))
+                    .unwrap_or_else(|| std::path::PathBuf::from(raw));
+                value.is_absolute().then_some(value)
+            })
+        })
+        .unwrap_or_else(|| home.join("Downloads"));
+    let mut request = r.clone();
+    request["path"] = json!(download.join("clicksession.txt"));
+    request["append"] = json!(true);
+    actions(&request)
+}
 pub fn write(path: &Path, text: &str, expected: Option<&str>) -> Result<()> {
     if !path.is_absolute() || text.len() > 2 * 1024 * 1024 {
         return Err(bad("Choose an absolute export path, at most 2 MiB"));

@@ -58,6 +58,8 @@ Item {
   property var activePanel: null
   property var clipboardCallback: null
   property int clipboardSerial: 0
+  property double dialogCaptureUntil: 0
+  readonly property var quickCircle: dialogs.circlePreview
   readonly property string helper: (Quickshell.env("XDG_DATA_HOME") || Quickshell.env("HOME")+"/.local/share")+"/macrohelp/overlay/bin/macrohelpctl"
   readonly property var helperCommand: [helper,"session"].concat(settings&&settings.envFile?["--env",String(settings.envFile)]:[])
   readonly property var circleTarget: Workflow.circle(circleOrigin,radius,angle,unit)
@@ -87,7 +89,7 @@ Item {
   function clearWorkflow(){if(busy||localBusy||pending){error="Stop the current operation first";return}generation++;environment=Workflow.clearState(environment);resolvedScript="";save();message="Workflow cleared; paste buffers and zones retained"}
   function vector(text){var v=Workflow.vector(text,circleOrigin);radius=v.radius;angle=v.angle;unit="radians"}
   function exitOverlay(){cancelWork();hidePanel();if(!disablePlugin.running)disablePlugin.running=true}
-  function cancelWork(){generation++;steps=[];stepIndex=0;currentJob=null;busy=false;localBusy=false;pending=null;hidden=false;recordingPath=false;clipboardCallback=null;startDelay.stop();poll.stop();clipboardTimeout.stop()}
+  function cancelWork(){generation++;dialogs.closeDialog();steps=[];stepIndex=0;currentJob=null;busy=false;localBusy=false;pending=null;hidden=false;recordingPath=false;clipboardCallback=null;startDelay.stop();poll.stop();clipboardTimeout.stop()}
   function stop(){cancelWork();if(!emergency.running)emergency.running=true;message="";remember("Stop requested")}
   function reconnect(){if(!runtime.running)runtime.running=true;else refresh()}
   function queue(actions,callback,delay,name,saveOnly){
@@ -106,13 +108,13 @@ Item {
   function togglePath(){recordingPath=!recordingPath;if(recordingPath){path=[[0,0,Math.round(cursor.x),Math.round(cursor.y)]];pathTime=Date.now();message="Recording pointer path"}else message="Path: "+path.length+" points"}
   function click(button){later([Workflow.keys(button)])}
   function runSaved(name){if(busy||localBusy||pending){error="Stop the current operation first";return}localBusy=true;var token=generation;hidePanel();http("POST","/run",{task:name},function(v,e){if(token!==root.generation)return;root.localBusy=false;if(!e){root.change("","last_task",v);root.message="Scheduled #"+v.task_number}})}
-  function play(source){
+  function play(source,origin){
     if(busy||localBusy||pending){error="Stop the current operation first";return}
     var token=++generation;busy=true;error=""
     refreshContext(function(context,failure){
       if(token!==root.generation)return
       if(failure){root.busy=false;return}
-      try {var plan=Workflow.compile(source,root.environment,context);root.resolvedScript=plan.expanded;root.environment=plan.state;root.save();root.steps=plan.steps;root.stepIndex=0;root.hidePanel();root.pending=function(){root.nextStep(token)};startDelay.restart()}
+      try {var plan=Workflow.compile(source,root.environment,context);if(origin)plan.steps.unshift({kind:"input",actions:[Workflow.move(origin,0)]});root.resolvedScript=plan.expanded;root.environment=plan.state;root.save();root.steps=plan.steps;root.stepIndex=0;root.hidePanel();root.pending=function(){root.nextStep(token)};startDelay.restart()}
       catch(e){root.busy=false;root.error=e.message}
     })
   }
@@ -133,13 +135,13 @@ Item {
     if(token!==generation||!busy)return
     if(stepIndex>=steps.length){busy=false;hidden=false;message="Finished";save();refresh();return}
     var step=steps[stepIndex++]
-    function done(value,error){if(token!==root.generation)return;if(error){root.busy=false;root.hidden=false;if(root.connected)root.error=error;return}if(step.slot&&value&&value.text!==undefined)root.change(/^[ASDF]$/.test(step.slot)?"vars":"buffers",step.slot,value.text);root.nextStep(token)}
+    function done(value,error){if(token!==root.generation)return;if(error){root.busy=false;root.hidden=false;if(root.connected)root.error=error;return}if(step.slot&&value&&value.text!==undefined)root.change(/^[ASDF]$/.test(step.slot)?"vars":"buffers",step.slot,step.singleLine?value.text.replace(/[\r\n]+/g," ").trim():value.text);root.nextStep(token)}
     if(step.kind==="input"){hidden=!!step.capture;queue(Workflow.resolve(step.actions,environment),function(v,e){if(token!==root.generation)return;if(e){done(null,e);return}root.currentJob=v.task;poll.restart()},0)}
     else if(step.kind==="clipboard")readClipboard(function(v,e){if(token!==root.generation)return;root.hidePanel();root.pending=function(){done(v,e)};startDelay.restart()})
     else if(step.kind==="regedited")call({method:"regedited",action:step.action,file:step.file,reference:step.reference},done)
   }
   function finishClipboard(value,failure){var callback=clipboardCallback;clipboardCallback=null;clipboardTimeout.stop();localBusy=false;if(callback)callback(value,failure)}
-  function readClipboard(callback){if(localBusy){if(callback)callback(null,"Clipboard operation already active");return}localBusy=true;var token=generation,request=++clipboardSerial;page="Buffers";clipboardCallback=callback;showPanel();if(!activePanel){finishClipboard(null,"Open the Macrohelp bar panel to read the clipboard");return}clipboardTimeout.restart();clipboardRequested(function(v,e){if(token===root.generation&&request===root.clipboardSerial&&root.clipboardCallback)root.finishClipboard(v,e)})}
+  function readClipboard(callback){if(localBusy){if(callback)callback(null,"Clipboard operation already active");return}localBusy=true;var token=generation,request=++clipboardSerial;clipboardCallback=callback;clipboardTimeout.restart();var complete=function(v,e){if(token===root.generation&&request===root.clipboardSerial&&root.clipboardCallback)root.finishClipboard(v,e)};if(activePanel&&activePanel.opened)clipboardRequested(complete);else dialogs.readClipboard(complete)}
   function useZone(slot,method,target){play(target?"{zonebuf "+slot+","+method+","+target+"}":"{zone "+slot+","+method+"}")}
   function chooseFile(save,callback,filename){if(picker.running){error="File chooser already open";return}pickerCallback=callback;picker.command=["zenity","--file-selection","--title=Macrohelp"].concat(save?["--save"]:[]).concat(filename?["--filename="+filename]:[]);picker.running=true}
   function transferPath(kind){var paths=environment.paths||{};return String(paths[kind]||"").trim()}
@@ -160,6 +162,22 @@ Item {
     var snapshot=Workflow.copy(actions),token=generation
     var filename=String(name||"actions").replace(/[^a-zA-Z0-9 _.-]/g,"_").slice(0,100)+".json"
     chooseFile(true,function(path){if(token!==root.generation)return;root.call({method:"export-actions",path:path,actions:snapshot,append:!!append},function(v,e){if(token!==root.generation)return;if(!e)root.message="Saved "+v.count+" actions · "+v.path})},filename)
+  }
+  function appendActions(name,actions,callback){
+    call({method:"append-actions",name:name,actions:actions},function(v,e){if(!e)root.message="Saved "+v.count+" actions · "+v.path;if(callback)callback(v,e)})
+  }
+  function captureZone(rect,method,target){
+    if(busy||localBusy||pending){error="An operation is already pending";return}
+    var token=++generation;busy=true;error=""
+    refreshContext(function(context,failure){
+      if(token!==root.generation)return
+      if(failure){root.busy=false;return}
+      try {
+        root.steps=[{kind:"input",actions:Workflow.zone(rect,method,context.shortcuts),capture:true}]
+        if(target)root.steps.push({kind:"clipboard",slot:target,singleLine:method==="C"})
+        root.stepIndex=0;root.hidePanel();root.pending=function(){root.nextStep(token)};startDelay.restart()
+      }catch(e){root.busy=false;root.error=e.message}
+    })
   }
   Timer {id:persist;interval:400;onTriggered:root.save()}
   Timer {
@@ -205,6 +223,7 @@ Item {
       }
       if(r.event==="heatmap-error"){root.heatmapError=r.error;return}
       if(r.event==="keys"){
+        if(dialogs.capturing){root.dialogCaptureUntil=Date.now()+200;dialogs.receiveKeys(r.sample)}
         root.keyFeedAvailable=!!r.sample.available
         root.keyClock=Date.now()
         if(!root.keysEnabled||r.sample.locked||!root.keyFeedAvailable)root.keyDisplay=KeyDisplay.create()
@@ -212,11 +231,15 @@ Item {
         return
       }
       if(r.event==="dialog"){
-        var kinds={"0":"save_cursor","1":"paste_buffers","2":"registry_hub","3":"circle_placer","4":"click_left","5":"click_right","6":"click_middle","7":"stop_all","9":"record_keys"}
-        var kind=kinds[r.key]||"save_cursor"
+        if(dialogs.capturing||Date.now()<root.dialogCaptureUntil)return
+        var kinds={"0":"save_cursor","1":"paste_buffers","2":"registry_hub","3":"circle_placer","4":"click_left","5":"click_right","6":"click_middle","7":"stop_all","8":"view_toggles","9":"record_keys"}
+        var kind=kinds[r.key]
+        if(!kind)return
         root.showDialog(kind)
+        // Circle begins at the real pointer, with keyboard focus and no warp.
+        if(kind==="circle_placer")return
         var blink=null;for(var i=0;i<root.tasks.length;i++){if(root.tasks[i].name.indexOf("Blink to ")===0&&root.tasks[i].name.indexOf("(center bottom)")>0){blink=root.tasks[i].name;break}}
-        if(blink)root.http("POST","/run",{task:blink},function(v,e){})
+        if(blink){var token=dialogs.revision;dialogs.working=true;root.http("POST","/run",{task:blink},function(v,e){if(token!==dialogs.revision)return;dialogWarp.token=token;dialogWarp.restart()})}
         return
       }
       var callback=root.callbacks[r.id];delete root.callbacks[r.id]
@@ -226,8 +249,9 @@ Item {
       if(callback)callback(r.result,r.ok?null:r.error)
     }}
     stderr:SplitParser{onRead:function(line){root.error=line}}
-    onExited:function(code){root.ready=false;root.connected=false;root.refreshing=false;root.cancelWork();persist.stop();var all=root.callbacks;root.callbacks=({});for(var id in all)all[id](null,"Controller stopped");if(code!==0)root.error="Controller exited ("+code+")"}
+    onExited:function(code){dialogs.closeDialog();root.ready=false;root.connected=false;root.refreshing=false;root.cancelWork();persist.stop();var all=root.callbacks;root.callbacks=({});for(var id in all)all[id](null,"Controller stopped");if(code!==0)root.error="Controller exited ("+code+")"}
   }
+  Timer {id:dialogWarp;interval:200;property int token:0;onTriggered:if(token===dialogs.revision){dialogs.working=false;dialogs.reanchor()}}
   Hud {service:root}
   Dialogs {id:dialogs;service:root;width:parent.width;height:parent.height}
 }

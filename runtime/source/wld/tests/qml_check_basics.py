@@ -16,63 +16,14 @@ SOURCE = "qml_check_basics"
 
 
 def strip_qml(text: str) -> list[tuple[int, str]]:
-    """Return list of (line_number, stripped_line) with comments/strings removed."""
-    lines = []
-    in_block_comment = False
-    for i, raw in enumerate(text.splitlines(), 1):
-        line = raw
-        if in_block_comment:
-            end = line.find("*/")
-            if end == -1:
-                continue
-            line = line[end + 2:]
-            in_block_comment = False
-        while "/*" in line:
-            start = line.find("/*")
-            end = line.find("*/", start + 2)
-            if end == -1:
-                line = line[:start]
-                in_block_comment = True
-                break
-            line = line[:start] + line[end + 2:]
-        in_string = None
-        j = 0
-        while j < len(line):
-            ch = line[j]
-            if in_string:
-                if ch == "\\":
-                    j += 2
-                    continue
-                if ch == in_string:
-                    in_string = None
-            else:
-                if ch in ('"', "'"):
-                    in_string = ch
-                elif ch == "/" and j + 1 < len(line) and line[j + 1] == "/":
-                    line = line[:j]
-                    break
-            j += 1
-        in_string = None
-        result = []
-        for ch in line:
-            if in_string:
-                if ch == in_string:
-                    in_string = None
-                    result.append(ch)
-            else:
-                if ch in ('"', "'"):
-                    in_string = ch
-                    result.append(ch)
-                else:
-                    result.append(ch)
-        lines.append((i, "".join(result)))
-    return lines
+    from qml_lex import mask
+    return list(enumerate(mask(text).splitlines(), 1))
 
 
 def check_file(path: Path) -> list[dict]:
     """Check a QML file. Returns list of diagnostic dicts."""
     diagnostics = []
-    text = path.read_text()
+    text = path.read_text(encoding="utf-8")
     lines = strip_qml(text)
 
     stack = []  # (char, line_number, column)
