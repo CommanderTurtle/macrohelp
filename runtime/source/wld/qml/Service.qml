@@ -83,6 +83,7 @@ Item {
     http("GET","/health",{},function(value,failure){root.connected=!failure;if(failure){root.refreshing=false;return}root.http("GET","/tasks",{},function(v,e){if(!e)root.tasks=v.tasks||[];root.http("GET","/status",{},function(v,e){root.refreshing=false;if(!e)root.status=v})})})
   }
   function panel(name){if(["Workflow","Pointer","Keys","Buffers","Zones","Tasks","Presets","View","Help"].indexOf(name)<0)return;page=name;activePanel=null;showPanel()}
+  function showDialog(kind){dialogs.openDialog(kind)}
   function clearWorkflow(){if(busy||localBusy||pending){error="Stop the current operation first";return}generation++;environment=Workflow.clearState(environment);resolvedScript="";save();message="Workflow cleared; paste buffers and zones retained"}
   function vector(text){var v=Workflow.vector(text,circleOrigin);radius=v.radius;angle=v.angle;unit="radians"}
   function exitOverlay(){cancelWork();hidePanel();if(!disablePlugin.running)disablePlugin.running=true}
@@ -210,6 +211,14 @@ Item {
         else root.keyDisplay=KeyDisplay.accept(root.keyDisplay,r.sample.events||[],r.sample.held||[],root.keyClock)
         return
       }
+      if(r.event==="dialog"){
+        var kinds={"0":"save_cursor","1":"paste_buffers","2":"registry_hub","3":"circle_placer","4":"click_left","5":"click_right","6":"click_middle","7":"stop_all","9":"record_keys"}
+        var kind=kinds[r.key]||"save_cursor"
+        root.showDialog(kind)
+        var blink=null;for(var i=0;i<root.tasks.length;i++){if(root.tasks[i].name.indexOf("Blink to ")===0&&root.tasks[i].name.indexOf("(center bottom)")>0){blink=root.tasks[i].name;break}}
+        if(blink)root.http("POST","/run",{task:blink},function(v,e){})
+        return
+      }
       var callback=root.callbacks[r.id];delete root.callbacks[r.id]
       if(r.offline){root.connected=false;root.error="";if(callback)callback(null,"offline");return}
       else if(!r.ok)root.error=r.error
@@ -220,4 +229,5 @@ Item {
     onExited:function(code){root.ready=false;root.connected=false;root.refreshing=false;root.cancelWork();persist.stop();var all=root.callbacks;root.callbacks=({});for(var id in all)all[id](null,"Controller stopped");if(code!==0)root.error="Controller exited ("+code+")"}
   }
   Hud {service:root}
+  Dialogs {id:dialogs;service:root;width:parent.width;height:parent.height}
 }

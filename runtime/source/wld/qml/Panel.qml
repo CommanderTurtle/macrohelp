@@ -101,6 +101,7 @@ Ui.Panel {
               Ui.Button{text:"Capture pointer (3s)";onClicked:root.capture(function(p){root.app.change("points",root.app.pointIndex,p)})}
               Ui.Button{text:"Move to point";onClicked:root.attempt(function(){root.append([Workflow.move(root.env.points[root.app.pointIndex],100)])})}
               Ui.Button{text:"Clear point";onClicked:root.app.change("points",root.app.pointIndex,null)}
+              Ui.Button{text:"Quick Save";onClicked:{root.close();root.app.showDialog("save_cursor")}}
             }
             Text {textFormat:Text.PlainText;text:"Saved: "+(root.env.points&&root.env.points[root.app.pointIndex]?root.env.points[root.app.pointIndex].join(", "):"—");color:root.fg;font.family:Style.font.family;font.pixelSize:Style.font.caption}
             Ui.NumberField {label:"Circle radius";value:root.app?root.app.radius:100;from:0;to:10000;onModified:function(value){root.app.radius=value}}

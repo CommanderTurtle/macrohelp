@@ -587,6 +587,7 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
     });
     let mut tracking = true;
     let mut keys = false;
+    let mut last_dialog = String::new();
     let heatmap_path = config.state_dir.join("heatmap.json");
     let (mut book, heatmap_load_error) = match heatmap::load(&heatmap_path) {
         Ok(value) => (value, None),
@@ -702,6 +703,32 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
                         println!("{}", json!({"event":"keys","sample":sample}));
                     }
                     input_available = Some(available);
+                    // Alt+digit dialog triggers (evdev: Alt=56/108, 1=2, 2=3, ...)
+                    if let Some(held) = sample["held"].as_array() {
+                        let has = |code: i64| held.iter().any(|v| v.as_i64() == Some(code));
+                        if !held.is_empty() {
+                            let _ = fs::OpenOptions::new().create(true).append(true).open("/tmp/macrohelp_debug.log").and_then(|mut f| write!(f, "held={:?}\n", held));
+                        }
+                        let alt = has(56) || has(108);
+                        if alt {
+                            for digit in 0..10u8 {
+                                let code = digit as i64 + 2;
+                                if has(code) {
+                                    let key = digit.to_string();
+                                    if key != last_dialog {
+                                        last_dialog = key.clone();
+                                        println!(
+                                            "{}",
+                                            json!({"event":"dialog","key":key})
+                                        );
+                                    }
+                                    break;
+                                }
+                            }
+                        } else if !last_dialog.is_empty() {
+                            last_dialog.clear();
+                        }
+                    }
                 }
                 Err(_) => {
                     if input_available != Some(false) {

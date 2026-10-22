@@ -4,6 +4,7 @@ use macrohelp_wayland::{
     task_executor::SocketExecutor,
     task_runner::Runner,
 };
+use serde_json::{json, Value};
 use std::{
     path::PathBuf,
     sync::{
@@ -59,6 +60,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     });
     let app = Arc::new(App::new(Runner::new(config.clone(), executor)));
     app.runner.snapshot()?;
+    let _blink = ensure_blink_task(&app);
     let server = Arc::new(std::net::TcpListener::bind(config.address)?);
     eprintln!(
         "Macrohelp HTTP: http://{} · shared Omarsket queue · authentication required",
@@ -77,6 +79,61 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         signal.store(true, Ordering::Relaxed);
     });
-    serve(server, app, stop);
+    serve(server, app.clone(), stop);
+    remove_blink_task(&app);
     Ok(())
+}
+
+/// Ensures the "Blink to center bottom" task exists. Creates it if missing.
+fn ensure_blink_task(app: &macrohelp_wayland::http_server::App) -> Option<String> {
+    let snapshot = app.runner.snapshot().ok()?;
+    let tasks = snapshot["tasks"].as_array()?;
+    if let Some(existing) = tasks.iter().find(|t| {
+        t["id"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("Blink to ") && id.ends_with(" (center bottom)"))
+    }) {
+        return existing["id"].as_str().map(String::from);
+    }
+    let output = std::process::Command::new("hyprctl")
+        .args(["monitors", "-j"])
+        .output()
+        .ok()?;
+    let stdout = String::from_utf8(output.stdout).ok()?;
+    let monitors: Vec<Value> = serde_json::from_str(&stdout).ok()?;
+    let monitor = monitors.first()?;
+    let width = monitor["width"].as_u64()?;
+    let height = monitor["height"].as_u64()?;
+    let cx = (width / 2) as i64;
+    let cy = (height - 36) as i64;
+    let id = format!("Blink to {}x{} (center bottom)", cx, cy);
+    let task = json!({
+        "actions": [{"duration_ms": 20, "type": "move", "x": cx, "y": cy}],
+        "allow_system": false,
+        "auto_start": false,
+        "delay_seconds": 0,
+        "description": format!("Moves cursor instantly to center bottom of {}x{} display.", width, height),
+        "id": id,
+        "loop_times": 1
+    });
+    app.runner
+        .executor
+        .call(json!({"method":"save","task":task,"create":true}))
+        .ok()?;
+    Some(id)
+}
+
+/// Removes the "Blink to center bottom" task if present.
+fn remove_blink_task(app: &macrohelp_wayland::http_server::App) {
+    let Ok(snapshot) = app.runner.snapshot() else { return };
+    let Some(tasks) = snapshot["tasks"].as_array() else { return };
+    let Some(task) = tasks.iter().find(|t| {
+        t["id"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("Blink to ") && id.ends_with(" (center bottom)"))
+    }) else {
+        return
+    };
+    let id = task["id"].as_str().unwrap_or("");
+    let _ = app.runner.executor.call(json!({"method":"delete","name":id}));
 }
