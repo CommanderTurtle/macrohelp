@@ -2,7 +2,7 @@ import {test,expect} from "bun:test"
 import {readFileSync} from "node:fs"
 import {runInNewContext} from "node:vm"
 const read=name=>readFileSync(new URL(name,import.meta.url),"utf8")
-const W=runInNewContext(read("../qml/model/Workflow.js")+"\n({copy,keys,keyName,wait,move,paste,expression,vector,numeric,pointValue,zoneValue,pasteSequence,clearState,viewPatch})")
+const W=runInNewContext(read("../qml/model/Workflow.js")+"\n({copy,keys,keyName,wait,move,paste,expression,vector,numeric,coordinate,pointValue,zoneValue,pasteSequence,clearState,viewPatch})")
 const D=runInNewContext(read("../qml/model/Dialogs.js")+"\n({open,clone,field,point,submit,preview,recorded,addStep,description,mouseDismiss,categories,help})")
 const C=runInNewContext(read("../qml/model/Control.js")+"\n({merge,prepare})")
 const env=()=>({version:1,script:"",registry:"/tmp/data",shells:{X:"bash",C:"sh",G:"python",P:"pwsh",T:""},paths:{export:"/tmp/export.json",import:"/tmp/import.json"},vars:{A:"original",S:"kept",D:"",F:""},buffers:{Z:"hello",X:"world",C:"",V:""},zones:{Z:[0,0,50,50],X:null,C:null,V:null},points:Array(16).fill(null),view:{crosshair:true,grid:false,coordinates:true,keys:true,coordinates_only:false},last_task:null})
@@ -14,6 +14,12 @@ test("config merge retains omitted fields and never mutates the original",()=>{
   expect(JSON.stringify(original)).toBe(before);expect(result.environment.vars.S).toBe("kept")
   expect(result.environment.vars.A).toBe("temporary");expect(result.environment.points[15]).toEqual([10,20]);expect(result.environment.zones.Z).toEqual([0,0,50,50])
 })
+test("HTTP board inputs normalize coordinates without rewriting script, variables or buffers",()=>{
+  const result=C.prepare({menu:3,origin:['_aj','_h'],config:{script:'{type _aj}',vars:{A:'_a'},buffers:{Z:'_h'},points:{1:['_a','_h']},zones:{X:['_a',0,'_aj','_h']}}},env(),cursor,null,W,D)
+  expect(result.state.origin).toEqual([1775,375]);expect(result.environment.points[0]).toEqual([25,375]);expect(result.environment.zones.X).toEqual([25,0,1775,375])
+  expect(result.environment.script).toBe('{type _aj}');expect(result.environment.vars.A).toBe('_a');expect(result.environment.buffers.Z).toBe('_h')
+})
+
 test("HTTP menu inputs use the real Registry Hub transitions and produce native effects",()=>{
   const result=C.prepare({menu:2,inputs:["Z","{zone Z,X}","P"],config:{vars:{A:"override"}}},env(),cursor,null,W,D)
   expect(result.environment.script).toBe("{zone Z,X}");expect(result.effects).toEqual([{kind:"play",origin:[20,30]}]);expect(result.closed).toBe(true)

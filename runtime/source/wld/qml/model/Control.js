@@ -4,15 +4,15 @@ function merge(original, patch, W) {
   Object.keys(patch||{}).forEach(function(section){
     if(section==="script"||section==="registry")env[section]=patch[section]
     else if(section==="view")env.view=W.viewPatch(env.view,patch.view)
-    else if(section==="points")Object.keys(patch.points).forEach(function(key){env.points[Number(key)-1]=patch.points[key]===null?null:patch.points[key].map(function(n){return W.numeric(n,-100000,100000,"Coordinate")})})
-    else if(section==="zones")Object.keys(patch.zones).forEach(function(key){env.zones[key]=patch.zones[key]===null?null:patch.zones[key].map(function(n){return W.numeric(n,-100000,100000,"Coordinate")})})
+    else if(section==="points")Object.keys(patch.points).forEach(function(key){env.points[Number(key)-1]=patch.points[key]===null?null:patch.points[key].map(W.coordinate)})
+    else if(section==="zones")Object.keys(patch.zones).forEach(function(key){env.zones[key]=patch.zones[key]===null?null:patch.zones[key].map(W.coordinate)})
     else {if(!env[section])env[section]={};Object.keys(patch[section]).forEach(function(key){env[section][key]=W.copy(patch[section][key])})}
   })
   if(unescape(encodeURIComponent(JSON.stringify(env))).length>1024*1024)throw Error("Merged environment exceeds 1 MiB")
   return env
 }
 function prepare(request, original, cursor, current, W, D) {
-  var env=merge(original,request.config,W),origin=request.origin?{x:W.numeric(request.origin[0],-100000,100000,"Coordinate"),y:W.numeric(request.origin[1],-100000,100000,"Coordinate")}:cursor
+  var env=merge(original,request.config,W),origin=request.origin?{x:W.coordinate(request.origin[0]),y:W.coordinate(request.origin[1])}:cursor
   var state=request.menu!==undefined?D.open(["save_cursor","paste_buffers","registry_hub","circle_placer","click_left","click_right","click_middle","stop_all","view_toggles","record_keys"][request.menu],origin):current?W.copy(current):null
   var effects=[],closed=false
   // A continued open editor must not overwrite a supplied config patch with

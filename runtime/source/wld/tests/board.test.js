@@ -2,7 +2,7 @@ import {test,expect} from 'bun:test'
 import {readFileSync} from 'node:fs'
 import {runInNewContext} from 'node:vm'
 const read=p=>readFileSync(new URL(p,import.meta.url),'utf8')
-const W=runInNewContext(read('../qml/model/Workflow.js')+'\n({board,boardCode,boardCoordinate,pointValue,zoneValue,compile,viewPatch})')
+const W=runInNewContext(read('../qml/model/Workflow.js')+'\n({board,boardCode,boardCoordinate,pointValue,zoneValue,compile,viewPatch,wait,keys,circle})')
 const state=()=>({vars:{},buffers:{},zones:{},points:Array(16).fill(null),shells:{},view:{crosshair:true,grid:false,big_crosshair:false}})
 test('board labels, point inputs and native assembly share physical cell centers',()=>{
   expect(W.boardCoordinate('_a')).toBe(25);expect(W.boardCoordinate('_h')).toBe(375);expect(W.boardCoordinate('_aj')).toBe(1775)
@@ -19,6 +19,16 @@ test('board labels, point inputs and native assembly share physical cell centers
   expect(W.pointValue('-_a,_h',state())).toEqual([-25,375])
   expect(W.zoneValue('_a,_h,_aj,2000',state())).toEqual([25,375,1775,2000])
   for(const code of ['_','_1','_zzzz','_a;exit'])expect(()=>W.boardCoordinate(code)).toThrow()
+})
+
+test('board conversion is limited to coordinates, never timings, counts or literal text',()=>{
+  expect(()=>W.wait('_a')).toThrow('Wait')
+  expect(()=>W.keys('A','_a')).toThrow('Hold')
+  expect(()=>W.circle([0,0],'_a',0)).toThrow('Radius')
+  expect(()=>W.compile('{wheelup _a}',state(),{})).toThrow('Wheel count')
+  const p=W.compile('{set A _aj}{set paste Z _a,_h}{type _aj}{type $A}{paste Z}',state(),{})
+  expect(p.state.vars.A).toBe('_aj');expect(p.state.buffers.Z).toBe('_a,_h')
+  expect(p.steps.flatMap(s=>s.actions).filter(a=>a.type==='paste').map(a=>a.content)).toEqual(['_aj','_aj','_a,_h'])
 })
 test('view patches enforce one-way exclusion for UI and HTTP without enabling the other on disable',()=>{
   let v=W.viewPatch(state().view,{grid:true});v=W.viewPatch(v,{big_crosshair:true})
