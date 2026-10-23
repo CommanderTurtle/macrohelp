@@ -111,11 +111,28 @@ test("stopped clients can reconnect without starting a server",()=>{
   expect(source).toContain("root.cancelWork();persist.stop()")
 })
 function blinkService(){
-  const calls=[],s=service({ready:true,dialogs:{dialogOpen:true,dialogState:{origin:[-120,240]},revision:3,working:false,reanchor(){this.anchored=true}}})
+  const calls=[],s=service({ready:true,physicalCursor:{x:-120,y:240},dialogs:{dialogOpen:true,dialogState:{origin:[-120,240]},revision:3,working:false,reanchor(){this.anchored=true}}})
   s.dialogs.closeDialog=()=>{s.dialogs.dialogOpen=false;s.dialogClosed(false,false)}
   s.http=(method,path,body,callback)=>calls.push({method,path,body,callback})
   return {s,calls}
 }
+
+test("return blink freezes physical HUD coordinates instead of scaled dialog coordinates",()=>{
+  for(const scale of [1,1.25,2]){
+    const {s,calls}=blinkService(),physical=[1736,1146],logical=physical.map(n=>n/scale)
+    s.dialogs.dialogState.origin=logical.slice()
+    s.physicalCursor={x:physical[0],y:physical[1]}
+    s.blinkDialog("center");const lease=s.dialogBlink
+    expect(lease.point).toEqual(physical)
+    expect(s.dialogs.dialogState.origin).toEqual(logical) // Rendering stays logical.
+    s.physicalCursor={x:1920,y:2124};s.dialogs.dialogState.origin=[960,1062]
+    calls[0].callback({},null);s.finishDialogBlink(lease);s.dialogClosed(true,false)
+    const move=calls[1].body.task.actions[0]
+    expect([move.x,move.y]).toEqual(physical)
+    // Current Omarsket converts physical action coordinates to compositor pixels.
+    expect([move.x/scale,move.y/scale]).toEqual(logical)
+  }
+})
 test("dismissal returns to frozen entry coords via one memory-only native blink task",()=>{
   const {s,calls}=blinkService();s.blinkDialog("Blink to 1920x2124 (center bottom)")
   const lease=s.dialogBlink;s.dialogs.dialogState.origin=[1920,2124]

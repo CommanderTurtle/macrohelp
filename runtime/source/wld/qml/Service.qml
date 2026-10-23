@@ -95,7 +95,8 @@ Item {
   function panel(name){if(["Workflow","Pointer","Keys","Buffers","Zones","Tasks","Presets","View","Help"].indexOf(name)<0)return;page=name;activePanel=null;showPanel()}
   function showDialog(kind){dialogs.openDialog(kind)}
   function blinkDialog(task){
-    var lease={point:dialogs.dialogState.origin.slice(),revision:dialogs.revision,ready:false,restore:false}
+    // Omarsket move actions consume physical pixels; dialog origins are logical.
+    var lease={point:[Math.round(physicalCursor.x),Math.round(physicalCursor.y)],revision:dialogs.revision,ready:false,restore:false}
     dialogBlink=lease;dialogs.working=true
     http("POST","/run",{task:task},function(v,e){
       if(root.dialogBlink!==lease)return
