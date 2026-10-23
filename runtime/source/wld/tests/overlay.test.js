@@ -2,11 +2,24 @@ import { test, expect } from "bun:test"
 import { readFileSync } from "node:fs"
 import { runInNewContext } from "node:vm"
 const model = new URL("../qml/model/Workflow.js", import.meta.url)
-const W = runInNewContext(readFileSync(model,"utf8")+"\n({compile,keys,circle,move,drag,resolve,desktopShortcuts,zone,containsPoint})")
+const W = runInNewContext(readFileSync(model,"utf8")+"\n({compile,keys,circle,move,drag,resolve,desktopShortcuts,zone,containsPoint,monitorScale,displayPoint})")
 const state=()=>({version:1,script:"",registry:"/tmp/data.md",shells:{X:"bash",C:"sh",G:"uv run python"},vars:{A:"hello",S:"",D:"",F:""},buffers:{Z:"world",X:"",C:"",V:""},zones:{Z:[1,2,30,40],X:[1,2,30,40],C:null,V:[1,2,30,40]},points:[[10,20],...Array(15).fill(null)],last_task:{task_number:1}})
 const bindings=[{modmask:68,key:"Print",description:"Extract text (OCR)",dispatcher:"__lua"},{modmask:0,key:"Print",description:"Screenshot"},{modmask:64,key:"Return",description:"Terminal"},{modmask:64,key:"C",description:"Universal copy"}]
 const context={tasks:[{name:"Saved"}],status:{scheduled:[],running:[],finished:[{task_number:1,state:"finished"}]},shortcuts:W.desktopShortcuts(bindings)}
 const compile=s=>W.compile(s,state(),context)
+
+test("only visual projections scale physical points; compiled task coordinates stay physical",()=>{
+  const scale=W.monitorScale([{width:3840,height:2160,scale:2}])
+  expect(W.displayPoint([1280,720],{x:0,y:0},scale)).toEqual([640,360])
+  expect(W.displayPoint([-1280,720],{x:-1920,y:0},scale)).toEqual([1280,360])
+  const plan=compile("{set point 1 1280,720}{point 1}{set zone C 1280,720,1600,900}{zone C,V}")
+  expect(plan.state.points[0]).toEqual([1280,720])
+  expect(plan.steps[0].actions[0].cursormovsmap[0].slice(2)).toEqual([1280,720])
+  expect(plan.state.zones.C).toEqual([1280,720,1600,900])
+  for(const monitors of [[],[{scale:0}],[{scale:-2}],[{scale:"bad"}]])expect(W.monitorScale(monitors)).toBe(1)
+  const panel=readFileSync(new URL("../qml/Panel.qml",import.meta.url),"utf8")
+  expect(panel).toContain("f([Math.round(root.app.physicalCursor.x),Math.round(root.app.physicalCursor.y)])")
+})
 
 test("balanced outer braces preserve nested JSON, code and command-looking literal text",()=>{
   const text='{\n  "nested": {"list": [{"n": 1}]},\n  "script": "{wait 99}{if nope}{endif}",\n  "literal": "&amp;\\\\n"\n}'

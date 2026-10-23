@@ -1,4 +1,7 @@
 function copy(v) { return JSON.parse(JSON.stringify(v)) }
+// Action/environment coordinates are physical pixels; Qt placement is logical.
+function monitorScale(monitors) { var scale=Number(((monitors||[])[0]||{}).scale);return isFinite(scale)&&scale>0?scale:1 }
+function displayPoint(point,origin,scale) { return [point[0]/scale-origin.x,point[1]/scale-origin.y] }
 function containsPoint(point,origin,width,height) { return !!point&&!!origin&&point.x>=origin.x&&point.y>=origin.y&&point.x<origin.x+width&&point.y<origin.y+height }
 function numeric(v,min,max,label) { var n=Number(v);if(!isFinite(n)||n<min||n>max)throw Error(label+" must be "+min+"…"+max);return n }
 function wait(ms) { return {type:"wait",duration:numeric(ms,0,86400000,"Wait")/1000} }

@@ -46,7 +46,7 @@ Ui.Panel {
     function onGenerationChanged(){captureDelay.stop();root.captureAction=null;root.captureMessage=""}
     function onClipboardRequested(callback){if(root.app.activePanel===root)Qt.callLater(function(){bufferEditor.pasteClipboard(callback)})}
   }
-  Timer {id:captureDelay;interval:3000;onTriggered:{root.captureMessage="";var f=root.captureAction;root.captureAction=null;if(f&&root.app)f([Math.round(root.app.cursor.x),Math.round(root.app.cursor.y)])}}
+  Timer {id:captureDelay;interval:3000;onTriggered:{root.captureMessage="";var f=root.captureAction;root.captureAction=null;if(f&&root.app)f([Math.round(root.app.physicalCursor.x),Math.round(root.app.physicalCursor.y)])}}
   Ui.WidgetButton {id:button;anchors.fill:parent;bar:root.bar;text:"󰍽";tooltipText:"Macrohelp · right-click to stop";onPressed:function(mouseButton){if(mouseButton===Qt.RightButton&&root.app)root.app.stop();else root.toggle()}}
   Ui.KeyboardPanel {
     id:panel;anchorItem:button;owner:root;bar:root.bar;open:root.opened
@@ -93,7 +93,7 @@ Ui.Panel {
           }
           Column {
             width:parent.width;spacing:Style.space(8);visible:root.app&&root.app.page==="Pointer"
-            Text {textFormat:Text.PlainText;text:root.app?Math.round(root.app.cursor.x)+", "+Math.round(root.app.cursor.y):"";color:root.fg;font.family:Style.font.family;font.pixelSize:Style.font.subtitle}
+            Text {textFormat:Text.PlainText;text:root.app?Math.round(root.app.physicalCursor.x)+", "+Math.round(root.app.physicalCursor.y):"";color:root.fg;font.family:Style.font.family;font.pixelSize:Style.font.subtitle}
             Ui.Dropdown {width:parent.width;label:"Point";value:String(root.app?root.app.pointIndex+1:1);options:Array.from({length:16},function(_,i){return String(i+1)});onChanged:function(value){root.app.pointIndex=Number(value)-1}}
             Ui.TextField {width:parent.width;text:root.coordinateText;placeholderText:"x,y";onTextEdited:root.coordinateText=text}
             Flow {width:parent.width;spacing:Style.space(6)

@@ -17,6 +17,19 @@ use std::{
 };
 const LIMIT: u64 = 16 * 1024 * 1024;
 static STOP: AtomicBool = AtomicBool::new(false);
+// Same desktop-wide physical-pixel convention used by Omarsket's worker.
+fn monitor_scale(monitors: &Value) -> f64 {
+    monitors
+        .as_array()
+        .and_then(|m| m.first())
+        .and_then(|m| m["scale"].as_f64())
+        .filter(|s| s.is_finite() && *s > 0.0)
+        .unwrap_or(1.0)
+}
+fn cursor_event(cursor: Value, scale: f64) -> Value {
+    let physical = json!({"x":cursor["x"].as_f64().unwrap_or(0.0)*scale,"y":cursor["y"].as_f64().unwrap_or(0.0)*scale});
+    json!({"event":"cursor","cursor":cursor,"physical":physical})
+}
 #[derive(Default)]
 struct DialogKeys {
     held: std::collections::BTreeSet<u64>,
@@ -745,20 +758,23 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
             Err(mpsc::RecvTimeoutError::Timeout) => (),
         }
+        // Refresh geometry before the first cursor sample, and report scale-only
+        // changes even when the pointer has remained completely still.
+        if tracking && last_monitors.elapsed() >= Duration::from_secs(5) {
+            last_monitors = Instant::now();
+            if let Ok(monitors) = hypr("monitors") {
+                scale = monitor_scale(&monitors);
+                println!("{}", json!({"event":"monitors","monitors":monitors}));
+            }
+        }
         if tracking && last_poll.elapsed() >= Duration::from_millis(8) {
             last_poll = Instant::now();
-            if let Ok(cursor) = hypr("cursorpos")
-                && cursor != last
-            {
-                let physical = json!({
-                    "x": cursor["x"].as_f64().unwrap_or(0.0) * scale,
-                    "y": cursor["y"].as_f64().unwrap_or(0.0) * scale,
-                });
-                println!(
-                    "{}",
-                    json!({"event":"cursor","cursor":cursor,"physical":physical})
-                );
-                last = cursor;
+            if let Ok(cursor) = hypr("cursorpos") {
+                let event = cursor_event(cursor, scale);
+                if event != last {
+                    println!("{event}");
+                    last = event;
+                }
             }
         }
         let tick_due = last_tick.elapsed() >= Duration::from_secs(1);
@@ -821,17 +837,6 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
             }
             last_save = Instant::now();
         }
-        if tracking && last_monitors.elapsed() >= Duration::from_secs(5) {
-            last_monitors = Instant::now();
-            if let Ok(monitors) = hypr("monitors") {
-                if let Some(first) = monitors.as_array().and_then(|a| a.first()) {
-                    if let Some(s) = first["scale"].as_f64() {
-                        scale = s;
-                    }
-                }
-                println!("{}", json!({"event":"monitors","monitors":monitors}));
-            }
-        }
         std::io::stdout().flush()?;
     }
     if keys || tracking || heatmap::active(&book) {
@@ -855,6 +860,29 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn physical_cursor_changes_with_scale_without_changing_logical_placement() {
+        let cursor = json!({"x":868,"y":573});
+        let first = cursor_event(
+            cursor.clone(),
+            monitor_scale(&json!([{ "width":3840,"height":2160,"scale":2 }])),
+        );
+        assert_eq!(first["cursor"], cursor);
+        assert_eq!(first["physical"], json!({"x":1736.0,"y":1146.0}));
+        assert_ne!(first, cursor_event(cursor.clone(), 1.25));
+        assert_eq!(
+            cursor_event(cursor.clone(), 1.25)["physical"],
+            json!({"x":1085.0,"y":716.25})
+        );
+        for monitors in [
+            json!([]),
+            json!([{"scale":0}]),
+            json!([{"scale":-2}]),
+            json!([{"scale":"bad"}]),
+        ] {
+            assert_eq!(monitor_scale(&monitors), 1.0);
+        }
+    }
     #[test]
     fn dialog_shortcuts_use_physical_digits_and_accept_fast_taps() {
         let mut keys = DialogKeys::default();

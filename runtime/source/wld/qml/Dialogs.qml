@@ -40,7 +40,7 @@ Item {
     function openDialog(kind, zone, keepBlink) {
         closeDialog(false, !!keepBlink)
         if (!service || !service.ready) return
-        dialogState = DialogState.open(kind, service.cursor, zone)
+        dialogState = DialogState.open(kind, service.physicalCursor, zone)
         if (zone) { var next=DialogState.clone(dialogState);next.stage="ZoneCommand";dialogState=next }
         // Only one output takes exclusive focus. Keep native placement and scaling.
         var output=service.monitors.find(function(m){return Workflow.containsPoint(service.cursor,m,m.width/(m.scale||1),m.height/(m.scale||1))})
@@ -74,7 +74,7 @@ Item {
     function submit(value, fromButton) {
         if(!dialogOpen || working || capturing)return
         try {
-            var result=DialogState.submit(dialogState,value===undefined?dialogState.text:value,service.environment,service.cursor,Workflow)
+            var result=DialogState.submit(dialogState,value===undefined?dialogState.text:value,service.environment,service.physicalCursor,Workflow)
             dialogState=result.state
             if(dialogState.capturing&&fromButton){var armed=DialogState.clone(dialogState);armed.captureReady=true;dialogState=armed}
             if(result.swap){openDialog(result.swap,undefined,true);return}
@@ -121,13 +121,13 @@ Item {
     }
     function nameAction(command) {
         if(working)return
-        if(dialogKind==="save_cursor" && command==="x"){var next=DialogState.clone(dialogState);next.points.push(DialogState.point(service.cursor));dialogState=next;focusInput();return}
+        if(dialogKind==="save_cursor" && command==="x"){var next=DialogState.clone(dialogState);next.points.push(DialogState.point(service.physicalCursor));dialogState=next;focusInput();return}
         submit()
         if(dialogState.stage==="Command"&&!dialogState.error)submit(command,true)
     }
     function replayKeys() {
         try {
-            var result=DialogState.submit(dialogState,"",service.environment,service.cursor,Workflow)
+            var result=DialogState.submit(dialogState,"",service.environment,service.physicalCursor,Workflow)
             var actions=[Workflow.move(dialogState.origin,0)].concat(result.effects[0].actions)
             closeDialog();service.later(actions)
         }catch(e){fail(e.message)}
@@ -236,7 +236,7 @@ Item {
                     }
                     Text {
                         anchors.horizontalCenter: parent.horizontalCenter
-                        text: "X: "+(dlgRoot.service?Math.round(dlgRoot.service.cursor.x):0)+"  Y: "+(dlgRoot.service?Math.round(dlgRoot.service.cursor.y):0)
+                        text: "X: "+(dlgRoot.service?Math.round(dlgRoot.service.physicalCursor.x):0)+"  Y: "+(dlgRoot.service?Math.round(dlgRoot.service.physicalCursor.y):0)
                         textFormat: Text.PlainText
                         color: Commons.Color.foreground
                         font.family: Style.font.family

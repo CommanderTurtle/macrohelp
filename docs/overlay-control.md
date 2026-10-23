@@ -83,6 +83,11 @@ Config patches accept `script`, `registry`, `vars` (A/S/D/F), `buffers` and
 `paths` (import/export) and `view`. A null point/zone clears that entry.
 Shell commands and workflow grammar remain native to each platform.
 
+Coordinates, saved points/zones and task actions use physical pixels, matching
+`/v1/coords`. Omarsket converts them to compositor coordinates for execution;
+the overlay converts only its drawing/placement to logical pixels. Existing
+saved coordinates are never automatically rescaled.
+
 `no_replace:true` holds temporary overrides through completion, then restores
 the prior environment without saving overrides. Otherwise, supplied changes are
 saved. Omitted fields are retained in either mode. This is not a dry run: requested

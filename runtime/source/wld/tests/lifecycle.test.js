@@ -13,7 +13,7 @@ function service(overrides={}) {
     save(){},hidePanel(){},showPanel(){},remember(){},change(){},refresh(){},
     emergency:{running:false},runtime:{running:true},dialogs:{closeDialog(){}},...overrides}
   s.root=s
-  for(const name of ["play","cancelWork","stop","queue","runSaved","saveSchedule","refreshContext","readClipboard","finishClipboard","reconnect","panel","blinkDialog","dialogClosed","restoreDialogPointer","finishDialogBlink"]) {
+  for(const name of ["play","cancelWork","stop","queue","runSaved","saveSchedule","refreshContext","readClipboard","finishClipboard","reconnect","panel","blinkDialog","dialogClosed","restoreDialogPointer","finishDialogBlink","pointer","corner","togglePath","recordPathPoint"]) {
     const at=source.indexOf("  function "+name+"(")
     if(at<0)throw Error("Missing service function "+name)
     const tail=source.slice(at),end=tail.slice(1).search(/\n  (?:function |Timer |Process |Hud |ShellIpc )/)
@@ -21,6 +21,16 @@ function service(overrides={}) {
   }
   return s
 }
+
+test("point, zone and path captures store physical coordinates without altering typed values",()=>{
+  const s=service({ready:true,cursor:{x:868,y:573},physicalCursor:{x:1736,y:1146},pointIndex:2,zoneSlot:"C",zoneStart:null,path:[],environment:{points:[[1280,720]],zones:{}}})
+  s.change=(section,key,value)=>s.environment[section][key]=value
+  s.pointer();expect(s.environment.points[2]).toEqual([1736,1146]);expect(s.environment.points[0]).toEqual([1280,720])
+  s.corner();s.togglePath()
+  s.cursor={x:640,y:360};s.physicalCursor={x:1280,y:720};s.corner();s.recordPathPoint();s.togglePath()
+  expect(s.environment.zones.C).toEqual([1736,1146,1280,720])
+  expect(s.path.map(p=>p.slice(2))).toEqual([[1736,1146],[1280,720]])
+})
 
 test("preparing Play excludes duplicate starts; Stop invalidates its callback",()=>{
   let prepared,calls=0

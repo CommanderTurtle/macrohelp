@@ -49,7 +49,7 @@ test("continued editor config overrides replace stale displayed text before Play
 
 function service(overrides={}) {
   const source=read("../qml/Service.qml"),timer=()=>({running:false,restart(){this.running=true},stop(){this.running=false}})
-  const s={environment:env(),cursor:{...cursor},ready:true,connected:true,busy:false,localBusy:false,pending:null,recordingPath:false,error:"",serial:0,generation:0,
+  const s={environment:env(),cursor:{...cursor},physicalCursor:{...cursor},ready:true,connected:true,busy:false,localBusy:false,pending:null,recordingPath:false,error:"",serial:0,generation:0,
     controlRun:null,controlLast:null,controlPending:0,dispatch:null,activePanel:null,DialogState:D,Workflow:W,Control:C,persist:timer(),calls:[],saves:[],
     call(value){this.calls.push(value);if(value.method==="save-state")this.saves.push(W.copy(value.state))},
     dialogs:{dialogOpen:false,working:false,dialogState:null,openDialog(kind){this.dialogOpen=true;this.dialogState=D.open(kind,cursor)},closeDialog(){this.dialogOpen=false;this.working=false},focusInput(){}},
@@ -64,6 +64,15 @@ function service(overrides={}) {
   return s
 }
 const send=(s,body,path="/v1/control")=>{s.handleControl({ticket:1,body,path});return s.calls.findLast(c=>c.method==="control-reply")}
+
+test("HTTP defaults to the physical cursor and leaves explicit origin coordinates unchanged",()=>{
+  for(const explicit of [false,true]){
+    const s=service({cursor:{x:868,y:572},physicalCursor:{x:1736,y:1146}})
+    const body={menu:3,...(explicit?{origin:[1280,720]}:{})}
+    expect(send(s,body).error).toBeUndefined()
+    expect(s.dialogs.dialogState.origin).toEqual(explicit?[1280,720]:[1736,1146])
+  }
+})
 
 test("HTTP help is the actual native manual and does not open a run even while busy",()=>{
   const s=service({busy:true}),before=JSON.stringify(s.environment),reply=send(s,{},"/v1/help")

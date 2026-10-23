@@ -162,7 +162,7 @@ test("dialog wiring preserves baseline rendering and leaves tray controls intact
 // mistakes that syntax parsing and model-only tests cannot detect.
 function controller() {
   const source=read("../qml/Dialogs.qml"),exports=[],queued=[],closed=[]
-  const service={ready:true,cursor:{...cursor},monitors:[{name:"test",x:0,y:0,width:3840,height:2160,scale:1}],environment:env(),
+  const service={ready:true,cursor:{...cursor},physicalCursor:{...cursor},monitors:[{name:"test",x:0,y:0,width:3840,height:2160,scale:1}],environment:env(),
     appendActions(name,actions,callback){exports.push({name,actions,callback})},later(actions){queued.push(actions)},
     change(section,key,value){if(section)this.environment[section][key]=value;else this.environment[key]=value},dialogClosed(restore,keep){closed.push({restore,keep})},play(){},clearWorkflow(){},stop(){},captureZone(){}}
   const s={service,dialogOpen:false,dialogState:{kind:"",stage:"",text:"",steps:[],capturing:false},revision:0,working:false,
@@ -179,6 +179,24 @@ function controller() {
   }
   return {s,exports,queued,closed}
 }
+
+test("scaled dialogs capture physical pixels while placement and dismissal stay logical",()=>{
+  const {s,exports,queued}=controller()
+  s.service.cursor={x:868,y:572};s.service.physicalCursor={x:1736,y:1146};s.service.monitors[0].scale=2
+  s.openDialog("save_cursor")
+  expect(s.dialogState.origin).toEqual([1736,1146]);expect([s.anchorX,s.anchorY]).toEqual([868,572])
+  s.service.cursor={x:960,y:1062};s.service.physicalCursor={x:1920,y:2124}
+  s.edit("Physical");s.submit();s.submit("z")
+  expect(exports[0].actions[0].cursormovsmap[0].slice(2)).toEqual([1736,1146])
+  exports[0].callback({},null)
+  s.service.cursor={x:640,y:360};s.service.physicalCursor={x:1280,y:720}
+  s.openDialog("paste_buffers");s.edit("z");s.edit("text");s.pasteBuffer(false)
+  expect(queued.at(-1)[0].cursormovsmap[0].slice(2)).toEqual([1280,720])
+  s.openDialog("registry_hub");s.submit("3");s.submit("s")
+  expect(s.service.environment.points[2]).toEqual([1280,720])
+  s.openDialog("circle_placer");s.edit("150i");s.submit();s.submit("z")
+  expect(queued.at(-1)[0].cursormovsmap[0].slice(2)).toEqual([1430,720])
+})
 
 test("QML handlers open, edit and submit through the model, retaining the captured origin",()=>{
   const {s,exports}=controller();s.openDialog("save_cursor")

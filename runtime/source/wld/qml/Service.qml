@@ -26,6 +26,7 @@ Item {
   property var cursor: ({x:0,y:0})
   property var physicalCursor: ({x:0,y:0})
   property var monitors: []
+  readonly property real coordinateScale: Workflow.monitorScale(monitors)
   property var tasks: []
   property var status: ({})
   property var history: []
@@ -95,7 +96,7 @@ Item {
   function panel(name){if(["Workflow","Pointer","Keys","Buffers","Zones","Tasks","Presets","View","Help"].indexOf(name)<0)return;page=name;activePanel=null;showPanel()}
   function showDialog(kind){dialogs.openDialog(kind)}
   function blinkDialog(task){
-    // Omarsket move actions consume physical pixels; dialog origins are logical.
+    // Freeze the same physical coordinate snapshot used by actions and the HUD.
     var lease={point:[Math.round(physicalCursor.x),Math.round(physicalCursor.y)],revision:dialogs.revision,ready:false,restore:false}
     dialogBlink=lease;dialogs.working=true
     http("POST","/run",{task:task},function(v,e){
@@ -142,9 +143,14 @@ Item {
     })
   }
   function later(actions){if(localBusy||pending||(busy&&!dispatch)){error="An operation is already pending";return}hidePanel();if(dispatch){queue(actions);return}pending=function(){root.queue(actions)};startDelay.restart()}
-  function pointer(){if(!ready)return;var p=[Math.round(cursor.x),Math.round(cursor.y)];change("points",pointIndex,p);remember("Point "+(pointIndex+1)+": "+p.join(", "))}
-  function corner(){var p=[Math.round(cursor.x),Math.round(cursor.y)];if(!zoneStart){zoneStart=p;message="First corner saved"}else{change("zones",zoneSlot,zoneStart.concat(p));zoneStart=null;message="Zone "+zoneSlot+" saved"}}
-  function togglePath(){recordingPath=!recordingPath;if(recordingPath){path=[[0,0,Math.round(cursor.x),Math.round(cursor.y)]];pathTime=Date.now();message="Recording pointer path"}else message="Path: "+path.length+" points"}
+  function pointer(){if(!ready)return;var p=[Math.round(physicalCursor.x),Math.round(physicalCursor.y)];change("points",pointIndex,p);remember("Point "+(pointIndex+1)+": "+p.join(", "))}
+  function corner(){var p=[Math.round(physicalCursor.x),Math.round(physicalCursor.y)];if(!zoneStart){zoneStart=p;message="First corner saved"}else{change("zones",zoneSlot,zoneStart.concat(p));zoneStart=null;message="Zone "+zoneSlot+" saved"}}
+  function togglePath(){recordingPath=!recordingPath;if(recordingPath){path=[[0,0,Math.round(physicalCursor.x),Math.round(physicalCursor.y)]];pathTime=Date.now();message="Recording pointer path"}else message="Path: "+path.length+" points"}
+  function recordPathPoint(){
+    if(!recordingPath)return
+    if(path.length>=10000){recordingPath=false;error="Path limit reached";return}
+    var now=Date.now();path=path.concat([[0,Math.max(1,now-pathTime),Math.round(physicalCursor.x),Math.round(physicalCursor.y)]]);pathTime=now
+  }
   function click(button){later([Workflow.keys(button)])}
   function runSaved(name){if(busy||localBusy||pending){error="Stop the current operation first";return}localBusy=true;var token=generation;hidePanel();http("POST","/run",{task:name},function(v,e){if(token!==root.generation)return;root.localBusy=false;if(!e){root.change("","last_task",v);root.message="Scheduled #"+v.task_number}})}
   function play(source,origin){
@@ -286,7 +292,7 @@ Item {
       if(!controlRun&&request.run){answer(null,{status:404,message:"Control run is no longer active"});return}
       if(busy||localBusy||pending||dialogs.working||recordingPath||(activePanel&&activePanel.captureAction)||(!controlRun&&dialogs.dialogOpen)){answer(null,{status:409,message:"Overlay is busy; inspect state or stop first"});return}
       if(controlRun&&request.no_replace!==undefined&&request.no_replace!==controlRun.noReplace){answer(null,{status:409,message:"no_replace is fixed for the active run"});return}
-      var plan=Control.prepare(request,environment,cursor,controlRun?dialogs.dialogState:null,Workflow,DialogState)
+      var plan=Control.prepare(request,environment,physicalCursor,controlRun?dialogs.dialogState:null,Workflow,DialogState)
       if(plan.effects.filter(function(e){return ["queue","play","zone","save_schedule"].indexOf(e.kind)>=0}).length>1)throw Error("Use one executable flow per control run")
       var before=Workflow.copy(environment)
       if(!controlRun){controlRun={id:String(Date.now())+"-"+(++serial),noReplace:!!request.no_replace,saved:before,hadPersist:persist.running};if(controlRun.noReplace)persist.stop()}
@@ -337,7 +343,7 @@ Item {
       if(r.event==="cursor"){
         root.cursor=r.cursor
         if(r.physical)root.physicalCursor=r.physical
-        if(root.recordingPath){if(root.path.length>=10000){root.recordingPath=false;root.error="Path limit reached"}else{var now=Date.now();root.path=root.path.concat([[0,Math.max(1,now-root.pathTime),Math.round(r.cursor.x),Math.round(r.cursor.y)]]);root.pathTime=now}}
+        root.recordPathPoint()
         return
       }
       if(r.event==="monitors"){root.monitors=r.monitors;return}
