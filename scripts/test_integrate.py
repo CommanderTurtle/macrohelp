@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import sys
 import unittest
 from unittest.mock import patch
 
@@ -12,6 +13,44 @@ spec.loader.exec_module(integration)
 
 
 class IntegrationTests(unittest.TestCase):
+    def test_localsurf_is_separate_and_copies_references_without_overwriting_macrohelp(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            file = root / "mcp.json"
+            original = {"command": "existing-macrohelp", "args": []}
+            file.write_text(json.dumps({"mcpServers": {"macrohelp": original}}))
+            server = {"command": sys.executable, "args": ["server.py", "--mcp", "macrohelpctl"]}
+            integration.omp(root, server, "install", False, "localsurf")
+            self.assertEqual(json.loads(file.read_text())["mcpServers"]["macrohelp"], original)
+            self.assertTrue((root / "skills/localsurf/references/modes.md").is_file())
+            guide = root / "skills/localsurf/SKILL.md"
+            guide.write_text("user modified")
+            integration.omp(root, server, "uninstall", False, "localsurf")
+            self.assertEqual(guide.read_text(), "user modified")
+            self.assertFalse((root / "skills/localsurf/references/modes.md").exists())
+            self.assertEqual(json.loads(file.read_text())["mcpServers"], {"macrohelp": original})
+
+    def test_localsurf_cli_preserves_paths_and_validates_bindings_before_writing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            binary = root / "path with spaces/macrohelpctl"
+            binary.parent.mkdir()
+            binary.write_bytes(b"not executed")
+            bindings = root / "bindings.json"
+            bindings.write_text(json.dumps({"line_start": "<Ctrl-q>"}))
+            with patch.dict(os.environ, {"OMP_HOME": str(root / "agent")}):
+                argv = ["--target", "omp", "--server", "localsurf", "--mcp", str(binary), "--bindings", str(bindings)]
+                integration.main(argv)
+                entry = json.loads((root / "agent/mcp.json").read_text())["mcpServers"]["localsurf"]
+                self.assertEqual(entry["command"], sys.executable)
+                self.assertEqual(entry["args"][-2:], ["--bindings", str(bindings.resolve())])
+                self.assertEqual(entry["args"][1:3], ["--mcp", str(binary.resolve())])
+                before = (root / "agent/mcp.json").read_bytes()
+                bindings.write_text('{"unknown": "j"}')
+                with self.assertRaises(SystemExit):
+                    integration.main(argv)
+                self.assertEqual((root / "agent/mcp.json").read_bytes(), before)
+
     def test_omp_preserves_other_servers_is_repeatable_and_uninstalls(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

@@ -50,40 +50,42 @@ def write(file, text, dry_run):
             os.unlink(name)
 
 
-def skill(directory, action, dry_run):
-    file = directory / "skills/macrohelp/SKILL.md"
-    text = SKILL.read_text(encoding="utf-8")
-    if action == "install":
-        write(file, text, dry_run)
-    elif file.exists():
-        if file.read_text(encoding="utf-8") != text:
-            print(f"retain modified skill {file}")
-        else:
-            print(f"{'[dry-run] ' if dry_run else ''}remove {file}")
-            if not dry_run:
-                file.unlink()
+def skill(directory, action, dry_run, server_name="macrohelp"):
+    source = ROOT / "skills" / server_name
+    for item in sorted(source.rglob("*.md")):
+        file = directory / "skills" / server_name / item.relative_to(source)
+        text = item.read_text(encoding="utf-8")
+        if action == "install":
+            write(file, text, dry_run)
+        elif file.exists():
+            if file.read_text(encoding="utf-8") != text:
+                print(f"retain modified skill {file}")
+            else:
+                print(f"{'[dry-run] ' if dry_run else ''}remove {file}")
+                if not dry_run:
+                    file.unlink()
 
 
-def omp(directory, server, action, dry_run):
+def omp(directory, server, action, dry_run, server_name="macrohelp"):
     file = directory / "mcp.json"
     config = read_config(file)
     servers = config.setdefault("mcpServers", {})
     if action == "install":
-        servers["macrohelp"] = {"type": "stdio", **server, "enabled": True, "timeout": 0}
+        servers[server_name] = {"type": "stdio", **server, "enabled": True, "timeout": 0}
         if isinstance(config.get("disabledServers"), list):
-            config["disabledServers"] = [name for name in config["disabledServers"] if name != "macrohelp"]
-    elif "macrohelp" in servers:
-        if not isinstance(servers["macrohelp"], dict) or servers["macrohelp"].get("command") != server["command"] or servers["macrohelp"].get("args") != server["args"]:
-            raise ValueError("Macrohelp MCP entry was modified; inspect it before removing")
-        del servers["macrohelp"]
+            config["disabledServers"] = [name for name in config["disabledServers"] if name != server_name]
+    elif server_name in servers:
+        if not isinstance(servers[server_name], dict) or servers[server_name].get("command") != server["command"] or servers[server_name].get("args") != server["args"]:
+            raise ValueError(f"{server_name} MCP entry was modified; inspect it before removing")
+        del servers[server_name]
     else:
-        skill(directory, action, dry_run)
+        skill(directory, action, dry_run, server_name)
         return
     write(file, json.dumps(config, ensure_ascii=False, indent=2) + "\n", dry_run)
-    skill(directory, action, dry_run)
+    skill(directory, action, dry_run, server_name)
 
 
-def hermes(directory, profile, server, action, dry_run):
+def hermes(directory, profile, server, action, dry_run, server_name="macrohelp"):
     cli = shutil.which("hermes")
     if not cli and not dry_run:
         raise ValueError("Hermes is not on PATH; no configuration was changed")
@@ -91,9 +93,9 @@ def hermes(directory, profile, server, action, dry_run):
     if action == "install":
         entry = {**server, "enabled": True, "timeout": 30, "connect_timeout": 10,
                  "supports_parallel_tool_calls": False, "tools": {"resources": True, "prompts": False}}
-        args += ["config", "set", "--force", "mcp_servers.macrohelp", json.dumps(entry)]
+        args += ["config", "set", "--force", f"mcp_servers.{server_name}", json.dumps(entry)]
     else:
-        args += ["config", "unset", "mcp_servers.macrohelp"]
+        args += ["config", "unset", f"mcp_servers.{server_name}"]
     print(f"{'[dry-run] ' if dry_run else ''}{action} Hermes MCP ({profile})")
     target = directory if profile == "default" else directory / "profiles" / profile
     if not dry_run:
@@ -104,7 +106,7 @@ def hermes(directory, profile, server, action, dry_run):
             if saved:
                 print(f"Previous config preserved at {saved}", file=sys.stderr)
             raise
-    skill(target, action, dry_run)
+    skill(target, action, dry_run, server_name)
 
 
 def main(argv=None):
@@ -113,9 +115,13 @@ def main(argv=None):
     parser.add_argument("--target", action="append", choices=["omp", "hermes", "all"], required=True)
     parser.add_argument("--profile", default="default", help="one named profile; default is the client's default profile")
     parser.add_argument("--mcp", type=Path, help="existing macrohelp-mcp.exe or macrohelpctl binary")
+    parser.add_argument("--server", choices=["macrohelp", "localsurf"], default="macrohelp", help="register the original MCP or the Surfingkeys harness")
+    parser.add_argument("--bindings", type=Path, help="Localsurf workflow key overrides; does not edit Surfingkeys")
     parser.add_argument("--env", type=Path, default=ROOT / ".env", help="overlay's env file; keys are never copied into client config")
     parser.add_argument("--dry-run", action="store_true")
     options = parser.parse_args(argv)
+    if options.bindings and options.server != "localsurf":
+        parser.error("--bindings is only used with --server localsurf")
     if not re.fullmatch(r"[A-Za-z0-9_-]+", options.profile):
         parser.error("Invalid profile name")
     home = Path.home()
@@ -134,6 +140,26 @@ def main(argv=None):
     if options.action == "install" and not binary.is_file():
         parser.error(f"Build the overlay MCP first, or pass --mcp PATH: {binary}")
     server = {"command": str(binary), "args": (["mcp"] if name == "macrohelpctl" else []) + ["--env", str(options.env.expanduser().resolve())]}
+    if options.server == "localsurf":
+        server = {"command": sys.executable, "args": [str(ROOT / "runtime/source/mcp/localsurf/server.py"),
+                  "--mcp", str(binary), "--env", str(options.env.expanduser().resolve())]}
+        if options.bindings:
+            file = options.bindings.expanduser().resolve()
+            bindings = read_config(file)
+            if not file.is_file():
+                parser.error(f"Bindings file not found: {file}")
+            # Check the same recipe/compiler rules without starting the harness.
+            harness = ROOT / "runtime/source/mcp/localsurf"
+            sys.path.insert(0, str(harness))
+            try:
+                from workflows import validate_bindings
+                try:
+                    validate_bindings(bindings)
+                except ValueError as error:
+                    parser.error(str(error))
+            finally:
+                sys.path.remove(str(harness))
+            server["args"] += ["--bindings", str(file)]
     targets = list(dict.fromkeys(["omp", "hermes"] if "all" in options.target else options.target))
     # Parse/check every selected target before the first write.
     if "omp" in targets:
@@ -142,9 +168,9 @@ def main(argv=None):
         parser.error("Hermes is not on PATH; no configuration was changed")
     for target in targets:
         if target == "omp":
-            omp(omp_dir, server, options.action, options.dry_run)
+            omp(omp_dir, server, options.action, options.dry_run, options.server)
         else:
-            hermes(hermes_dir, options.profile, server, options.action, options.dry_run)
+            hermes(hermes_dir, options.profile, server, options.action, options.dry_run, options.server)
     print("Restart the selected client to reload MCP configuration. No overlay or execution backend was started.")
 
 
