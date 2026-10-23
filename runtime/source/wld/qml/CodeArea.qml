@@ -12,6 +12,9 @@ QQC.ScrollView {
   property string hint: ""
   property bool submitOnReturn: false
   property bool captureKeys: false
+  property real minimumHeight: Style.space(160)
+  property real maximumHeight: Style.space(640)
+  readonly property real naturalHeight: editor.contentHeight+editor.topPadding+editor.bottomPadding
   signal accepted()
   signal cancelled()
   signal edited(string value)
@@ -25,7 +28,7 @@ QQC.ScrollView {
       if(callback)callback({text:value},null)
     })
   }
-  implicitHeight: Style.space(160)
+  implicitHeight: Math.min(maximumHeight,Math.max(minimumHeight,naturalHeight))
   contentWidth: availableWidth
   clip:true
   QQC.TextArea {

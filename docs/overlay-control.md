@@ -42,7 +42,13 @@ Menu numbers retain the native numbering:
 Canonical string names and button actions are listed by `/v1/schema`.
 
 Each `inputs` string submits one dialog field **including Enter**. Workflow text
-is literal; it is not split into commands. For example, save this as `request.json`:
+is literal; it is not split into commands.
+
+Buffer/variable editors and `{type ...}` / `{set ...}` payloads retain actual
+line breaks. In quick dialogs, Shift+Enter inserts a line; Enter submits. Literal
+backslash-n stays literal (JSON's own string escaping still applies).
+
+For example, save this as `request.json`:
 
 ```json
 {

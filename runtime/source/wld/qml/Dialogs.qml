@@ -251,7 +251,8 @@ Item {
                         id: editor
                         width:parent.width
                         visible:!dlgRoot.view.manual
-                        implicitHeight:dlgRoot.view.multiline?Math.min(Style.space(220),Math.max(Style.space(90),window.height*0.24)):Style.space(48)
+                        minimumHeight:dlgRoot.view.multiline?Style.space(90):Style.space(48)
+                        maximumHeight:dlgRoot.view.multiline?Math.min(Style.space(640),Math.max(Style.space(90),window.height*0.65)):Style.space(48)
                         text:dlgRoot.dialogState.text||""
                         readOnly:dlgRoot.view.readonly || dlgRoot.working
                         submitOnReturn:true

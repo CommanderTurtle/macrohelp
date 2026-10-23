@@ -45,6 +45,12 @@ test("branch decisions and click mode survive a wait without reevaluating the br
   expect(second.steps[0].actions.map(a=>a.type)).toEqual(["wait","keyssequence","paste"])
   expect(second.steps[0].actions[2].content).toBe("buffer")
 })
+test("native wait boundaries preserve multiline payloads and literal backslash-n",()=>{
+  const first=W.compile("{type first}{wait 2}{set A second\n  line\\n}{type $A}",env(),context())
+  const second=W.compile("",first.state,context(),first.next)
+  expect(second.steps[0].actions[0].type).toBe("wait")
+  expect(second.steps[0].actions[1].content).toBe("second\n  line\\n")
+})
 test("profile continuations retain their return frame and enclosing branch",()=>{
   const c=context();c.profiles.route={script:"{type in}{wait 1}{point 3}"}
   const first=W.compile("{if A == yes}{profile route}{type out}{endif}",env(),c)

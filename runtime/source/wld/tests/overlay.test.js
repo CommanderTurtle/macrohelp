@@ -8,6 +8,25 @@ const bindings=[{modmask:68,key:"Print",description:"Extract text (OCR)",dispatc
 const context={tasks:[{name:"Saved"}],status:{scheduled:[],running:[],finished:[{task_number:1,state:"finished"}]},shortcuts:W.desktopShortcuts(bindings)}
 const compile=s=>W.compile(s,state(),context)
 
+test("type and set preserve actual multiline whitespace without interpreting backslash escapes",()=>{
+  const text="first  line\n\n\tindented\r\nlast \\n literal"
+  expect(compile("{type "+text+"}").steps[0].actions[0].content).toBe(text)
+  for(const target of ["A","paste Z"]){
+    const p=compile("{set "+target+" "+text+"}{paste "+(target==="A"?"A":"Z")+"}")
+    expect(p.steps[0].actions[0].content).toBe(text)
+    expect(target==="A"?p.state.vars.A:p.state.buffers.Z).toBe(text)
+  }
+  expect(compile("{type first\\nsecond}").steps[0].actions[0].content).toBe("first\\nsecond")
+})
+
+test("multiline buffer references and deferred clipboard content are not flattened",()=>{
+  const e=state();e.vars.A="variable\n\tline";e.buffers.Z="buffer\r\n\nline\\n"
+  const p=W.compile("{type $A}\n{buf Z}",e,context)
+  expect(p.steps[0].actions.map(a=>a.content)).toEqual([e.vars.A,e.buffers.Z])
+  const live=W.compile("{zonebuf Z,X,A}{type $A}",e,context)
+  expect(W.resolve(live.steps.at(-1).actions,e)[0].content).toBe(e.vars.A)
+})
+
 test("all ordinary input stays in one native plan",()=>{
   const p=compile("{point 1}{click}{paste A,Z}{wait 200}{CTRL+S}{play Saved.scht}")
   expect(p.steps).toHaveLength(1)

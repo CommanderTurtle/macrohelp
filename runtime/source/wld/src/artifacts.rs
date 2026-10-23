@@ -298,6 +298,10 @@ mod tests {
     fn windows_export_preserves_environment_and_escape_sequences() {
         let mut state = crate::overlay::default_state();
         state["script"] = json!("{type 🐢}\n{wait 100}\t\\n\r");
+        for slot in ["Z", "X", "C", "V"] {
+            state["buffers"][slot] = json!(format!(" {slot}\r\n\n\tindented\\n literal\n "));
+        }
+        state["vars"]["A"] = json!("variable\n\n\tline\\n literal");
         state["points"][3] = json!([-12, 100]);
         state["zones"]["C"] = json!([1, 2, 30, 40]);
         state["shells"]["P"] = json!("pwsh -NoLogo");

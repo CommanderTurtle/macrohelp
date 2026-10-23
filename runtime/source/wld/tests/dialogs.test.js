@@ -208,6 +208,15 @@ test("QML buffer execution restores the original pointer and preserves edited te
   expect(queued[0].filter(a=>a.type==="paste")[0].content).toBe("hello\nworld")
   expect(queued[0].at(-1).keysmap[0][1]).toEqual(["ENTER"])
 })
+
+test("all four buffer editors preserve multiline text and literal escape characters through paste",()=>{
+  for(const slot of ["Z","X","C","V"]){
+    const {s,queued}=controller(),text="first\r\n\n\t  second\\n third"
+    s.openDialog("paste_buffers");s.edit(slot.toLowerCase());s.edit(text);s.pasteBuffer(false)
+    expect(s.service.environment.buffers[slot]).toBe(text)
+    expect(queued[0].find(a=>a.type==="paste").content).toBe(text)
+  }
+})
 test("Escape and the existing greater-than-60px dismissal request a return, not execution closes",()=>{
   const {s,closed}=controller();s.openDialog("paste_buffers");s.cancel()
   expect(closed.at(-1).restore).toBe(true)

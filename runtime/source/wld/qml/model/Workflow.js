@@ -186,7 +186,10 @@ function compile(source,original,context,resume) {
   function append(text){if(expanded.length+text.length>1000000)throw Error("Expanded workflow exceeds 1 MiB");expanded+=text}
   while((match=token.exec(source))){
     if(source.slice(at,match.index).trim())throw Error("Use {type text} for literal text")
-    at=token.lastIndex;var raw=match[1].trim(),parts=raw.split(/\s+/),op=parts.shift().toLowerCase(),arg=parts.join(" ")
+    at=token.lastIndex
+    // Split only the command name. The payload is literal text, not words to
+    // join back together: preserve its line breaks, tabs and repeated spaces.
+    var raw=match[1].trim(),head=/^(\S+)(?:\s([\s\S]*))?$/.exec(raw),op=head?head[1].toLowerCase():"",arg=head&&head[2]!==undefined?head[2]:""
     if(op==="if"){if(stack.length>=16)throw Error("Conditions nested too deeply");var value=enabled?condition(arg,state,context):false;stack.push({parent:enabled,value:value,otherwise:false});enabled=enabled&&value;append(match[0]);continue}
     if(op==="else"){if(stack.length<=initialDepth||stack[stack.length-1].otherwise)throw Error("Unexpected else");var frame=stack[stack.length-1];frame.otherwise=true;enabled=frame.parent&&!frame.value;append(match[0]);continue}
     if(op==="endif"){if(stack.length<=initialDepth)throw Error("Unexpected endif");enabled=stack.pop().parent;append(match[0]);continue}
@@ -212,7 +215,7 @@ function compile(source,original,context,resume) {
     }
     append("{"+op+(arg?" "+arg:"")+"}")
     if(op==="set"){
-      var setting=arg.match(/^(?:(var|paste|zone|point|shell)\s+)?([^=\s]+)\s*(?:=\s*|\s+)(.*)$/i)
+      var setting=arg.match(/^(?:(var|paste|zone|point|shell)\s+)?([^=\s]+)\s*(?:=\s*|\s+)([\s\S]*)$/i)
       if(!setting)throw Error("Use {set A value}, {set paste Z value}, {set point 1 x,y}")
       var kind=(setting[1]||"").toLowerCase(),k=setting[2].toUpperCase(),v=setting[3]
       if((!kind||kind==="var")&&/^[ASDF]$/.test(k)){state.vars[k]=v;delete live[k]}
