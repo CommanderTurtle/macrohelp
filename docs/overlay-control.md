@@ -97,10 +97,6 @@ stay inside their existing task; standalone saved schedules remain snapshots.
 State exposes `sequence` progress; task names/logs identify `1/n`, `2/n`, etc.
 Stop All cancels the pending sequence as well as backend execution.
 
-Save Cursor names `1`–`16` (also `point 3`) update the corresponding Registry Hub
-point; `A/S/D/F` store the captured `x,y` as a variable. Existing movement-action
-export and the frozen pre-dialog capture position are preserved.
-
 ## MCP
 
 Configure an MCP client's stdio server with one of these commands; the overlay

@@ -76,9 +76,6 @@ static bool RegistryDispatchNeedsOrigin();
 static void CancelRegistryDispatch();
 static void TickRegistryDispatch();
 static control::Json RegistryDispatchStatus();
-static int RegistryPointIndexFromCommand(const std::string&);
-static int RegistryVarIndexFromCommand(const std::string&);
-static bool ApplySavedCursorVariable(const std::string&,POINT);
 static void SaveRegistryHubState();
 
 // =============================================================================
@@ -2641,10 +2638,6 @@ static bool WriteSaveCursorActions(HWND hwnd, bool includeClick) {
         MessageBoxW(hwnd, L"Failed to save to clicksession.txt.",
                    L"Error", MB_OK | MB_ICONERROR);
     }
-    if(ok&&!g_saveCursorState.coords.empty()) {
-        const auto& p=g_saveCursorState.coords.front();
-        if(ApplySavedCursorVariable(WStringToUtf8(g_saveCursorState.name),{p[2],p[3]}))SaveRegistryHubState();
-    }
     return ok;
 }
 
@@ -4493,12 +4486,6 @@ static std::string PointValueUtf8(int pointIndex) {
     std::ostringstream ss;
     ss << g_registryPoints[pointIndex].x << "," << g_registryPoints[pointIndex].y;
     return ss.str();
-}
-static bool ApplySavedCursorVariable(const std::string& name,POINT point) {
-    int slot=RegistryPointIndexFromCommand(name),var=RegistryVarIndexFromCommand(name);
-    if(slot>=0){g_registryPoints[slot]=point;g_registryPointSet[slot]=true;return true;}
-    if(var>=0){g_registryVars[var]=std::to_wstring(point.x)+L","+std::to_wstring(point.y);return true;}
-    return false;
 }
 
 static bool ParsePointCoordinatesLoose(const std::wstring& raw, POINT& point) {
@@ -8246,7 +8233,6 @@ static std::wstring RegistryHubHelpText() {
         L"------------------------\r\n"
         L"{wait 200} waits 200 milliseconds.\r\n"
         L"During Play, every explicit wait begins the next native task. That task is compiled from current values after the previous task finishes, with the wait as its first action. Stop All cancels remaining dispatches.\r\n"
-        L"Save Cursor names 1-16 (or point 3) update that Registry Hub point; A/S/D/F store x,y in that variable, alongside the existing action export.\r\n"
         L"{pt 1} through {pt 16} move through the canonical Tasket cursor-move template when that point is set. {point N} remains the long alias.\r\n"
         L"{click} or {left} emits a left-click action.\r\n"
         L"{click on} / {click off} changes whether buffer paste tokens click before pasting.\r\n"

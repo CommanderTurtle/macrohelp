@@ -7,16 +7,21 @@ const D=runInNewContext(read("../qml/model/Dialogs.js")+"\n({open,submit})")
 const env=()=>({script:"",vars:{A:"yes",S:"",D:"",F:""},buffers:{Z:"buffer",X:"",C:"",V:""},points:Array(16).fill(null),zones:{},shells:{X:"bash",C:"sh",G:"python",P:"pwsh",T:""}})
 const context=()=>({deferred:true,profiles:{},tasks:[],status:{},shortcuts:{terminal:W.keys("SUPER+ENTER")}})
 function savePoint(environment,name,at){
-  let s=D.open("save_cursor",at);s=D.submit(s,name,environment,at,W).state
-  const result=D.submit(s,"z",environment,{x:999,y:999},W)
+  let s=D.open("registry_hub",at);s=D.submit(s,name,environment,at,W).state
+  const result=D.submit(s,"s",environment,at,W)
   for(const effect of result.effects)if(effect.kind==="change")environment[effect.section][effect.key]=effect.value
   return result
 }
 
-test("Alt+0 saves the frozen entry point into numeric slots/variables and retains action export",()=>{
-  const e=env(),result=savePoint(e,"point 3",{x:-12,y:345})
-  expect(e.points[2]).toEqual([-12,345]);expect(result.effects.find(x=>x.kind==="export").actions[0].cursormovsmap[0].slice(2)).toEqual([-12,345])
-  savePoint(e,"A",{x:40,y:50});expect(e.vars.A).toBe("40,50")
+test("Alt+0 exports captured actions without overwriting Registry Hub points or variables",()=>{
+  for(const name of ["3","point 3","A"]){
+    const e=env(),before=JSON.stringify(e),at={x:-12,y:345}
+    let s=D.open("save_cursor",at);s=D.submit(s,name,e,at,W).state
+    const result=D.submit(s,"z",e,{x:999,y:999},W)
+    expect(result.effects).toHaveLength(1);expect(result.effects[0].kind).toBe("export")
+    expect(result.effects[0].actions[0].cursormovsmap[0].slice(2)).toEqual([-12,345])
+    expect(JSON.stringify(e)).toBe(before)
+  }
 })
 test("each next native task begins with its explicit wait and expands only at dispatch",()=>{
   const e=env(),c=context(),source="{type first}{wait 200}{point 3}{paste A}{wait 0}{type $A}"

@@ -171,7 +171,6 @@ Overlay evidence: [Windows implementation](../runtime/source/src/main.cpp),
 | O88 · Dismissed dialog pointer return | No center-bottom blink in Windows | Present: Escape/60px dismissal returns a blinked dialog's frozen entry point via the existing memory-only temp-task path |
 | O89 · MCP skill and live help | Embedded guide, shared tool catalog, native Registry Hub Help and schema resources | Present: identical MCP discovery/recovery contract; help reads the existing platform-native manual without opening a menu |
 | O90 · Registry Hub wait dispatch | Explicit waits begin sequential native tasks; late per-segment expansion and Stop All cancellation | Present: same dispatch boundaries, current point/variable reads, sequence progress and cancellation; standalone saved schedules remain snapshots |
-| O91 · Save Cursor variables | Numeric point-slot names and A/S/D/F store the captured entry coordinate alongside action export | Present: same numbered point and coordinate-variable storage; dialog placement/capture scaling unchanged |
 
 </details>
 

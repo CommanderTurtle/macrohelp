@@ -30,8 +30,9 @@ int main(int argc,char** argv) {
             check(cursor.total==3,"Explicit wait count");
             check(CompileRegistryDispatchSegment(cursor,&document,&status),"Initial segment compile");
             check(Json::parse(document)["actions"].size()==1&&cursor.leadingWait,"Future point expanded before dispatch");
-            check(ApplySavedCursorVariable("point 3",{-12,345}),"Save Cursor point variable");
-            check(ApplySavedCursorVariable("A",{700,800}),"Save Cursor text variable");
+            // Existing Registry Hub point/variable storage, independent of Alt+0.
+            g_registryPoints[2]={-12,345};g_registryPointSet[2]=true;
+            g_registryVars[0]=L"700,800";
             ++cursor.index;
             check(CompileRegistryDispatchSegment(cursor,&document,&status),"Live segment compile");
             auto actions=Json::parse(document)["actions"];
