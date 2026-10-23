@@ -47,6 +47,10 @@ is literal; it is not split into commands.
 Buffer/variable editors and `{type ...}` / `{set ...}` payloads retain actual
 line breaks. In quick dialogs, Shift+Enter inserts a line; Enter submits. Literal
 backslash-n stays literal (JSON's own string escaping still applies).
+Nested braces stay inside the enclosing command: `{set cbuf {"nested":{"n":1}}}`
+stores JSON in buffer C. Braces must balance; embedded commands are literal text.
+Only `{press ...}` accepts common named keys such as `&rbrace;` and `&amp;`;
+`{press Shift &amp; 3}` holds Shift while tapping the key three times.
 
 For example, save this as `request.json`:
 

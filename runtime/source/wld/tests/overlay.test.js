@@ -8,6 +8,31 @@ const bindings=[{modmask:68,key:"Print",description:"Extract text (OCR)",dispatc
 const context={tasks:[{name:"Saved"}],status:{scheduled:[],running:[],finished:[{task_number:1,state:"finished"}]},shortcuts:W.desktopShortcuts(bindings)}
 const compile=s=>W.compile(s,state(),context)
 
+test("balanced outer braces preserve nested JSON, code and command-looking literal text",()=>{
+  const text='{\n  "nested": {"list": [{"n": 1}]},\n  "script": "{wait 99}{if nope}{endif}",\n  "literal": "&amp;\\\\n"\n}'
+  expect(compile("{type "+text+"}{type after}").steps[0].actions.map(a=>a.content)).toEqual([text,"after"])
+  for(const target of ["A","paste C","buffer C","cbuf"]){
+    const p=compile("{set "+target+" "+text+"}{paste "+(target==="A"?"A":"C")+"}")
+    expect(p.steps[0].actions[0].content).toBe(text)
+  }
+  for(const source of ["{type {broken}","{type ok}}","{type ok}{","{press }}","{type ok} trailing"]){expect(()=>compile(source)).toThrow()}
+})
+
+test("press decodes whole named keys only and holds modifiers across repeated taps",()=>{
+  const a=compile("{press Shift &amp; 3}").steps[0].actions[0]
+  expect(a.type).toBe("keyssequence");expect(a.keysmap[0]).toEqual([282,["SHIFT_LEFT"]])
+  for(const time of [1,121,241])expect(a.keysmap[time]).toEqual([40,["ampersand"]])
+  expect(compile("{press &rbrace;}").steps[0].actions[0].keysmap[1][1]).toEqual(["braceright"])
+  expect(compile("{press CTRL+&comma;}").steps[0].actions[0].keysmap[1][1]).toEqual(["comma"])
+  expect(compile("{press &plus;}").steps[0].actions[0].keysmap[1][1]).toEqual(["plus"])
+  expect(compile("{press 3}").steps[0].actions[0].keysmap[1][1]).toEqual(["3"])
+  expect(compile("{press CTRL+3}").steps[0].actions[0].keysmap[1][1]).toEqual(["3"])
+  expect(Object.keys(compile("{press CTRL+3}").steps[0].actions[0].keysmap)).toHaveLength(2)
+  expect(compile("{type &rbrace; &amp;}").steps[0].actions[0].content).toBe("&rbrace; &amp;")
+  expect(compile("{set C &rbrace;}{paste C}").steps[0].actions[0].content).toBe("&rbrace;")
+  for(const s of ["{press}","{press Shift &amp; 0}","{press Shift &amp; 1001}","{press &xml;}","{press &amp;rbrace;}"]){expect(()=>compile(s)).toThrow()}
+})
+
 test("type and set preserve actual multiline whitespace without interpreting backslash escapes",()=>{
   const text="first  line\n\n\tindented\r\nlast \\n literal"
   expect(compile("{type "+text+"}").steps[0].actions[0].content).toBe(text)

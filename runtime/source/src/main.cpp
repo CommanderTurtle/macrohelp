@@ -5323,15 +5323,18 @@ static bool AppendShellAliasToken(const std::vector<std::string>& args, std::vec
 static std::vector<std::string> ExtractRegistryHubTokens(const std::wstring& script) {
     std::string text = WStringToUtf8(script);
     std::vector<std::string> tokens;
-    size_t pos = 0;
-    while (true) {
-        size_t open = text.find('{', pos);
-        if (open == std::string::npos) break;
-        size_t close = text.find('}', open + 1);
-        if (close == std::string::npos) break;
-        tokens.push_back(TrimAscii(text.substr(open + 1, close - open - 1)));
-        pos = close + 1;
+    size_t start = 0, depth = 0;
+    for (size_t i = 0; i < text.size(); ++i) {
+        char ch = text[i];
+        if (ch == '{') { if (!depth) start = i; ++depth; }
+        else if (ch == '}') {
+            control::require(depth != 0, "Unexpected closing brace.");
+            if (!--depth) tokens.push_back(TrimAscii(text.substr(start + 1, i - start - 1)));
+        } else if (!depth) {
+            control::require(isspace(static_cast<unsigned char>(ch)) != 0, "Use {type text} for literal text.");
+        }
     }
+    control::require(depth == 0, "Missing closing brace.");
     return tokens;
 }
 
@@ -5438,16 +5441,32 @@ static bool AppendZoneBufToken(const std::vector<std::string>& args, std::vector
 
 static bool ApplyRegistryHubSetToken(const std::string& token, std::wstring* status) {
     std::string body = TrimAscii(token.substr(4));
-    std::vector<std::string> args = SplitScriptArgs(body);
-    if (args.size() < 2) {
+    // Read only the target prefix as fields; JSON/text is an opaque remainder.
+    size_t at = 0;
+    auto field = [&]() {
+        while (at < body.size() && isspace(static_cast<unsigned char>(body[at]))) ++at;
+        size_t start = at;
+        while (at < body.size() && !isspace(static_cast<unsigned char>(body[at])) && body[at] != '=') ++at;
+        return body.substr(start, at - start);
+    };
+    std::string target = LowerAscii(field());
+    std::vector<std::string> args = {target};
+    bool qualified = target == "paste" || target == "buffer" || target == "zone" || target == "point" || target == "shell" || target == "var";
+    if (qualified) args.push_back(LowerAscii(field()));
+    while (at < body.size() && isspace(static_cast<unsigned char>(body[at]))) ++at;
+    if (at < body.size() && body[at] == '=') ++at;
+    std::string value = TrimAscii(body.substr(at));
+    if (target.empty() || value.empty() || (qualified && args[1].empty())) {
         if (status) *status = L"{set ...} needs a target and value.";
         return false;
     }
-    std::string target = LowerAscii(args[0]);
-    std::string value;
-    size_t valuePos = body.find(args[1]);
-    if (valuePos != std::string::npos) value = TrimAscii(body.substr(valuePos));
+    if (qualified) args.push_back(value);
     value = ExpandRegistryHubValueReferences(value);
+    if (target == "var") {
+        target = LowerAscii(args[1]);
+        if (RegistryVarIndexFromCommand(target) < 0) { if (status) *status=L"Unknown variable target."; return false; }
+    }
+    if (target.size() == 4 && target.substr(1) == "buf" && PasteBufferSlotFromCommand(target.substr(0, 1)) >= 0) target.resize(1);
 
     int varSlot = RegistryVarIndexFromCommand(target);
     if (varSlot >= 0) {
@@ -5461,18 +5480,15 @@ static bool ApplyRegistryHubSetToken(const std::string& token, std::wstring* sta
     }
     if ((target == "paste" || target == "buffer") && args.size() >= 3) {
         int slot = PasteBufferSlotFromCommand(args[1]);
-        size_t pos = body.find(args[2]);
-        if (slot >= 0 && pos != std::string::npos) {
-            g_pasteBuffers[slot] = Utf8ToWString(ExpandRegistryHubValueReferences(TrimAscii(body.substr(pos))));
+        if (slot >= 0) {
+            g_pasteBuffers[slot] = Utf8ToWString(value);
             return true;
         }
     }
     if (target == "zone" && args.size() >= 3) {
         int slot = PasteBufferSlotFromCommand(LowerAscii(args[1]));
         POINT start = {}, end = {};
-        size_t pos = body.find(args[2]);
-        if (slot >= 0 && pos != std::string::npos &&
-            ParseZoneCoordinatesOrPointRefs(Utf8ToWString(ExpandRegistryHubValueReferences(TrimAscii(body.substr(pos)))), start, end)) {
+        if (slot >= 0 && ParseZoneCoordinatesOrPointRefs(Utf8ToWString(value), start, end)) {
             g_zoneBuffers[slot].set = true;
             g_zoneBuffers[slot].start = start;
             g_zoneBuffers[slot].end = end;
@@ -5482,9 +5498,7 @@ static bool ApplyRegistryHubSetToken(const std::string& token, std::wstring* sta
     if (target == "point" && args.size() >= 3) {
         int point = RegistryPointIndexFromCommand(args[1]);
         POINT parsed = {};
-        size_t pos = body.find(args[2]);
-        if (point >= 0 && point < REGISTRY_POINT_COUNT && pos != std::string::npos &&
-            ParsePointCoordinatesOrReference(Utf8ToWString(ExpandRegistryHubValueReferences(TrimAscii(body.substr(pos)))), parsed)) {
+        if (point >= 0 && point < REGISTRY_POINT_COUNT && ParsePointCoordinatesOrReference(Utf8ToWString(value), parsed)) {
             g_registryPointSet[point] = true;
             g_registryPoints[point] = parsed;
             return true;
@@ -5495,12 +5509,7 @@ static bool ApplyRegistryHubSetToken(const std::string& token, std::wstring* sta
         return true;
     }
     if (target == "shell" && args.size() >= 3) {
-        size_t aliasPos = body.find(args[2]);
-        if (aliasPos == std::string::npos) {
-            if (status) *status = L"{set shell ...} could not read alias text.";
-            return false;
-        }
-        std::wstring aliasValue = Utf8ToWString(TrimAscii(body.substr(aliasPos)));
+        std::wstring aliasValue = Utf8ToWString(value);
         std::string slot = LowerAscii(args[1]);
         if (slot == "x" || slot == "bash") {
             g_registryPowerShellPath = aliasValue;
@@ -5532,12 +5541,79 @@ static bool ApplyRegistryHubSetToken(const std::string& token, std::wstring* sta
     return false;
 }
 
+// Named characters are key arguments only, decoded once after brace parsing.
+static std::string RegistryPressEntity(const std::string& key) {
+    if (key.size() < 3 || key.front() != '&' || key.back() != ';') return key;
+    static const std::pair<const char*, const char*> names[] = {
+        {"amp","&"},{"AMP","&"},{"lt","<"},{"LT","<"},{"gt",">"},{"GT",">"},
+        {"quot","\""},{"QUOT","\""},{"apos","'"},{"lbrace","{"},{"lcub","{"},
+        {"rbrace","}"},{"rcub","}"},{"lbrack","["},{"lsqb","["},{"rbrack","]"},{"rsqb","]"},
+        {"sol","/"},{"bsol","\\"},{"vert","|"},{"semi",";"},{"colon",":"},
+        {"excl","!"},{"num","#"},{"dollar","$"},{"percnt","%"},{"lpar","("},{"rpar",")"},
+        {"ast","*"},{"plus","+"},{"comma",","},{"period","."},{"quest","?"},
+        {"commat","@"},{"grave","`"},{"Tab","\t"},{"NewLine","\n"}
+    };
+    auto name = key.substr(1, key.size() - 2);
+    for (const auto& entry : names) if (name == entry.first) return entry.second;
+    throw control::Error(400, "Unsupported press entity: " + key);
+}
+static std::vector<std::string> RegistryPressKeys(const std::string& raw) {
+    auto key = RegistryPressEntity(raw);
+    if (key == raw) return {NormalizeTasketScriptKeyToken(key)};
+    if (key == "\n") return {"ENTER"};
+    if (key == "\t") return {"TAB"};
+    if (key == "+" || key == "-" || key == "*" || key == "/" || key == ".") return {key};
+    SHORT mapped = VkKeyScanExW(static_cast<unsigned char>(key[0]), GetKeyboardLayout(0));
+    control::require(mapped != -1, "Press character is not available in the active keyboard layout; use {type ...}.");
+    UINT vk = LOBYTE(mapped); std::string target;
+    switch (vk) {
+        case VK_OEM_1: target=";:"; break; case VK_OEM_2: target="/?"; break;
+        case VK_OEM_3: target="`~"; break; case VK_OEM_4: target="[{"; break;
+        case VK_OEM_5: target="\\|"; break; case VK_OEM_6: target="]}"; break;
+        case VK_OEM_7: target="'\""; break; case VK_OEM_8: target="!§"; break;
+        case VK_OEM_102: target="<>"; break;
+        default: if ((vk >= 'A' && vk <= 'Z') || (vk >= '0' && vk <= '9')) target=VkCodeToTasketName(vk,false);
+    }
+    control::require(!target.empty(), "Tasket has no key mapping for this character in the active layout; use {type ...}.");
+    std::vector<std::string> result;
+    if (HIBYTE(mapped)&1) result.push_back("SHIFT_LEFT");
+    if (HIBYTE(mapped)&2) result.push_back("CONTROL_LEFT");
+    if (HIBYTE(mapped)&4) result.push_back("ALT_LEFT");
+    result.push_back(target); return result;
+}
+static bool RegistryPressModifier(const std::string& key) {
+    return key=="CONTROL_LEFT"||key=="CONTROL_RIGHT"||key=="SHIFT_LEFT"||key=="SHIFT_RIGHT"||key=="ALT_LEFT"||key=="ALT_GR"||key=="WINDOWS";
+}
+static std::string BuildRegistryPressAction(std::string text) {
+    if (TrimAscii(text) != "+") std::replace(text.begin(),text.end(),'+',' ');
+    auto args=SplitScriptArgs(text); int count=1;
+    // Ctrl+3 is a chord, not a repeat; a count requires a preceding target key.
+    if (args.size()>1 && std::any_of(args.begin(),args.end()-1,[](const std::string& key){return !RegistryPressModifier(NormalizeTasketScriptKeyToken(key));}) && !args.back().empty() && std::all_of(args.back().begin(),args.back().end(),[](unsigned char ch){return std::isdigit(ch)!=0;})) {
+        control::require(args.back().size()<=4, "Repeat count must be 1–1000.");
+        count=std::stoi(args.back());args.pop_back();
+        control::require(count>=1&&count<=1000, "Repeat count must be 1–1000.");
+    }
+    control::require(!args.empty(), "Enter a key or chord.");
+    std::vector<std::string> mods,targets;
+    for (const auto& arg : args) for (const auto& key : RegistryPressKeys(arg)) {
+        auto& into=RegistryPressModifier(key)?mods:targets;
+        if (std::find(into.begin(),into.end(),key)==into.end()) into.push_back(key);
+    }
+    if (targets.empty()) return BuildKeysSequenceActionJson("RegistryHubPress",{mods},120,40);
+    control::Json map=control::Json::object();
+    if (!mods.empty()) map["0"]=control::Json::array({(count-1)*120+42,mods});
+    for (int i=0;i<count;++i) map[std::to_string(i*120+1)]=control::Json::array({40,targets});
+    return control::Json({{"type","keyssequence"},{"keysmap",map},{"keysSeqId",""},{"loop",1}}).dump();
+}
+
 static bool CompileRegistryHubToken(
     const std::string& rawToken,
     std::vector<std::string>& actions,
     bool& pasteFocusClickEnabled,
     std::wstring* status) {
     std::string token = TrimAscii(rawToken);
+    size_t separator=token.find_first_of(" \t\r\n\v\f");
+    if (separator!=std::string::npos) token[separator]=' ';
     std::string lower = LowerAscii(token);
     if (token.empty()) return true;
 
@@ -5568,6 +5644,10 @@ static bool CompileRegistryHubToken(
         }
         actions.push_back(BuildPasteActionJson("registry_hub_type", token.substr(5)));
         return true;
+    }
+    if (lower == "press" || lower.rfind("press ",0) == 0) {
+        try { actions.push_back(BuildRegistryPressAction(token.size()>5?token.substr(6):"")); return true; }
+        catch (const control::Error& e) { if (status) *status=Utf8ToWString(e.what()); return false; }
     }
     if (lower == "rgdclip" || lower.rfind("rgdclip ", 0) == 0) {
         return AppendRegeditedReferenceAction(lower == "rgdclip" ? "" : token.substr(8), false, actions, status);
@@ -5714,7 +5794,9 @@ static bool CompileRegistryHubScriptToTaskJson(std::string* taskJson, int* actio
     if (taskJson) taskJson->clear();
     if (actionCount) *actionCount = 0;
 
-    std::vector<std::string> tokens = ExtractRegistryHubTokens(g_registryScript);
+    std::vector<std::string> tokens;
+    try { tokens = ExtractRegistryHubTokens(g_registryScript); }
+    catch (const control::Error& e) { if (status) *status = Utf8ToWString(e.what()); return false; }
     if (tokens.empty()) {
         if (status) *status = L"Registry Hub script has no {...} tokens.";
         return false;

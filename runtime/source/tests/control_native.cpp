@@ -25,6 +25,44 @@ int main(int argc,char** argv) {
         for(int i=0;i<10;++i)check(normalize({{"menu",Menus[i]}})["menu"]==i,"Menu mapping");
         auto before=native_control::environment();
         {
+            const std::string text="{\n  \"nested\": {\"list\": [{\"n\": 1}]},\n  \"script\": \"{wait 99}{if nope}{endif}\",\n  \"literal\": \"&amp;\\\\n\"\n}";
+            auto script=Utf8ToWString("{set cbuf "+text+"}{type "+text+"}{wait 2}{type after}");
+            auto tokens=ExtractRegistryHubTokens(script);
+            check(tokens.size()==4&&tokens[1]=="type "+text,"Nested braces broke outer token");
+            auto cursor=PrepareRegistryDispatch(script);
+            check(cursor.total==2,"Literal wait affected dispatch count");
+            std::wstring status;std::string document;
+            check(CompileRegistryDispatchSegment(cursor,&document,&status),"Nested JSON compile");
+            check(WStringToUtf8(g_pasteBuffers[2])==text,"Set cbuf changed JSON text");
+            check(Json::parse(document)["actions"][0]["content"]==text,"Type changed JSON text");
+            ++cursor.index;check(CompileRegistryDispatchSegment(cursor,&document,&status),"JSON continuation compile");
+            check(Json::parse(document)["actions"][0]["type"]=="wait","Literal boundary lost");
+            for(const auto& target:{"A","paste C","buffer C"}) {
+                check(ApplyRegistryHubSetToken("set "+std::string(target)+" "+text,&status),"Set JSON target rejected");
+                check(WStringToUtf8(std::string(target)=="A"?g_registryVars[0]:g_pasteBuffers[2])==text,"Set prefix damaged JSON");
+            }
+            for(const auto* bad:{L"{type {broken}",L"{type ok}}",L"{type ok}{",L"{press }}",L"{type ok} trailing"}) {
+                bool rejected=false;try{ExtractRegistryHubTokens(bad);}catch(const Error&){rejected=true;}
+                check(rejected,"Malformed outer braces accepted");
+                g_registryScript=bad;
+                check(!CompileRegistryHubScriptToTaskJson(&document,nullptr,&status),"Malformed save escaped validation");
+            }
+            auto press=Json::parse(BuildRegistryPressAction("Shift &amp; 3"));
+            check(press["keysmap"]["0"][0]==282,"Modifier not held over repeated keys");
+            check(press["keysmap"].size()==4&&press["keysmap"]["241"][0]==40,"Press repeat count lost");
+            auto digit=Json::parse(BuildRegistryPressAction("CTRL+3"));
+            check(digit["keysmap"].size()==2&&digit["keysmap"]["1"][1]==Json::array({"3"}),"Digit chord became a repeat");
+            check(RegistryPressEntity("&rbrace;")=="}"&&RegistryPressEntity("&amp;")=="&","Named character mismatch");
+            check(RegistryPressEntity("literal")=="literal","Raw key changed");
+            auto brace=Json::parse(BuildRegistryPressAction("&rbrace;"));
+            check(brace["keysmap"].contains("1"),"Literal brace key missing");
+            for(const auto& bad:{"","Shift &amp; 0","Shift &amp; 1001","&xml;","&amp;rbrace;"}) {
+                bool rejected=false;try{BuildRegistryPressAction(bad);}catch(const Error&){rejected=true;}
+                check(rejected,"Malformed press accepted");
+            }
+            native_control::apply(before);
+        }
+        {
             std::wstring status;std::string document;
             auto cursor=PrepareRegistryDispatch(L"{type first}{wait 25}{point 3}{buf A}{wait 0}");
             check(cursor.total==3,"Explicit wait count");

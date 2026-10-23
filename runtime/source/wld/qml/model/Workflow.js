@@ -145,10 +145,47 @@ function mergePreset(original,data) {
   })
   return state
 }
+// Token boundaries depend only on brace depth, never on the payload's language.
+function registryTokens(source) {
+  source=String(source)
+  var out=[],depth=0,start=0
+  for(var i=0;i<source.length;i++){
+    var c=source[i]
+    if(c==="{"){if(!depth)start=i;depth++}
+    else if(c==="}"){
+      if(!depth)throw Error("Unexpected closing brace")
+      if(!--depth){var match=[source.slice(start,i+1),source.slice(start+1,i)];match.index=start;match.end=i+1;out.push(match)}
+    }else if(!depth&&!/\s/.test(c))throw Error("Use {type text} for literal text")
+  }
+  if(depth)throw Error("Missing closing brace")
+  return out
+}
+// Decode a complete key argument once, after tokenization. Never used for text.
+function pressKey(raw) {
+  var names={amp:"ampersand",AMP:"ampersand",lt:"less",LT:"less",gt:"greater",GT:"greater",quot:"quotedbl",QUOT:"quotedbl",apos:"apostrophe",lbrace:"braceleft",lcub:"braceleft",rbrace:"braceright",rcub:"braceright",lbrack:"bracketleft",lsqb:"bracketleft",rbrack:"bracketright",rsqb:"bracketright",sol:"slash",bsol:"backslash",vert:"bar",semi:"semicolon",colon:"colon",excl:"exclam",num:"numbersign",dollar:"dollar",percnt:"percent",lpar:"parenleft",rpar:"parenright",ast:"asterisk",plus:"plus",comma:"comma",period:"period",quest:"question",commat:"at",grave:"grave",Tab:"TAB",NewLine:"ENTER"}
+  var entity=/^&([A-Za-z][A-Za-z0-9]*);$/.exec(raw)
+  if(!entity){if(raw[0]==="&"&&raw.slice(-1)===";")throw Error("Unsupported press entity: "+raw);return keyName(raw)}
+  if(!Object.prototype.hasOwnProperty.call(names,entity[1]))throw Error("Unsupported press entity: "+raw)
+  return names[entity[1]]
+}
+function press(text) {
+  function modifier(key){return /^(CONTROL_LEFT|CONTROL_RIGHT|SHIFT_LEFT|SHIFT_RIGHT|ALT_LEFT|ALT_GR|WINDOWS)$/.test(key)}
+  var args=String(text)==="+"?["+"]:String(text).split(/[+,\s]+/).filter(Boolean),count=1
+  if(args.length>1&&args.slice(0,-1).some(function(key){return !modifier(keyName(key))})&&/^\d+$/.test(args[args.length-1]))count=numeric(args.pop(),1,1000,"Repeat count")
+  if(!args.length)throw Error("Enter a key or chord")
+  var list=args.map(pressKey),mods=[],targets=[]
+  list.forEach(function(key){var into=modifier(key)?mods:targets;if(into.indexOf(key)<0)into.push(key)})
+  if(!targets.length)return keys(mods)
+  var map={}
+  if(mods.length)map["0"]=[(count-1)*120+42,mods]
+  for(var i=0;i<count;i++)map[String(i*120+1)]=[40,targets]
+  return {type:"keyssequence",keysmap:map,keysSeqId:"",loop:1}
+}
 function waitCount(source,context,ancestry) {
   ancestry=ancestry||[]
-  var count=0,token=/\{([^{}]*)\}/g,match
-  while((match=token.exec(String(source)))){
+  var count=0,tokens=registryTokens(source)
+  for(var t=0;t<tokens.length;t++){
+    var match=tokens[t]
     var raw=match[1].trim()
     if(/^wait\s/i.test(raw))count++
     else if(/^profile\s/i.test(raw)&&ancestry.length<16){
@@ -158,10 +195,11 @@ function waitCount(source,context,ancestry) {
   return count
 }
 function validateStructure(source) {
-  var token=/\{([^{}]*)\}/g,match,at=0,branches=[]
-  while((match=token.exec(String(source)))){
+  var tokens=registryTokens(source),at=0,branches=[]
+  for(var t=0;t<tokens.length;t++){
+    var match=tokens[t]
     if(source.slice(at,match.index).trim())throw Error("Use {type text} for literal text")
-    at=token.lastIndex;var op=match[1].trim().split(/\s+/)[0].toLowerCase()
+    at=match.end;var op=match[1].trim().split(/\s+/)[0].toLowerCase()
     if(op==="if"){if(branches.length>=16)throw Error("Conditions nested too deeply");branches.push(false)}
     else if(op==="else"){if(!branches.length||branches[branches.length-1])throw Error("Unexpected else");branches[branches.length-1]=true}
     else if(op==="endif"){if(!branches.length)throw Error("Unexpected endif");branches.pop()}
@@ -182,11 +220,12 @@ function compile(source,original,context,resume) {
   function buffers(text){return text.split(/[,\s]+/).filter(Boolean).map(function(k){return reference(k.toUpperCase(),state)}).join("")}
   function scan(source,ancestry,depth){
   if(source.length>1000000)throw Error("Expanded workflow exceeds 1 MiB")
-  var token=/\{([^{}]*)\}/g,match,at=0,initialDepth=depth===undefined?stack.length:depth,expanded=""
+  var tokens=registryTokens(source),at=0,initialDepth=depth===undefined?stack.length:depth,expanded=""
   function append(text){if(expanded.length+text.length>1000000)throw Error("Expanded workflow exceeds 1 MiB");expanded+=text}
-  while((match=token.exec(source))){
+  for(var t=0;t<tokens.length;t++){
+    var match=tokens[t]
     if(source.slice(at,match.index).trim())throw Error("Use {type text} for literal text")
-    at=token.lastIndex
+    at=match.end
     // Split only the command name. The payload is literal text, not words to
     // join back together: preserve its line breaks, tabs and repeated spaces.
     var raw=match[1].trim(),head=/^(\S+)(?:\s([\s\S]*))?$/.exec(raw),op=head?head[1].toLowerCase():"",arg=head&&head[2]!==undefined?head[2]:""
@@ -215,11 +254,12 @@ function compile(source,original,context,resume) {
     }
     append("{"+op+(arg?" "+arg:"")+"}")
     if(op==="set"){
-      var setting=arg.match(/^(?:(var|paste|zone|point|shell)\s+)?([^=\s]+)\s*(?:=\s*|\s+)([\s\S]*)$/i)
+      var setting=arg.match(/^(?:(var|paste|buffer|zone|point|shell)\s+)?([^=\s]+)\s*(?:=\s*|\s+)([\s\S]*)$/i)
       if(!setting)throw Error("Use {set A value}, {set paste Z value}, {set point 1 x,y}")
       var kind=(setting[1]||"").toLowerCase(),k=setting[2].toUpperCase(),v=setting[3]
+      if((!kind||kind==="paste"||kind==="buffer")&&/^[ZXCV]BUF$/.test(k))k=k[0]
       if((!kind||kind==="var")&&/^[ASDF]$/.test(k)){state.vars[k]=v;delete live[k]}
-      else if((!kind||kind==="paste")&&/^[ZXCV]$/.test(k)){state.buffers[k]=v;delete live[k]}
+      else if((!kind||kind==="paste"||kind==="buffer")&&/^[ZXCV]$/.test(k)){state.buffers[k]=v;delete live[k]}
       else if(kind==="shell"&&/^[XCGPT]$/.test(k))state.shells[k]=v
       else if(k==="REGISTRY")state.registry=v
       else if(kind==="point"||kind==="zone"){
@@ -231,6 +271,7 @@ function compile(source,original,context,resume) {
     }else if(op==="wait")emit(wait(arg))
     else if(op==="point"||op==="pt")emit(move(state.points[numeric(arg,1,16,"Point")-1],100))
     else if(op==="type"){var typed=paste(arg),textParts=formatParts(rawArg,state,live);if(textParts.some(function(p){return typeof p!=="string"}))typed.macrohelp_parts=textParts;emit(typed)}
+    else if(op==="press")emit(press(arg))
     else if(op==="paste"||op==="buf"||op==="enter"){
       if(op!=="paste"&&focusClick)emit(keys("LEFT_MOUSE"))
       var pasted=paste(buffers(arg)),refs=arg.split(/[,\s]+/).filter(Boolean).map(function(k){k=k.replace(/^\$/," ").trim().toUpperCase();return live[k]?{reference:k}:reference(k,state)})

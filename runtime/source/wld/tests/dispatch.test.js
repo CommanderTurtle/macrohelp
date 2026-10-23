@@ -6,6 +6,20 @@ const W=runInNewContext(read("../qml/model/Workflow.js")+"\n({compile,waitCount,
 const D=runInNewContext(read("../qml/model/Dialogs.js")+"\n({open,submit})")
 const env=()=>({script:"",vars:{A:"yes",S:"",D:"",F:""},buffers:{Z:"buffer",X:"",C:"",V:""},points:Array(16).fill(null),zones:{},shells:{X:"bash",C:"sh",G:"python",P:"pwsh",T:""}})
 const context=()=>({deferred:true,profiles:{},tasks:[],status:{},shortcuts:{terminal:W.keys("SUPER+ENTER")}})
+
+test("nested literal braces never become waits or branches, including profile resumptions",()=>{
+  const c=context(),text='{\n"fake": "{wait 5}{if nope}{endif}", "object": {}\n}'
+  c.profiles.json={script:"{set cbuf "+text+"}{type $C}{wait 2}{type "+text+"}"}
+  expect(W.waitCount("{profile json}",c)).toBe(1)
+  const first=W.compile("{profile json}{type done}",env(),c)
+  expect(first.steps[0].actions[0].content).toBe(text)
+  expect(W.remainingWaits(first.next,c)).toBe(1)
+  const second=W.compile("",first.state,c,first.next)
+  expect(second.steps[0].actions.map(a=>a.type)).toEqual(["wait","paste","paste"])
+  expect(second.steps[0].actions[1].content).toBe(text)
+  expect(second.steps[0].actions[2].content).toBe("done");expect(second.next).toBeNull()
+  expect(()=>W.compile("{set A changed}{wait 1}{type {broken}",env(),c)).toThrow("Missing closing brace")
+})
 function savePoint(environment,name,at){
   let s=D.open("registry_hub",at);s=D.submit(s,name,environment,at,W).state
   const result=D.submit(s,"s",environment,at,W)
