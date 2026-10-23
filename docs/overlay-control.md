@@ -30,7 +30,7 @@ separate. CORS is off by default; no origin is hardcoded.
 | GET | `/v1/schema` | Request/config schema and menu inventory |
 | GET | `/v1/state` | Config, native dialog, active/last run, busy/error state |
 | GET | `/v1/coords` | Current displayed cursor coordinates: `{"x":123,"y":456}` |
-| GET | `/v1/board` | Wayland: current board codes, `text`, cell-center coordinates and `cell_size` (50 physical pixels); independent of display toggles |
+| GET | `/v1/board` | Wayland: current screen's grid codes, `text`, printed integer centers and `cell_size` (the existing grid's 50-unit spacing); independent of display toggles |
 | GET | `/v1/help` | Native Registry Hub Help: `platform`, `topic`, `text` |
 | POST | `/v1/control` | Apply supplied fields and operate a menu |
 | POST | `/v1/stop` | Existing stop-all path; available while busy |
@@ -40,8 +40,9 @@ Success is `{"ok":true,"result":...}`. Errors include HTTP status and
 backend does not prevent reading/editing local state. It cannot execute a macro.
 Live key-display history is not exposed by this API.
 
-On Wayland, coordinate inputs also accept board codes: `_a` = 25, `_aj` = 1775,
-and `-_a` = -25. For example, `{set point a _a,_h}` saves `[25,375]`;
+On Wayland, coordinate inputs also accept the existing grid's printed center integers:
+`_a` = 25, `_aj` = 1775. There is no scale conversion or change to the grid.
+For example, `{set point a _a,_h}` saves `[25,375]`, exactly like numeric input;
 point names `a`–`p` alias slots 1–16. Alt+2 → Q → V toggles the large crosshair.
 Grid and large crosshair exclude each other on enable; disabling either leaves the other unchanged.
 
@@ -144,7 +145,7 @@ temporary configuration and recovery. It is also embedded as the MCP resource
 tool/resource catalog; help grammar remains specific to the running platform.
 
 Wayland additionally exposes `macrohelp_board` and `macrohelp://board` for the
-live board labels and cell centers. Windows omits these from discovery and returns
+live screen-local grid labels and printed center integers. Windows omits these from discovery and returns
 a guided error if explicitly requested. Unsupported/invalid coordinate strings
 fail before dispatch; underscores inside text, variables or buffers stay literal.
 Wayland checks board inputs against already-known display bounds when available.

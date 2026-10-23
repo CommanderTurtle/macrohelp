@@ -30,7 +30,7 @@ fn exercise(executable: &std::ffi::OsStr, native: bool) {
         if path == "/v1/coords" {
             Ok(json!({"x":-123,"y":456}))
         } else if path == "/v1/board" {
-            Ok(json!({"x":"-_c","y":"_j","text":"-_c, _j","center":{"x":-125,"y":475},"cell_size":50}))
+            Ok(json!({"x":"_c","y":"_j","text":"_c, _j","center":{"x":125,"y":475},"cell_size":50}))
         } else if path == "/v1/help" {
             Ok(
                 json!({"platform":"fixture","topic":"registry_hub","text":"Native Help: {type text}"}),
@@ -221,7 +221,7 @@ fn exercise(executable: &std::ffi::OsStr, native: bool) {
         assert!(responses[21]["result"]["structuredContent"]["error"]["message"].as_str().unwrap().contains("Windows"));
     } else {
         assert_eq!(responses[19]["result"]["isError"], false);
-        assert_eq!(responses[19]["result"]["structuredContent"]["center"]["x"], -125);
+        assert_eq!(responses[19]["result"]["structuredContent"]["center"]["x"], 125);
         assert_eq!(serde_json::from_str::<Value>(responses[20]["result"]["contents"][0]["text"].as_str().unwrap()).unwrap(), responses[19]["result"]["structuredContent"]);
         assert_eq!(responses[21]["result"]["isError"], false);
         assert_eq!(calls.last().unwrap().2["origin"], json!(["_aj","_h"]));

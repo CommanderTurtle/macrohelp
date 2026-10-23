@@ -5,7 +5,11 @@ function displayPoint(point,origin,scale) { return [point[0]/scale-origin.x,poin
 function containsPoint(point,origin,width,height) { return !!point&&!!origin&&point.x>=origin.x&&point.y>=origin.y&&point.x<origin.x+width&&point.y<origin.y+height }
 function boardCode(value) { var cell=Math.floor(Number(value)/50);if(!isFinite(cell))throw Error("Invalid board coordinate");var negative=cell<0,n=negative?-cell-1:cell,label="";do{label=String.fromCharCode(97+n%26)+label;n=Math.floor(n/26)-1}while(n>=0);return (negative?"-":"")+"_"+label }
 function boardCoordinate(value) { var m=String(value).match(/^(-?)_([a-z]+)$/i);if(!m)throw Error("Invalid board coordinate");var n=0;for(var i=0;i<m[2].length;i++){n=n*26+m[2].toLowerCase().charCodeAt(i)-96;if(n>2000)throw Error("Board coordinate out of range")}return (m[1]?-1:1)*((n-1)*50+25) }
-function board(cursor) { var x=boardCode(Math.round(cursor.x)),y=boardCode(Math.round(cursor.y));return {x:x,y:y,text:x+", "+y,center:{x:boardCoordinate(x),y:boardCoordinate(y)},cell_size:50} }
+function board(cursor,monitors) {
+  var output=(monitors||[]).find(function(m){return containsPoint(cursor,m,m.width/(m.scale||1),m.height/(m.scale||1))})
+  var x=boardCode(cursor.x-(output?output.x:0)),y=boardCode(cursor.y-(output?output.y:0))
+  return {x:x,y:y,text:x+", "+y,center:{x:boardCoordinate(x),y:boardCoordinate(y)},cell_size:50}
+}
 function viewPatch(original,patch) { var view=copy(original||{});Object.keys(patch||{}).forEach(function(k){view[k]=patch[k]});if(patch&&patch.crosshair===false)view.big_crosshair=false;if(patch&&patch.grid===true)view.big_crosshair=false;if(patch&&patch.big_crosshair===true){view.big_crosshair=true;view.crosshair=true;view.grid=false}else if(view.big_crosshair)view.grid=false;return view }
 function pointSlot(value) { var v=String(value);return /^[a-p]$/i.test(v)?v.toLowerCase().charCodeAt(0)-97:numeric(v,1,16,"Point")-1 }
 function numeric(v,min,max,label) { var n=Number(v);if(!isFinite(n)||n<min||n>max)throw Error(label+" must be "+min+"…"+max);return n }
@@ -13,8 +17,7 @@ function coordinate(v) { return Math.round(numeric(/^-?_[a-z]+$/i.test(String(v)
 function coordinateValues(values,monitors) {
   var result=values.map(coordinate)
   if(values.some(function(v){return /^-?_[a-z]+$/i.test(String(v))})&&monitors&&monitors.length){
-    var scale=monitorScale(monitors),screens=monitors.filter(function(m){return isFinite(m.x)&&isFinite(m.y)&&m.width>0&&m.height>0})
-    for(var i=0;i<result.length;i+=2)if(screens.length&&!screens.some(function(m){var w=m.transform%2?m.height:m.width,h=m.transform%2?m.width:m.height;return result[i]>=m.x*scale&&result[i+1]>=m.y*scale&&result[i]<m.x*scale+w&&result[i+1]<m.y*scale+h}))throw Error("Board coordinate is outside connected displays; read /v1/board and use a visible cell")
+    for(var i=0;i<result.length;i+=2)if(!monitors.some(function(m){return (!/^[-]?_/.test(String(values[i]))||(result[i]>=0&&result[i]<m.width/(m.scale||1)))&&(!/^[-]?_/.test(String(values[i+1]))||(result[i+1]>=0&&result[i+1]<m.height/(m.scale||1)))}))throw Error("Board coordinate is outside the visible grid; read /v1/board and use a visible cell")
   }
   return result
 }

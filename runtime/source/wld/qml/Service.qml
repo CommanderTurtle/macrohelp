@@ -25,7 +25,7 @@ Item {
   property var environment: ({})
   property var cursor: ({x:0,y:0})
   property var physicalCursor: ({x:0,y:0})
-  readonly property var board: Workflow.board(physicalCursor)
+  readonly property var board: Workflow.board(cursor,monitors)
   property var monitors: []
   readonly property real coordinateScale: Workflow.monitorScale(monitors)
   property var tasks: []

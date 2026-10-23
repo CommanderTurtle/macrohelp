@@ -375,7 +375,7 @@ fn coordinate_schema(count: usize) -> Value {
     json!({"oneOf":[{"type":"null"},{"type":"array","minItems":count,"maxItems":count,"items":coordinate_item_schema()}]})
 }
 fn coordinate_item_schema() -> Value {
-    json!({"oneOf":[{"type":"integer","minimum":-100000,"maximum":100000},{"type":"string","pattern":"^-?_[A-Za-z]+$","description":"50-physical-pixel board cell center; _a=25, _aj=1775. Must resolve within coordinate bounds.","maxLength":5}]})
+    json!({"oneOf":[{"type":"integer","minimum":-100000,"maximum":100000},{"type":"string","pattern":"^-?_[A-Za-z]+$","description":"Existing grid label's center integer, exactly as printed: _a=25, _aj=1775. No scale conversion.","maxLength":5}]})
 }
 
 #[cfg(test)]

@@ -31,12 +31,13 @@ Placer, `4/5/6` left/right/middle click, `7` Stop All, `8` Display, `9` Record K
 Use `macrohelp_coords` for the displayed coordinates without moving the pointer.
 
 On Wayland, `macrohelp_board` (or `macrohelp://board`) reads the live board labels
-and physical-pixel cell centers, whether or not the grid is visible. Cells are
-50 physical pixels: `_a` = 25, `_h` = 375, `_aj` = 1775; `-_a` = -25.
+and the existing grid's printed integer centers, whether or not it is visible.
+Labels reset per screen: `_a` = 25, `_h` = 375, `_aj` = 1775.
 Use these only in point/zone coordinate fields or the HTTP `origin`. For example,
 `{set point a _a,_h}` saves point 1 at `[25,375]`; `a`–`p` alias slots 1–16.
 `{type _aj}`, ordinary variable assignments and paste buffers remain literal.
-Do not rescale coordinates for display scaling.
+These are the same integers as manually entering the printed values. Do not
+rescale them or infer a different grid from display resolution/scaling.
 
 Display settings use `config.view`; inspect state before changing them. Wayland
 adds `big_crosshair`: enabling it disables `grid`, and enabling `grid` disables
