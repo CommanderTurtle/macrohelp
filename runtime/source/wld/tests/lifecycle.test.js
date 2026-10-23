@@ -10,10 +10,10 @@ function service(overrides={}) {
     hidden:false,currentJob:null,dispatch:null,recordingPath:false,error:"",message:"",environment:{},
     clipboardCallback:null,clipboardSerial:0,activePanel:{opened:true},page:"Workflow",settings:{},
     startDelay:timer(),poll:timer(),clipboardTimeout:timer(),persist:timer(),dialogWarp:timer(),dialogBlink:null,
-    save(){},hidePanel(){},showPanel(){},remember(){},change(){},refresh(){},
+    save(){},hidePanel(){},showPanel(){},remember(){},change(){},refresh(){},call(){},
     emergency:{running:false},runtime:{running:true},dialogs:{closeDialog(){}},...overrides}
   s.root=s
-  for(const name of ["play","cancelWork","stop","queue","runSaved","saveSchedule","refreshContext","readClipboard","finishClipboard","reconnect","panel","blinkDialog","dialogClosed","restoreDialogPointer","finishDialogBlink","pointer","corner","togglePath","recordPathPoint"]) {
+  for(const name of ["assemble","play","cancelWork","stop","queue","runSaved","saveSchedule","refreshContext","readClipboard","finishClipboard","reconnect","panel","blinkDialog","dialogClosed","restoreDialogPointer","finishDialogBlink","pointer","corner","togglePath","recordPathPoint"]) {
     const at=source.indexOf("  function "+name+"(")
     if(at<0)throw Error("Missing service function "+name)
     const tail=source.slice(at),end=tail.slice(1).search(/\n  (?:function |Timer |Process |Hud |ShellIpc )/)

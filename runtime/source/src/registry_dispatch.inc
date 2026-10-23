@@ -1,7 +1,8 @@
 // Registry Hub continuation on the UI thread. Only explicit user waits split
 // native tasks; waits emitted inside shell/capture helpers remain untouched.
 struct RegistryHubDispatch {
-    std::vector<std::string> tokens;
+    std::vector<RegistrySourceToken> tokens;
+    size_t expandedBytes=0;
     std::vector<RegistryHubBranchFrame> branches;
     size_t at=0;
     int index=1,total=1,task=0;
@@ -21,40 +22,48 @@ static bool RegistryWaitToken(const std::string& token) {
     return text.size()>4&&text.compare(0,4,"wait")==0&&isspace(static_cast<unsigned char>(text[4]));
 }
 static RegistryHubDispatch PrepareRegistryDispatch(const std::wstring& script) {
-    RegistryHubDispatch result;result.tokens=ExtractRegistryHubTokens(script);
+    RegistryHubDispatch result;auto tokens=ExtractRegistryHubTokens(script);
+    result.expandedBytes=WStringToUtf8(script).size();
+    control::require(result.expandedBytes<=1024*1024,"Workflow exceeds 1 MiB");
+    for(const auto& token:tokens)result.tokens.push_back({token,"",{}});
     control::require(!result.tokens.empty(),"Registry Hub script has no {...} tokens.");
-    std::vector<bool> branches;
-    for(const auto& token:result.tokens) {
-        auto lower=LowerAscii(TrimAscii(token));
-        if(lower.rfind("if ",0)==0)branches.push_back(false);
-        else if(lower=="else"){control::require(!branches.empty()&&!branches.back(),"Unexpected {else}.");branches.back()=true;}
-        else if(lower=="endif"||lower=="end if"){control::require(!branches.empty(),"Unexpected {endif}.");branches.pop_back();}
-        if(RegistryWaitToken(token))++result.total;
-    }
-    control::require(branches.empty(),"Registry Hub script has an unclosed {if ...}.");
+    ValidateRegistryStructure(tokens);
+    for(const auto& token:tokens)if(RegistryWaitToken(token))++result.total;
     return result;
 }
-static bool CompileRegistryDispatchSegment(RegistryHubDispatch& cursor,std::string* document,std::wstring* status) {
+static bool CompileRegistryDispatchSegment(RegistryHubDispatch& cursor,std::string* document,std::wstring* status,bool splitWaits=true) {
     std::vector<std::string> actions;
     bool leading=cursor.leadingWait;cursor.leadingWait=false;
     while(cursor.at<cursor.tokens.size()) {
-        const auto token=cursor.tokens[cursor.at++];auto lower=LowerAscii(TrimAscii(token));
+        const auto origin=cursor.tokens[cursor.at++];const auto& token=origin.text;auto lower=LowerAscii(TrimAscii(token));
         if(lower.rfind("if ",0)==0) {
+            control::require(cursor.branches.size()<16,"Conditions nested too deeply");
             bool parent=RegistryHubBranchesActive(cursor.branches),condition=false;
-            if(parent&&!EvaluateRegistryHubCondition(TrimAscii(token).substr(3),condition,status))return false;
+            if(parent&&!EvaluateRegistryHubCondition(TrimAscii(token).substr(3),condition,status)){
+                if(status&&!origin.source.empty())*status=Utf8ToWString("rgd "+origin.source+": ")+*status;
+                return false;
+            }
             cursor.branches.push_back({parent,condition,false});continue;
         }
         if(lower=="else"){cursor.branches.back().elseMode=true;continue;}
         if(lower=="endif"||lower=="end if"){cursor.branches.pop_back();continue;}
         if(!RegistryHubBranchesActive(cursor.branches)){if(RegistryWaitToken(token))--cursor.total;continue;}
-        if(RegistryWaitToken(token)) {
+        if(lower=="rgd"||(lower.size()>3&&lower.substr(0,3)=="rgd"&&isspace(static_cast<unsigned char>(lower[3])))) {
+            auto included=RegistryRgdTokens(origin,cursor.expandedBytes);
+            for(const auto& child:included)if(RegistryWaitToken(child.text))++cursor.total;
+            cursor.tokens.insert(cursor.tokens.begin()+cursor.at,included.begin(),included.end());continue;
+        }
+        if(splitWaits&&RegistryWaitToken(token)) {
             if(!leading){--cursor.at;cursor.leadingWait=true;break;}
             leading=false;
         }
         auto input=RegistryWaitToken(token)?"wait "+TrimAscii(token.substr(4)):token;
-        if(!CompileRegistryHubToken(input,actions,cursor.focusClick,status))return false;
+        if(!CompileRegistryHubToken(input,actions,cursor.focusClick,status)){
+            if(status&&!origin.source.empty())*status=Utf8ToWString("rgd "+origin.source+": ")+*status;
+            return false;
+        }
     }
-    *document=actions.empty()?"":BuildTasketDocumentJson("Macrohelp Registry Hub sequence "+std::to_string(cursor.index)+" of "+std::to_string(cursor.total),actions,cursor.index==1?1:0);
+    *document=actions.empty()?"":BuildTasketDocumentJson(splitWaits?"Macrohelp Registry Hub sequence "+std::to_string(cursor.index)+" of "+std::to_string(cursor.total):"Macrohelp Registry Hub compiled native Tasket flow.",actions,cursor.index==1?1:0);
     return true;
 }
 static bool RegistryDispatchActive(){return g_registryDispatch.active;}
@@ -77,6 +86,7 @@ static void FinishRegistryDispatch(const std::string& error="") {
     RegistryDispatchMessage(g_registryDispatch.state);
 }
 static void CancelRegistryDispatch(){
+    CancelRegistryRgd();
     if(!RegistryDispatchActive())return;
     ControlRetainTask(g_registryDispatch.task);
     ++g_registryDispatchGeneration;g_registryDispatch.active=false;g_registryDispatch.task=0;g_registryDispatch.state="stopped";
@@ -103,7 +113,7 @@ static bool SubmitRegistryDispatch(std::wstring* status) {
             if(g_hwndCrosshair)SetTimer(g_hwndCrosshair,4710,100,nullptr);
         }
         return true;
-    }catch(const std::exception& e){g_registryDispatchSubmitting=false;if(status)*status=Utf8ToWString(e.what());FinishRegistryDispatch(e.what());return false;}
+    }catch(const std::exception& e){g_registryDispatchSubmitting=false;if(status)*status=Utf8ToWString(e.what());if(g_registryDispatch.state!="stopped")FinishRegistryDispatch(e.what());return false;}
 }
 static void TickRegistryDispatch() {
     using namespace std::chrono;
@@ -131,7 +141,7 @@ static void TickRegistryDispatch() {
     });
 }
 static bool ScheduleTasketRegistryHubScript(std::wstring* status) {
-    if(RegistryDispatchActive()){if(status)*status=L"A Registry Hub sequence is already running.";return false;}
+    if(RegistryDispatchActive()||g_registryRgdReading){if(status)*status=L"A Registry Hub sequence is already running.";return false;}
     try {
         auto cursor=PrepareRegistryDispatch(g_registryScript);
         ++g_registryDispatchGeneration;g_registryDispatch=std::move(cursor);g_registryDispatch.active=true;

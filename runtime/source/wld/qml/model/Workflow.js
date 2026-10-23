@@ -163,6 +163,12 @@ function registryTokens(source) {
   if(depth)throw Error("Missing closing brace")
   return out
 }
+function rgdReference(file,reference) {
+  file=String(file||"").trim();reference=String(reference).trim().toLowerCase()
+  if(!file||file[0]==="-")throw Error("Set the Registry Hub file path before using {rgd ...}")
+  if(!/^i\d+[sz]\d+$/.test(reference))throw Error("Use {rgd i6s6} or {rgd i6z6}")
+  return {file:file,reference:reference,key:JSON.stringify([file,reference])}
+}
 // Decode a complete key argument once, after tokenization. Never used for text.
 function pressKey(raw) {
   var names={amp:"ampersand",AMP:"ampersand",lt:"less",LT:"less",gt:"greater",GT:"greater",quot:"quotedbl",QUOT:"quotedbl",apos:"apostrophe",lbrace:"braceleft",lcub:"braceleft",rbrace:"braceright",rcub:"braceright",lbrack:"bracketleft",lsqb:"bracketleft",rbrack:"bracketright",rsqb:"bracketright",sol:"slash",bsol:"backslash",vert:"bar",semi:"semicolon",colon:"colon",excl:"exclam",num:"numbersign",dollar:"dollar",percnt:"percent",lpar:"parenleft",rpar:"parenright",ast:"asterisk",plus:"plus",comma:"comma",period:"period",quest:"question",commat:"at",grave:"grave",Tab:"TAB",NewLine:"ENTER"}
@@ -216,12 +222,13 @@ function remainingWaits(next,context) {
 }
 function compile(source,original,context,resume) {
   var state=copy(original),steps=[],stack=resume?copy(resume.stack):[],enabled=stack.length?stack[stack.length-1].parent&&stack[stack.length-1].value!==stack[stack.length-1].otherwise:true,
-      focusClick=resume?resume.focusClick:false,live=resume?copy(resume.live):{},actions=resume?resume.actions:0,paused=null,leadingWait=!!resume
+      focusClick=resume?resume.focusClick:false,live=resume?copy(resume.live):{},actions=resume?resume.actions:0,bytes=resume?resume.bytes||0:String(source).length,paused=null,leadingWait=!!resume
   if(context.deferred&&!resume)validateStructure(String(source))
   function emit(action) { var last=steps[steps.length-1];if(!last||last.kind!=="input"){last={kind:"input",actions:[]};steps.push(last)}last.actions.push(action);if(++actions>10000)throw Error("Too many actions") }
   function local(step){steps.push(step)}
   function buffers(text){return text.split(/[,\s]+/).filter(Boolean).map(function(k){return reference(k.toUpperCase(),state)}).join("")}
-  function scan(source,ancestry,depth){
+  function scan(source,ancestry,depth,includes){
+  includes=includes||[]
   if(source.length>1000000)throw Error("Expanded workflow exceeds 1 MiB")
   var tokens=registryTokens(source),at=0,initialDepth=depth===undefined?stack.length:depth,expanded=""
   function append(text){if(expanded.length+text.length>1000000)throw Error("Expanded workflow exceeds 1 MiB");expanded+=text}
@@ -237,10 +244,22 @@ function compile(source,original,context,resume) {
     if(op==="endif"){if(stack.length<=initialDepth)throw Error("Unexpected endif");enabled=stack.pop().parent;append(match[0]);continue}
     if(!enabled){append(match[0]);continue}
     if(op==="wait"&&context.deferred&&!leadingWait){
-      paused={frames:[{source:source.slice(match.index),ancestry:ancestry,depth:initialDepth}],stack:copy(stack),focusClick:focusClick,live:copy(live),actions:actions}
+      paused={frames:[{source:source.slice(match.index),ancestry:ancestry,depth:initialDepth,includes:includes}],stack:copy(stack),focusClick:focusClick,live:copy(live),actions:actions,bytes:bytes}
       return expanded
     }
     var rawArg=arg;arg=expand(arg,state)
+    if(op==="rgd"){
+      var ref=rgdReference(state.registry,arg)
+      if(includes.indexOf(ref.key)>=0||includes.length>=16)throw Error("Recursive rgd include: "+ref.reference)
+      if(!context.rgd||!Object.prototype.hasOwnProperty.call(context.rgd,ref.key)){var pending=Error("Resolve rgd "+ref.reference);pending.rgd=ref;throw pending}
+      var included=context.rgd[ref.key]
+      if(typeof included!=="string")throw Error("rgd "+ref.reference+": expected text")
+      bytes+=included.length;if(bytes>1048576)throw Error("Expanded workflow exceeds 1 MiB")
+      try{validateStructure(included);append(scan(included,ancestry,undefined,includes.concat([ref.key])))}
+      catch(error){if(!error.rgd)error.message="rgd "+ref.reference+": "+error.message;throw error}
+      if(paused){paused.frames.push({source:source.slice(at),ancestry:ancestry,depth:initialDepth,includes:includes});return expanded}
+      continue
+    }
     if(op==="profile"){
       if(context.profileError)throw Error(context.profileError)
       var name=presetName(arg,context.profiles),data=context.profiles[name]
@@ -248,8 +267,8 @@ function compile(source,original,context,resume) {
       state=mergePreset(state,data)
       ;["vars","buffers"].forEach(function(section){Object.keys(data[section]||{}).forEach(function(k){delete live[k]})})
       if(context.deferred)validateStructure(String(data.script||""))
-      append(scan(String(data.script||""),ancestry.concat([name])))
-      if(paused){paused.frames.push({source:source.slice(at),ancestry:ancestry,depth:initialDepth});return expanded}
+      append(scan(String(data.script||""),ancestry.concat([name]),undefined,includes))
+      if(paused){paused.frames.push({source:source.slice(at),ancestry:ancestry,depth:initialDepth,includes:includes});return expanded}
       continue
     }
     if(op==="wait"&&context.deferred){
@@ -316,7 +335,8 @@ function compile(source,original,context,resume) {
   }
   var expanded="",frames=resume?resume.frames:[{source:String(source),ancestry:[],depth:0}]
   for(var f=0;f<frames.length;f++){
-    expanded+=scan(frames[f].source,frames[f].ancestry,frames[f].depth)
+    try{expanded+=scan(frames[f].source,frames[f].ancestry,frames[f].depth,frames[f].includes)}
+    catch(error){if(!error.rgd&&(frames[f].includes||[]).length)error.message="rgd "+JSON.parse(frames[f].includes.slice(-1)[0])[1]+": "+error.message;throw error}
     if(paused){paused.frames=paused.frames.concat(frames.slice(f+1));break}
   }
   return {state:state,steps:steps,expanded:expanded,next:paused}

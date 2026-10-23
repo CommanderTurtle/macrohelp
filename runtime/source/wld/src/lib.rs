@@ -6,3 +6,4 @@ pub mod control_protocol;
 pub mod heatmap;
 pub mod overlay;
 pub mod profiles;
+pub mod rgd;

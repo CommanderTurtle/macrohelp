@@ -94,7 +94,7 @@ function service(){
     refreshContext(callback){callback(context(),null)},http(method,path,body,callback){posts.push({method,path,body});callback({task:{task_number:posts.length}},null)}}
   s.root=s
   const source=read("../qml/Service.qml")
-  for(const name of ["play","nextDispatch","nextStep","queue","cancelWork","stop"]){
+  for(const name of ["assemble","play","nextDispatch","nextStep","queue","cancelWork","stop"]){
     const tail=source.slice(source.indexOf("  function "+name+"(")),end=tail.slice(1).search(/\n  (?:function |Timer |Process |Hud |ShellIpc )/)
     runInNewContext(tail.slice(0,end<0?undefined:end+1),s)
   }

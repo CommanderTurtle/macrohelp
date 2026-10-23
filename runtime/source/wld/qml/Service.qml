@@ -129,7 +129,7 @@ Item {
   function clearWorkflow(){if(busy||localBusy||pending){error="Stop the current operation first";return}generation++;environment=Workflow.clearState(environment);resolvedScript="";save();message="Workflow cleared; paste buffers and zones retained"}
   function vector(text){var v=Workflow.vector(text,circleOrigin);radius=v.radius;angle=v.angle;unit="radians"}
   function exitOverlay(){cancelWork();hidePanel();if(!disablePlugin.running)disablePlugin.running=true}
-  function cancelWork(){generation++;dispatch=null;dialogs.closeDialog();steps=[];stepIndex=0;currentJob=null;busy=false;localBusy=false;pending=null;hidden=false;recordingPath=false;clipboardCallback=null;startDelay.stop();poll.stop();clipboardTimeout.stop();if(controlRun)finishControl("cancelled")}
+  function cancelWork(){generation++;if(typeof runtime!=="undefined"&&runtime.running)call({method:"rgd-cancel"});dispatch=null;dialogs.closeDialog();steps=[];stepIndex=0;currentJob=null;busy=false;localBusy=false;pending=null;hidden=false;recordingPath=false;clipboardCallback=null;startDelay.stop();poll.stop();clipboardTimeout.stop();if(controlRun)finishControl("cancelled")}
   function stop(){cancelWork();if(!emergency.running)emergency.running=true;message="";remember("Stop requested")}
   function reconnect(){if(!runtime.running)runtime.running=true;else refresh()}
   function queue(actions,callback,delay,name,saveOnly){
@@ -153,14 +153,28 @@ Item {
   }
   function click(button){later([Workflow.keys(button)])}
   function runSaved(name){if(busy||localBusy||pending){error="Stop the current operation first";return}localBusy=true;var token=generation;hidePanel();http("POST","/run",{task:name},function(v,e){if(token!==root.generation)return;root.localBusy=false;if(!e){root.change("","last_task",v);root.message="Scheduled #"+v.task_number}})}
+  function assemble(context,token,build,fail){
+    if(token!==generation)return
+    try{build()}
+    catch(e){
+      if(!e.rgd){fail(e);return}
+      var ref=e.rgd
+      call({method:"rgd-read",file:ref.file,reference:ref.reference},function(value,error){
+        if(token!==root.generation)return
+        if(error||!value||typeof value.text!=="string"){fail(Error("rgd "+ref.reference+": "+(error||"expected text")));return}
+        if(!context.rgd)context.rgd={}
+        context.rgd[ref.key]=value.text
+        root.assemble(context,token,build,fail)
+      })
+    }
+  }
   function play(source,origin){
     if(busy||localBusy||pending){error="Stop the current operation first";return}
     var token=++generation;busy=true;error=""
     refreshContext(function(context,failure){
       if(token!==root.generation)return
       if(failure){root.busy=false;if(root.controlRun)root.controlRun.failure=failure;return}
-      try {context.deferred=true;var plan=Workflow.compile(source,root.environment,context);if(origin)plan.steps.unshift({kind:"input",actions:[Workflow.move(origin,0)]});root.dispatch={next:plan.next,index:1,total:1+Workflow.remainingWaits(plan.next,context),preparing:false};root.resolvedScript=plan.expanded;root.environment=plan.state;root.save();root.steps=plan.steps;root.stepIndex=0;root.hidePanel();root.pending=function(){root.nextStep(token)};startDelay.restart()}
-      catch(e){root.busy=false;root.dispatch=null;root.error=e.message;if(root.controlRun)root.controlRun.failure=e.message}
+      root.assemble(context,token,function(){context.deferred=true;var plan=Workflow.compile(source,root.environment,context);if(origin)plan.steps.unshift({kind:"input",actions:[Workflow.move(origin,0)]});root.dispatch={next:plan.next,index:1,total:1+Workflow.remainingWaits(plan.next,context),preparing:false};root.resolvedScript=plan.expanded;root.environment=plan.state;root.save();root.steps=plan.steps;root.stepIndex=0;root.hidePanel();root.pending=function(){root.nextStep(token)};startDelay.restart()},function(e){root.busy=false;root.dispatch=null;root.error=e.message;if(root.controlRun)root.controlRun.failure=e.message})
     })
   }
   function nextDispatch(token){
@@ -168,15 +182,14 @@ Item {
     var next=dispatch.next;dispatch.preparing=true
     refreshContext(function(context,failure){
       if(token!==root.generation||!root.busy||!root.dispatch)return
-      root.dispatch.preparing=false
       if(failure){root.busy=false;root.dispatch=null;if(root.controlRun)root.controlRun.failure=failure;return}
-      try {
+      root.assemble(context,token,function(){
         context.deferred=true
         var plan=Workflow.compile("",root.environment,context,next)
         var index=root.dispatch.index+1
         root.dispatch={next:plan.next,index:index,total:index+Workflow.remainingWaits(plan.next,context),preparing:false}
         root.environment=plan.state;root.resolvedScript+=plan.expanded;root.save();root.steps=plan.steps;root.stepIndex=0;root.nextStep(token)
-      }catch(e){root.busy=false;root.dispatch=null;root.error=e.message;if(root.controlRun)root.controlRun.failure=e.message}
+      },function(e){root.busy=false;root.dispatch=null;root.error=e.message;if(root.controlRun)root.controlRun.failure=e.message})
     })
   }
   function loadProfiles(callback){call({method:"profile-list"},function(v,e){root.profileError=e||"";if(!e)root.profileLibrary=v;if(callback)callback(v,e)})}
@@ -189,7 +202,7 @@ Item {
     refreshContext(function(context,failure){
       if(token!==root.generation)return
       if(failure){root.localBusy=false;if(root.controlRun)root.controlRun.failure=failure;return}
-      try{var plan=Workflow.compile(root.environment.script,root.environment,context);if(plan.steps.some(function(s){return s.kind!=="input"}))throw Error("Clipboard/registry steps run through Play. Save the workflow with Export environment.");var actions=[];plan.steps.forEach(function(s){actions=actions.concat(s.actions)});root.queue(actions,function(v,e){root.localBusy=false;if(e&&root.controlRun)root.controlRun.failure=e;if(!e){root.message="Saved "+name;root.refresh()}},1,name,true)}catch(e){root.localBusy=false;root.error=e.message;if(root.controlRun)root.controlRun.failure=e.message}
+      root.assemble(context,token,function(){var plan=Workflow.compile(root.environment.script,root.environment,context);if(plan.steps.some(function(s){return s.kind!=="input"}))throw Error("Clipboard/registry steps run through Play. Save the workflow with Export environment.");var actions=[];plan.steps.forEach(function(s){actions=actions.concat(s.actions)});root.queue(actions,function(v,e){root.localBusy=false;if(e&&root.controlRun)root.controlRun.failure=e;if(!e){root.message="Saved "+name;root.refresh()}},1,name,true)},function(e){root.localBusy=false;root.error=e.message;if(root.controlRun)root.controlRun.failure=e.message})
     })
   }
   function nextStep(token){

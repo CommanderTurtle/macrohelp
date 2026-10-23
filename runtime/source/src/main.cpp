@@ -5790,70 +5790,24 @@ static bool RegistryHubBranchesActive(const std::vector<RegistryHubBranchFrame>&
     return frame.parentActive && (frame.elseMode ? !frame.conditionActive : frame.conditionActive);
 }
 
+#include "registry_rgd.inc"
+#include "registry_dispatch.inc"
+
 static bool CompileRegistryHubScriptToTaskJson(std::string* taskJson, int* actionCount, std::wstring* status) {
     if (taskJson) taskJson->clear();
     if (actionCount) *actionCount = 0;
+    if(g_registryRgdReading){if(status)*status=L"A Registry Hub include is already being read.";return false;}
 
-    std::vector<std::string> tokens;
-    try { tokens = ExtractRegistryHubTokens(g_registryScript); }
-    catch (const control::Error& e) { if (status) *status = Utf8ToWString(e.what()); return false; }
-    if (tokens.empty()) {
-        if (status) *status = L"Registry Hub script has no {...} tokens.";
-        return false;
-    }
-
-    std::vector<std::string> actions;
-    std::vector<RegistryHubBranchFrame> branches;
-    bool pasteFocusClickEnabled = false;
-    for (const auto& token : tokens) {
-        std::string trimmed = TrimAscii(token);
-        std::string lower = LowerAscii(trimmed);
-        if (lower.rfind("if ", 0) == 0) {
-            bool parentActive = RegistryHubBranchesActive(branches);
-            bool condition = false;
-            if (parentActive && !EvaluateRegistryHubCondition(trimmed.substr(3), condition, status)) return false;
-            branches.push_back({parentActive, condition, false});
-            continue;
-        }
-        if (lower == "else") {
-            if (branches.empty()) {
-                if (status) *status = L"{else} needs a matching {if ...}.";
-                return false;
-            }
-            if (branches.back().elseMode) {
-                if (status) *status = L"Duplicate {else} in Registry Hub branch.";
-                return false;
-            }
-            branches.back().elseMode = true;
-            continue;
-        }
-        if (lower == "endif" || lower == "end if") {
-            if (branches.empty()) {
-                if (status) *status = L"{endif} needs a matching {if ...}.";
-                return false;
-            }
-            branches.pop_back();
-            continue;
-        }
-        if (!RegistryHubBranchesActive(branches)) continue;
-        if (!CompileRegistryHubToken(token, actions, pasteFocusClickEnabled, status)) return false;
-    }
-    if (!branches.empty()) {
-        if (status) *status = L"Registry Hub script has an unclosed {if ...}. Add {endif}.";
-        return false;
-    }
-    if (actions.empty()) {
-        if (status) *status = L"Registry Hub state updated. No Tasket actions were emitted.";
+    try {
+        auto cursor=PrepareRegistryDispatch(g_registryScript);std::string document;
+        if(!CompileRegistryDispatchSegment(cursor,&document,status,false))return false;
+        if(document.empty()){if(status)*status=L"Registry Hub state updated. No Tasket actions were emitted.";return true;}
+        if(actionCount)*actionCount=static_cast<int>(control::Json::parse(document)["actions"].size());
+        if(taskJson)*taskJson=std::move(document);
+        if(status)*status=L"Registry Hub script compiled.";
         return true;
-    }
-
-    if (actionCount) *actionCount = (int)actions.size();
-    if (taskJson) *taskJson = BuildTasketDocumentJson("Macrohelp Registry Hub compiled native Tasket flow.", actions, 1);
-    if (status) *status = L"Registry Hub script compiled.";
-    return true;
+    }catch(const std::exception& e){if(status)*status=Utf8ToWString(e.what());return false;}
 }
-
-#include "registry_dispatch.inc"
 
 static bool SaveRegistryHubCompiledSchts(std::wstring* status) {
     std::string task;
@@ -8252,6 +8206,7 @@ static std::wstring RegistryHubHelpText() {
         L"{enter A,Z} pastes the listed buffers and presses Enter afterward. It also defaults to no-click.\r\n"
         L"{paste A} is an explicit no-click paste token for readability.\r\n"
         L"{type literal text} sends the literal remainder through Tasket's native paste action.\r\n"
+        L"{rgd i6s6} / {rgd i6z6} includes a string/zone from the Registry file. Run Command stages output briefly in the schedule directory; included waits and conditions work normally.\r\n"
         L"Bare {A}, {S}, {D}, {F}, {Z}, {X}, {C}, and {V} are keyboard strokes; use {buf ...}, {paste ...}, or {enter ...} for stored text.\r\n"
         L"{click on} enables prepended focus-clicks for following {buf ...} and {enter ...} tokens.\r\n"
         L"{click off} disables prepended focus-clicks again. Registry Hub starts in click-off mode every Play.\r\n\r\n"

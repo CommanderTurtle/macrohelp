@@ -143,6 +143,12 @@ On Linux, dismissing a blinked quick dialog returns the pointer to its frozen en
 position using a memory-only `/temp-task` with `cleanup:true`. Escape and the
 existing 60px dismissal use this; running a macro retains its own pointer actions.
 
+Registry Hub `{rgd i6s6}` / `{rgd i6z6}` includes strings/zones from its configured
+registry file, preserving the editor text. Existing backend Run Command writes
+to a private temporary folder under its schedule directory; Macrohelp reads and
+removes it. Includes retain native waits/conditions. Linux requires the existing
+`MACROHELP_ALLOW_SYSTEM=true` permission; no new endpoint or executor is involved.
+
 ## Checks
 
 `ctest --test-dir runtime/source/build-vs2026 -C Release --output-on-failure`

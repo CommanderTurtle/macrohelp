@@ -6,6 +6,12 @@
 namespace control::detail {std::string privateKeyFile(const std::filesystem::path&);}
 
 static void check(bool value,const char* message){if(!value)throw std::runtime_error(message);}
+static control::Json rgdFixtures;
+static std::vector<std::string> rgdReads;
+static std::string FixtureRgdReader(const std::wstring& file,const std::string& reference){
+    auto key=WStringToUtf8(file)+"\n"+reference;rgdReads.push_back(key);
+    control::require(rgdFixtures.contains(key),"Missing rgd fixture");return rgdFixtures[key].get<std::string>();
+}
 int main(int argc,char** argv) {
     using namespace control;
     try {
@@ -24,6 +30,53 @@ int main(int argc,char** argv) {
         }
         for(int i=0;i<10;++i)check(normalize({{"menu",Menus[i]}})["menu"]==i,"Menu mapping");
         auto before=native_control::environment();
+        {
+            auto previous=g_registryRgdReader;g_registryRgdReader=FixtureRgdReader;
+            const std::wstring file=L"C:\\work\\a 'quoted;$ registry.txt";
+            auto key=[&](const std::string& ref){return WStringToUtf8(file)+"\n"+ref;};
+            g_registryFilePath=file;
+            const std::string text="{\n\"inner\": {}, \"literal\": \"\\n\"\n}";
+            rgdFixtures={{key("i6s6"),"{type before}{wait 2}{rgd i6z6}{paste A}"},{key("i6z6"),"{type "+text+"}"}};
+            auto cursor=PrepareRegistryDispatch(L"{rgd i6s6}{type outer}");
+            std::wstring status;std::string document;rgdReads.clear();
+            check(CompileRegistryDispatchSegment(cursor,&document,&status),"Initial rgd segment failed");
+            check(rgdReads.size()==1&&cursor.total==2,"rgd read past its wait");
+            check(Json::parse(document)["actions"][0]["content"]=="before","rgd initial actions missing");
+            g_registryVars[0]=L"live";++cursor.index;
+            check(CompileRegistryDispatchSegment(cursor,&document,&status),"rgd continuation failed");
+            auto actions=Json::parse(document)["actions"];
+            check(actions[0]["type"]=="wait"&&actions[1]["content"]==text&&actions[2]["content"]=="live"&&actions[3]["content"]=="outer","rgd continuation lost native wait, literals or live state");
+            check(rgdReads.size()==2,"Nested rgd read count");
+            g_registryScript=L"{rgd i6s6}{type outer}";auto source=g_registryScript;int count=0;
+            check(CompileRegistryHubScriptToTaskJson(&document,&count,&status),"Static include failed");
+            check(count==5&&Json::parse(document)["actions"][1]["type"]=="wait"&&g_registryScript==source,"Static save split or changed editor text");
+            rgdReads.clear();cursor=PrepareRegistryDispatch(L"{if A == never}{rgd i6s6}{endif}{type {rgd i6s6}}");
+            check(CompileRegistryDispatchSegment(cursor,&document,&status)&&rgdReads.empty(),"Disabled or literal include was read");
+            for(const auto& bad:{std::string("{type {broken}"),std::string("{else}"),std::string("{if A == yes}"),std::string("{rgd i6s6}")}){
+                rgdFixtures[key("i6s6")]=bad;cursor=PrepareRegistryDispatch(L"{rgd i6s6}");
+                bool rejected=false;try{CompileRegistryDispatchSegment(cursor,&document,&status);}catch(const std::exception& e){rejected=std::string(e.what()).find("rgd i6s6")!=std::string::npos;}
+                check(rejected,"Malformed or recursive include accepted");
+            }
+            rgdFixtures[key("i6s6")]=std::string(1024*1024,' ');cursor=PrepareRegistryDispatch(L"{rgd i6s6}");
+            bool oversized=false;try{CompileRegistryDispatchSegment(cursor,&document,&status);}catch(const std::exception&){oversized=true;}
+            check(oversized,"Cumulative include size unbounded");
+            check(RegistryRgdReference("i6s6")&&RegistryRgdReference("i12z3")&&!RegistryRgdReference("i6s6;echo")&&!RegistryRgdReference("i6x6"),"rgd selector validation");
+            check(RegistryRgdArgument(L"a\\b\"c\\")==L"\"a\\b\\\"c\\\\\"","Windows rgd argv quoting");
+            auto schedules=std::filesystem::temp_directory_path()/(L"macrohelp-rgd-fixture-"+std::to_wstring(GetCurrentProcessId()));
+            check(std::filesystem::create_directory(schedules),"Cannot create schedule fixture");
+            std::filesystem::path staged;
+            {
+                RegistryRgdOutput output(schedules);staged=output.directory;
+                auto task=RegistryRgdTask(output,file,"i6s6");
+                check(task["cleanup"]==true&&task["delay"]==0&&task["task"]["actions"].size()==1,"rgd task lifecycle");
+                check(task["task"]["actions"][0]["sysCommandType"]=="executeprogram"&&task["task"]["actions"][0]["sysCommandParam1"]=="powershell.exe","rgd bypassed Run Command");
+                check(staged.parent_path()==schedules,"rgd output outside schedule directory");
+                check(WriteUtf8File((staged/L"output.tmp").wstring(),text),"Cannot stage fixture output");
+                check(output.read(L"output.tmp")==text,"Temporary output lost literal bytes");
+            }
+            check(!std::filesystem::exists(staged),"rgd output not removed after read");std::filesystem::remove(schedules);
+            g_registryRgdReader=previous;native_control::apply(before);
+        }
         {
             const std::string text="{\n  \"nested\": {\"list\": [{\"n\": 1}]},\n  \"script\": \"{wait 99}{if nope}{endif}\",\n  \"literal\": \"&amp;\\\\n\"\n}";
             auto script=Utf8ToWString("{set cbuf "+text+"}{type "+text+"}{wait 2}{type after}");

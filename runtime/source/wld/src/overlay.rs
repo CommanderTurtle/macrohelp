@@ -73,6 +73,7 @@ impl DialogKeys {
 #[cfg(unix)]
 extern "C" fn interrupted(_: i32) {
     STOP.store(true, Ordering::Relaxed);
+    crate::rgd::cancel();
 }
 pub fn http(config: &Config, method: &str, path: &str, body: &Value) -> Result<Value> {
     if config.key.is_empty() {
@@ -510,7 +511,9 @@ fn handle(config: &Config, r: &Value) -> Result<Value> {
             }
             http(config, verb, string(r, "path")?, &r["body"])
         }
-        "stop" => http(config, "POST", "/stop", &json!({})),
+        "stop" => { crate::rgd::cancel(); http(config, "POST", "/stop", &json!({})) },
+        "rgd-cancel" => { crate::rgd::cancel(); Ok(json!(true)) },
+        "rgd-read" => crate::rgd::read(string(r,"file")?, string(r,"reference")?, r["rgd_generation"].as_u64().unwrap_or_else(crate::rgd::generation), |verb,path,body| http(config,verb,path,body)),
         "save-state" => {
             write_state(&config.state_dir.join("overlay.json"), &r["state"], true)?;
             Ok(json!(true))
@@ -669,8 +672,8 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
         match receiver.recv_timeout(Duration::from_millis(if tracking { 16 } else { 100 })) {
             Ok(line) => {
                 let response = match serde_json::from_str::<Value>(&line) {
-                    Ok(r)
-                        if matches!(r["method"].as_str(), Some("http" | "stop" | "regedited")) =>
+                    Ok(mut r)
+                        if matches!(r["method"].as_str(), Some("http" | "stop" | "regedited" | "rgd-read")) =>
                     {
                         // Slow controller/tools I/O must not stall the pointer/key HUD.
                         requests.retain(|worker| !worker.is_finished());
@@ -678,6 +681,7 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
                             Some(reply(&r, Err(ApiError::new(429, "Local client is busy"))))
                         } else {
                             let config = config.clone();
+                            r["rgd_generation"] = json!(crate::rgd::generation());
                             requests.push(std::thread::spawn(move || {
                                 println!("{}", reply(&r, handle(&config, &r)));
                                 let _ = std::io::stdout().flush();
@@ -849,6 +853,7 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
         heatmap::save(&heatmap_path, &book)?;
     }
     STOP.store(true, Ordering::Relaxed);
+    crate::rgd::cancel();
     control_bridge.close();
     drop(control_server);
     for worker in requests {
