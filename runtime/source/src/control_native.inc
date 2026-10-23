@@ -198,6 +198,7 @@ static void action(const Json& input) {
     control::require(ok,WStringToUtf8(status),503);CloseRegistryHubDialog(h);
 }
 static Json handle(const std::string& path,const Json& body) {
+    if(path=="/v1/help")return control::success({{"platform","windows"},{"topic","registry_hub"},{"text",WStringToUtf8(RegistryHubHelpText())}});
     if(path=="/v1/coords"){
         POINT point={};control::require(GetCursorPos(&point)!=0,"Cursor position is unavailable",503);
         return control::success({{"x",point.x},{"y",point.y}});

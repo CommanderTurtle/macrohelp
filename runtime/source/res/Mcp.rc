@@ -1,0 +1,4 @@
+#include <windows.h>
+
+101 RCDATA "../mcp/contract.json"
+102 RCDATA "../../../skills/macrohelp/SKILL.md"

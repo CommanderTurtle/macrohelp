@@ -46,7 +46,7 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
 
-add_executable(macrohelp-mcp src/control_mcp.cpp)
+add_executable(macrohelp-mcp src/control_mcp.cpp res/Mcp.rc)
 target_compile_definitions(macrohelp-mcp PRIVATE UNICODE _UNICODE _WIN32_WINNT=0x0A00 WIN32_LEAN_AND_MEAN)
 target_link_libraries(macrohelp-mcp PRIVATE overlay-control)
 set_target_properties(macrohelp-mcp PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)

@@ -258,6 +258,7 @@ Item {
     try {
       if(event.path==="/v1/health"){answer({api_version:1,service:"macrohelp-overlay",ready:ready,backend:"omarsket",connected:connected});return}
       if(event.path==="/v1/state"){answer(controlSnapshot());return}
+      if(event.path==="/v1/help"){answer({platform:"wayland",topic:"registry_hub",text:DialogState.help()});return}
       if(event.path==="/v1/coords"){if(!ready){answer(null,{status:503,message:"Overlay not ready"});return}answer({x:Math.round(physicalCursor.x),y:Math.round(physicalCursor.y)});return}
       if(event.path==="/v1/stop"){stop();answer({stop_requested:true,state:controlSnapshot()});return}
       var request=event.body

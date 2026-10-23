@@ -8,8 +8,25 @@ use serde_json::{Value, json};
 use std::{
     io::{BufRead, Read, Write},
     net::TcpStream,
+    sync::OnceLock,
     time::Duration,
 };
+
+pub fn contract() -> &'static Value {
+    static CONTRACT: OnceLock<Value> = OnceLock::new();
+    CONTRACT.get_or_init(|| {
+        serde_json::from_str(include_str!("../../mcp/contract.json")).expect("MCP contract")
+    })
+}
+fn recovery(status: u16) -> Value {
+    contract()["recovery"]
+        .get(status.to_string())
+        .unwrap_or(&contract()["recovery"]["default"])
+        .clone()
+}
+fn rpc_error(id: Value, code: i32, message: &str, data: Value) -> Value {
+    json!({"jsonrpc":"2.0","id":id,"error":{"code":code,"message":message,"data":data}})
+}
 
 pub fn http(settings: &Settings, method: &str, path: &str, body: &Value) -> Result<Value> {
     let mut stream = TcpStream::connect_timeout(&settings.address, Duration::from_secs(2))
@@ -59,14 +76,24 @@ pub fn http(settings: &Settings, method: &str, path: &str, body: &Value) -> Resu
 }
 pub fn tools() -> Value {
     let empty = json!({"type":"object","properties":{},"additionalProperties":false});
-    json!([
-        {"name":"macrohelp_control","description":"Operate Macrohelp's native menus or patch its config. Use no_replace for temporary overrides. A partial menu returns a run ID: pass it to continue. Poll macrohelp_state for asynchronous work; another active run returns busy. This controls the overlay, not a second macro executor.","inputSchema":control_protocol::schema()["request"],"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":true}},
-        {"name":"macrohelp_state","description":"Read current menu, config, busy status and last control-run result. Never returns the live key-display feed.","inputSchema":empty,"annotations":{"readOnlyHint":true,"openWorldHint":false}},
-        {"name":"macrohelp_coords","description":"Read the current x/y coordinates shown by the overlay's coordinate display.","inputSchema":empty,"annotations":{"readOnlyHint":true,"openWorldHint":false}},
-        {"name":"macrohelp_stop","description":"Stop all macros through the existing stop-all path and cancel the active overlay control run.","inputSchema":empty,"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":true,"openWorldHint":false}},
-        {"name":"macrohelp_schema","description":"Read the running overlay's control contract and menu inventory.","inputSchema":empty,"annotations":{"readOnlyHint":true,"openWorldHint":false}},
-        {"name":"macrohelp_health","description":"Check the running overlay and its execution-backend connection.","inputSchema":empty,"annotations":{"readOnlyHint":true,"openWorldHint":false}}
-    ])
+    Value::Array(
+        contract()["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tool| {
+                let mut tool = tool.clone();
+                tool.as_object_mut().unwrap().remove("method");
+                tool.as_object_mut().unwrap().remove("route");
+                tool["inputSchema"] = if tool["name"] == "macrohelp_control" {
+                    control_protocol::schema()["request"].clone()
+                } else {
+                    empty.clone()
+                };
+                tool
+            })
+            .collect(),
+    )
 }
 pub struct Session {
     initialized: bool,
@@ -89,13 +116,38 @@ impl Session {
                 .as_ref()
                 .is_some_and(|id| !id.is_string() && !id.is_number() && !id.is_null())
         {
-            return Some(
-                json!({"jsonrpc":"2.0","id":id.unwrap_or(Value::Null),"error":{"code":-32600,"message":"Invalid JSON-RPC request"}}),
-            );
+            let id = id
+                .filter(|id| id.is_string() || id.is_number())
+                .unwrap_or(Value::Null);
+            return Some(rpc_error(
+                id,
+                -32600,
+                "Invalid JSON-RPC request",
+                json!({"next":contract()["rpc_recovery"]}),
+            ));
         }
         let id = id?;
+        if request.get("params").is_some_and(|p| !p.is_object()) {
+            return Some(rpc_error(
+                id,
+                -32602,
+                "MCP params must be an object",
+                json!({"next":contract()["rpc_recovery"]}),
+            ));
+        }
         let result = match request["method"].as_str().unwrap() {
             "initialize" => {
+                if request["params"]
+                    .get("protocolVersion")
+                    .is_some_and(|v| !v.is_string())
+                {
+                    return Some(rpc_error(
+                        id,
+                        -32602,
+                        "protocolVersion must be a string",
+                        json!({"next":contract()["rpc_recovery"]}),
+                    ));
+                }
                 self.initialized = true;
                 let version = request["params"]["protocolVersion"].as_str().unwrap_or("");
                 let version = if ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"]
@@ -106,27 +158,89 @@ impl Session {
                     "2025-11-25"
                 };
                 Ok(
-                    json!({"protocolVersion":version,"capabilities":{"tools":{"listChanged":false}},"serverInfo":{"name":"macrohelp","version":"1.0.0"}}),
+                    json!({"protocolVersion":version,"capabilities":{"tools":{"listChanged":false},"resources":{"subscribe":false,"listChanged":false}},"serverInfo":{"name":"macrohelp-overlay","version":"1.1.0"},"instructions":contract()["instructions"]}),
                 )
             }
             "ping" => Ok(json!({})),
             _ if !self.initialized => Err((-32002, "Initialize MCP first")),
             "tools/list" => Ok(json!({"tools":tools()})),
+            "resources/list" => {
+                let resources: Vec<_> = contract()["resources"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|r| {
+                        let mut r = r.clone();
+                        r.as_object_mut().unwrap().remove("route");
+                        r
+                    })
+                    .collect();
+                Ok(json!({"resources":resources}))
+            }
+            "resources/read" => {
+                let Some(uri) = request["params"]["uri"].as_str() else {
+                    return Some(rpc_error(
+                        id,
+                        -32602,
+                        "Resource uri must be a string",
+                        json!({"next":contract()["rpc_recovery"]}),
+                    ));
+                };
+                if let Some(resource) = contract()["resources"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|r| r["uri"] == uri)
+                {
+                    let text = if let Some(route) = resource["route"].as_str() {
+                        match call("GET", route, &json!({})) {
+                            Ok(value) => {
+                                if resource["mimeType"] == "text/plain" {
+                                    let Some(text) = value["text"].as_str() else {
+                                        return Some(rpc_error(
+                                            id,
+                                            -32603,
+                                            "Invalid overlay Help response",
+                                            json!({"next":recovery(503)}),
+                                        ));
+                                    };
+                                    text.to_owned()
+                                } else {
+                                    value.to_string()
+                                }
+                            }
+                            Err(error) => {
+                                return Some(rpc_error(
+                                    id,
+                                    -32603,
+                                    &error.message,
+                                    json!({"status":error.status,"next":recovery(error.status)}),
+                                ));
+                            }
+                        }
+                    } else {
+                        include_str!("../../../../skills/macrohelp/SKILL.md").to_owned()
+                    };
+                    Ok(
+                        json!({"contents":[{"uri":uri,"mimeType":resource["mimeType"],"text":text}]}),
+                    )
+                } else {
+                    Err((-32002, "Unknown resource; use resources/list"))
+                }
+            }
             "tools/call" => {
                 let args = request["params"]
                     .get("arguments")
                     .cloned()
                     .unwrap_or_else(|| json!({}));
-                let route = match request["params"]["name"].as_str() {
-                    Some("macrohelp_control") => Some(("POST", "/v1/control")),
-                    Some("macrohelp_state") => Some(("GET", "/v1/state")),
-                    Some("macrohelp_stop") => Some(("POST", "/v1/stop")),
-                    Some("macrohelp_schema") => Some(("GET", "/v1/schema")),
-                    Some("macrohelp_health") => Some(("GET", "/v1/health")),
-                    Some("macrohelp_coords") => Some(("GET", "/v1/coords")),
-                    _ => None,
-                };
-                if let Some((method, path)) = route {
+                let tool = contract()["tools"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|t| t["name"] == request["params"]["name"]);
+                if let Some(tool) = tool {
+                    let method = tool["method"].as_str().unwrap();
+                    let path = tool["route"].as_str().unwrap();
                     let response = if !args.is_object() {
                         Err(ApiError::new(400, "Tool arguments must be an object"))
                     } else if path == "/v1/control" {
@@ -140,7 +254,7 @@ impl Session {
                     let (value, is_error) = match response {
                         Ok(value) => (value, false),
                         Err(error) => (
-                            json!({"error":{"status":error.status,"message":error.message}}),
+                            json!({"error":{"status":error.status,"message":error.message,"next":recovery(error.status)}}),
                             true,
                         ),
                     };
@@ -148,16 +262,19 @@ impl Session {
                         json!({"content":[{"type":"text","text":value.to_string()}],"structuredContent":value,"isError":is_error}),
                     )
                 } else {
-                    Err((-32602, "Unknown tool"))
+                    Err((-32602, "Unknown tool; use tools/list"))
                 }
             }
             _ => Err((-32601, "Method not found")),
         };
         Some(match result {
             Ok(result) => json!({"jsonrpc":"2.0","id":id,"result":result}),
-            Err((code, message)) => {
-                json!({"jsonrpc":"2.0","id":id,"error":{"code":code,"message":message}})
-            }
+            Err((code, message)) => rpc_error(
+                id,
+                code,
+                message,
+                json!({"next":contract()["rpc_recovery"]}),
+            ),
         })
     }
 }
@@ -183,9 +300,12 @@ pub fn run(settings: &Settings) -> Result<()> {
             Ok(value) => session.dispatch(&value, &|method, path, body| {
                 http(settings, method, path, body)
             }),
-            Err(_) => Some(
-                json!({"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Parse error"}}),
-            ),
+            Err(_) => Some(rpc_error(
+                Value::Null,
+                -32700,
+                "Parse error",
+                json!({"next":contract()["rpc_recovery"]}),
+            )),
         };
         if let Some(response) = response {
             writeln!(output, "{response}")
@@ -236,7 +356,7 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .len(),
-            6
+            7
         );
         let result=session.dispatch(&json!({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"macrohelp_control","arguments":{"menu":2,"no_replace":true}}}),&call).unwrap();
         assert_eq!(result["result"]["structuredContent"]["run"], "one");

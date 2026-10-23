@@ -1,0 +1,28 @@
+{
+  "instructions": "Read macrohelp://guide for the control playbook. Check macrohelp_health and macrohelp_state before acting. Use macrohelp_schema for request fields and macrohelp_help for native Registry Hub syntax. no_replace is temporary configuration, not a dry run. Inspect state after errors/timeouts before retrying actions.",
+  "tools": [
+    {"name":"macrohelp_control","method":"POST","route":"/v1/control","description":"Operate the overlay's native menus or patch supplied config fields. Each inputs string submits one field including Enter. no_replace makes config temporary, not execution. Continue partial dialogs with their run ID; inspect macrohelp_state for completion/errors. Read macrohelp_help for workflow syntax. Never blindly replay after a timeout.","annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":true}},
+    {"name":"macrohelp_state","method":"GET","route":"/v1/state","description":"Read configuration, current dialog, active run ID, busy status and last_run result/error. Read before acting or retrying. Does not return the live key-display feed.","annotations":{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}},
+    {"name":"macrohelp_coords","method":"GET","route":"/v1/coords","description":"Read the exact x/y coordinates currently shown by the overlay. Does not move the pointer or start a run.","annotations":{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}},
+    {"name":"macrohelp_stop","method":"POST","route":"/v1/stop","description":"Stop all macros and cancel the active overlay control run through the existing stop-all path. Available while busy; cannot undo completed external actions.","annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":true,"openWorldHint":false}},
+    {"name":"macrohelp_schema","method":"GET","route":"/v1/schema","description":"Read the running overlay's accepted request/config fields, menu names and button actions. Use to correct invalid requests; use macrohelp_help for Registry Hub brace syntax.","annotations":{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}},
+    {"name":"macrohelp_health","method":"GET","route":"/v1/health","description":"Check overlay readiness and connectivity to the separate Tasket/Omarsket execution backend.","annotations":{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}},
+    {"name":"macrohelp_help","method":"GET","route":"/v1/help","description":"Read the running overlay's own Registry Hub Help page: router keys, workflow tokens, variables, zones and shell usage. Read before writing scripts; grammar remains platform-native. Does not open a dialog or execute anything.","annotations":{"readOnlyHint":true,"destructiveHint":false,"idempotentHint":true,"openWorldHint":false}}
+  ],
+  "resources": [
+    {"uri":"macrohelp://guide","name":"Macrohelp control playbook","description":"Menu workflow, temporary config, completion and safe error recovery.","mimeType":"text/markdown"},
+    {"uri":"macrohelp://registry-hub","name":"Registry Hub Help","description":"The running platform's native Registry Hub Help page.","mimeType":"text/plain","route":"/v1/help"},
+    {"uri":"macrohelp://schema","name":"Overlay control schema","description":"The running overlay's request/config schema and menu inventory.","mimeType":"application/json","route":"/v1/schema"}
+  ],
+  "recovery": {
+    "400":"Read macrohelp_schema and macrohelp_help, inspect macrohelp_state, then correct the rejected fields or current dialog input. Do not replay actions that may already have run.",
+    "401":"Check the client's local control key and port settings against the overlay. Do not print the key or retry with guessed credentials.",
+    "403":"Check the client's loopback connection and local control settings. Do not bypass the access check.",
+    "404":"Inspect macrohelp_state and last_run before replacing an expired run ID or starting another flow.",
+    "409":"Inspect macrohelp_state. Continue only your own active run with its ID and unchanged no_replace setting; do not automatically stop other work.",
+    "413":"Reduce the request below 1 MiB and 256 inputs. Read macrohelp_schema; use one executable flow per run.",
+    "503":"Check the running overlay and its backend connection with macrohelp_health. Inspect macrohelp_state before retrying; a timed-out action may already have started.",
+    "default":"Inspect macrohelp_state before retrying. Read macrohelp_schema and macrohelp_help; never blindly replay a macro after an uncertain response."
+  },
+  "rpc_recovery":"Send one JSON-RPC 2.0 object per line with a string or numeric id, a method string and object params. Initialize first. Use tools/list, resources/list and macrohelp_schema to correct the request; do not guess or automatically replay actions."
+}

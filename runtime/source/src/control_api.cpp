@@ -137,7 +137,7 @@ struct Server::Impl {
             catch (const Json::exception&) { res.status = 400; res.set_content(failure(400, "Invalid JSON").dump(), "application/json"); }
             catch (const std::exception&) { res.status = 500; res.set_content(failure(500, "Control request failed").dump(), "application/json"); }
         };
-        for (const char* path : {"/v1/health", "/v1/state", "/v1/schema", "/v1/coords"}) server.Get(path, route);
+        for (const char* path : {"/v1/health", "/v1/state", "/v1/schema", "/v1/coords", "/v1/help"}) server.Get(path, route);
         for (const char* path : {"/v1/control", "/v1/stop"}) server.Post(path, route);
         server.set_error_handler([](const httplib::Request&, httplib::Response& res) {
             if (res.body.empty()) res.set_content(failure(res.status, "HTTP request rejected").dump(), "application/json");
@@ -164,7 +164,7 @@ Json http(const Settings& settings, const std::string& method, const std::string
 }
 Json schema() {
     Json s = {{"version",1},{"service","macrohelp-overlay"},{"menus",Menus},
-        {"routes",{"GET /v1/health","GET /v1/schema","GET /v1/state","GET /v1/coords","POST /v1/control","POST /v1/stop"}},
+        {"routes",{"GET /v1/health","GET /v1/schema","GET /v1/state","GET /v1/coords","GET /v1/help","POST /v1/control","POST /v1/stop"}},
         {"input_semantics","Each string submits one dialog input, including its Enter. Action objects address buttons. CSV starts with a menu; quote fields containing commas. Partial menus return a run ID; include run to continue that menu."},
         {"no_replace","Temporary config overrides for this run; otherwise save supplied fields. Omitted fields are retained. A continued run inherits no_replace."}};
     Json coordinate = {{"type","integer"},{"minimum",-100000},{"maximum",100000}};

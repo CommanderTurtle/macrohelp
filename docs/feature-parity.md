@@ -169,6 +169,7 @@ Overlay evidence: [Windows implementation](../runtime/source/src/main.cpp),
 | O86 · MCP control | Native C++ `macrohelp-mcp` stdio client | Present: `macrohelpctl mcp`; both forward to the same overlay HTTP contract |
 | O87 · Cursor query | GET `/v1/coords`; `macrohelp_coords` | Present: same route/tool returns the existing displayed x/y values without modifying state |
 | O88 · Dismissed dialog pointer return | No center-bottom blink in Windows | Present: Escape/60px dismissal returns a blinked dialog's frozen entry point via the existing memory-only temp-task path |
+| O89 · MCP skill and live help | Embedded guide, shared tool catalog, native Registry Hub Help and schema resources | Present: identical MCP discovery/recovery contract; help reads the existing platform-native manual without opening a menu |
 
 </details>
 

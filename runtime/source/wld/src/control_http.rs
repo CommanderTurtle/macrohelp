@@ -222,7 +222,7 @@ fn request(stream: &mut TcpStream, settings: &Settings, dispatch: &Dispatch) -> 
         (method.as_str(), path.as_str()),
         (
             "GET",
-            "/v1/health" | "/v1/schema" | "/v1/state" | "/v1/coords"
+            "/v1/health" | "/v1/schema" | "/v1/state" | "/v1/coords" | "/v1/help"
         ) | ("POST", "/v1/control" | "/v1/stop")
     ) {
         return Err(ApiError::new(404, "Unknown overlay control route"));

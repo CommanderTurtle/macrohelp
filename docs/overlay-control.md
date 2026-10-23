@@ -25,6 +25,7 @@ The listener binds only `127.0.0.1`; it does not enable cross-origin browser acc
 | GET | `/v1/schema` | Request/config schema and menu inventory |
 | GET | `/v1/state` | Config, native dialog, active/last run, busy/error state |
 | GET | `/v1/coords` | Current displayed cursor coordinates: `{"x":123,"y":456}` |
+| GET | `/v1/help` | Native Registry Hub Help: `platform`, `topic`, `text` |
 | POST | `/v1/control` | Apply supplied fields and operate a menu |
 | POST | `/v1/stop` | Existing stop-all path; available while busy |
 
@@ -97,8 +98,21 @@ must already be running with the same control key/port:
 - Linux: `~/.local/share/macrohelp/overlay/bin/macrohelpctl mcp --env ABSOLUTE_ENV_PATH`
 
 Tools: `macrohelp_control`, `macrohelp_state`, `macrohelp_coords`, `macrohelp_stop`,
-`macrohelp_schema`, `macrohelp_health`. They forward to the HTTP API with the
+`macrohelp_schema`, `macrohelp_health`, `macrohelp_help`. They forward to the HTTP API with the
 same arguments and return structured results. Tokens never go to MCP stdout.
+
+[The skillbook](../skills/macrohelp/SKILL.md) covers discovery, native menu flows,
+temporary configuration and recovery. It is also embedded as the MCP resource
+`macrohelp://guide`; no separate skill installation is needed to read it.
+`macrohelp://registry-hub` reads the running overlay's own Help page and
+`macrohelp://schema` reads its HTTP contract. Tool-only clients can use
+`macrohelp_help` and `macrohelp_schema` instead. Both native clients share one
+tool/resource catalog; help grammar remains specific to the running platform.
+
+Invalid tool arguments return `isError:true` with `error.status`, `message` and
+`next` guidance; malformed JSON-RPC returns a protocol error with recovery data.
+Nothing automatically rewrites or retries an action. Inspect state before retrying
+after a native error, timeout or disconnect because effects may already have begun.
 
 Read coordinates with `curl http://127.0.0.1:7778/v1/coords -H "Authorization: Bearer $key"`.
 This uses the overlay's existing displayed coordinate source; it does not move the pointer.

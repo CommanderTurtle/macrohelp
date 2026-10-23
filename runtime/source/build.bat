@@ -28,6 +28,8 @@ if errorlevel 1 (
     echo ERROR: Resource compilation failed.
     exit /b 1
 )
+rc /fo %OUT%\Mcp.res %RES%\Mcp.rc
+if errorlevel 1 exit /b 1
 
 echo [2/3] Compiling main.cpp...
 cl.exe /nologo /std:c++17 /EHsc /O2 /W3 /permissive- /Zc:__cplusplus ^
@@ -49,7 +51,7 @@ if errorlevel 1 (
 
 echo.
 echo Build complete: %OUT%\%TARGET%
-link.exe /nologo /SUBSYSTEM:CONSOLE /OUT:%OUT%\macrohelp-mcp.exe %OUT%\control_mcp.obj %OUT%\control_api.obj ole32.lib
+link.exe /nologo /SUBSYSTEM:CONSOLE /OUT:%OUT%\macrohelp-mcp.exe %OUT%\control_mcp.obj %OUT%\control_api.obj %OUT%\Mcp.res ole32.lib
 if errorlevel 1 exit /b 1
 echo.
 echo To run: start %OUT%\%TARGET%

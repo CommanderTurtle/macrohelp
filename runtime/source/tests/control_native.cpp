@@ -24,6 +24,10 @@ int main(int argc,char** argv) {
         }
         for(int i=0;i<10;++i)check(normalize({{"menu",Menus[i]}})["menu"]==i,"Menu mapping");
         auto before=native_control::environment();
+        auto stateBeforeHelp=native_control::snapshot();
+        auto help=native_control::handle("/v1/help",Json::object());
+        check(help["result"]["text"]==WStringToUtf8(RegistryHubHelpText()),"Help differs from native manual");
+        check(help["result"]["platform"]=="windows"&&native_control::snapshot()==stateBeforeHelp,"Help mutated state");
         auto changed=native_control::merge(before,{{"vars",{{"A","temporary"}}},{"points",{{"16",{100,200}}}},{"zones",{{"C",{1,2,3,4}}}}});
         check(changed["vars"]["S"]==before["vars"]["S"],"Omitted fields lost");
         g_controlTemporary=true;native_control::run={{"id","test"},{"no_replace",true},{"saved",before}};

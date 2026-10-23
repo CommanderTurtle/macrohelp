@@ -33,6 +33,8 @@ if errorlevel 1 (
     echo ERROR: Resource compilation failed.
     exit /b 1
 )
+windres -i %RES%\Mcp.rc -o %OUT%\Mcp_res.o
+if errorlevel 1 exit /b 1
 
 echo [2/3] Compiling main.cpp...
 g++ -std=c++17 -O2 -Wall -DUNICODE -D_UNICODE -D_WIN32_WINNT=0x0A00 ^
@@ -55,7 +57,7 @@ if errorlevel 1 (
 
 echo.
 echo Build complete: %OUT%\%TARGET%
-g++ -std=c++17 -O2 -DUNICODE -D_UNICODE -D_WIN32_WINNT=0x0A00 -I%SRC% %SRC%\control_mcp.cpp %OUT%\control_api.o -o %OUT%\macrohelp-mcp.exe -lws2_32 -lbcrypt -ladvapi32 -lcrypt32 -lshell32 -lole32 -luuid
+g++ -std=c++17 -O2 -DUNICODE -D_UNICODE -D_WIN32_WINNT=0x0A00 -I%SRC% %SRC%\control_mcp.cpp %OUT%\control_api.o %OUT%\Mcp_res.o -o %OUT%\macrohelp-mcp.exe -lws2_32 -lbcrypt -ladvapi32 -lcrypt32 -lshell32 -lole32 -luuid
 if errorlevel 1 exit /b 1
 echo.
 echo To run: start %OUT%\%TARGET%
