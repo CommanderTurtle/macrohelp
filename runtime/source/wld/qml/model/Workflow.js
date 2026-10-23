@@ -62,10 +62,17 @@ function screen(shortcuts) {
   if(!shortcuts||!shortcuts.Z)throw Error("Choose a desktop screenshot shortcut in the plugin's shortcuts setting")
   return [copy(shortcuts.Z),wait(shortcuts.waitMs===undefined?2000:shortcuts.waitMs)]
 }
+function shellCommand(value) {
+  var command=String(value||"")
+  if(/[\r\n\x00-\x1f\x7f]/.test(command))throw Error("Shell command must be a single line")
+  if(/^(type|press|set|wait|paste|buf|zone|zonebuf|screen)$/i.test(command.trim()))throw Error("Choose a shell starter command, not a Registry Hub instruction")
+  return command
+}
 function singleLineClipboard(shortcuts,state) {
   var shells=(state||{}).shells||{},terminal=shells.T?keys(shells.T,100):shortcuts.terminal,command=shells.P
   if(!terminal)throw Error("Choose a terminal shortcut for single-line OCR")
-  if(!command||/[\r\n\x00-\x1f\x7f]/.test(command))throw Error("Set the single-line PowerShell command in shell P")
+  if(!command||!String(command).trim())throw Error("Set the single-line PowerShell command in shell P")
+  command=shellCommand(command)
   function type(text){return {type:"type",text:text,interval_ms:0}}
   // Never paste OCR into executable shell syntax: it remains clipboard data.
   // The two exits close the temporary pwsh session and its parent terminal.
@@ -352,7 +359,7 @@ function compile(source,original,context,resume) {
       zone(rect,method,context.shortcuts,state).forEach(emit)
       steps[steps.length-1].capture=true
       if(destination){local({kind:"clipboard",slot:destination,singleLine:method==="C"})}
-    }else if(op==="screen"&&!arg){screen(context.shortcuts).forEach(emit);steps[steps.length-1].capture=true}
+    }else if(op==="screen"){if(arg)throw Error("{screen} takes no arguments");screen(context.shortcuts).forEach(emit);steps[steps.length-1].capture=true}
     else if(op==="rgdclip"||op==="rgdappend")local({kind:"regedited",action:op==="rgdclip"?"clip":"append",file:state.registry,reference:arg})
     else if(op==="shell"||["terminal","pwsh","powershell","bash","cmd","python","py","regedited","regbin"].indexOf(op)>=0){
       var alias=op==="shell"?arg.toUpperCase():op==="bash"?"X":op==="cmd"?"C":op==="pwsh"||op==="powershell"?"P":"G"
@@ -360,8 +367,7 @@ function compile(source,original,context,resume) {
       var terminal=state.shells.T?keys(state.shells.T,100):context.shortcuts&&context.shortcuts.terminal
       if(!terminal)throw Error("Choose a terminal shortcut in Workflow or the plugin's shortcuts setting")
       emit(copy(terminal));emit(wait(700))
-      var command=op==="terminal"?"":state.shells[alias]===undefined&&alias==="P"?"pwsh":state.shells[alias]||""
-      if(/[\r\n\x00-\x1f\x7f]/.test(command))throw Error("Shell command must be a single line")
+      var command=op==="terminal"?"":shellCommand(state.shells[alias])
       if(command){emit({type:"type",text:String(command),interval_ms:0});emit(keys("ENTER"))}
     }else if(["exec","system","sys"].indexOf(op)>=0)throw Error("No implicit system commands; use an explicitly permitted Omarsket task")
     else emit(keys(raw))

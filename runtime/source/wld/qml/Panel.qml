@@ -17,7 +17,7 @@ Ui.Panel {
   property string zoneMethod:"X"
   property string targetSlot:"V"
   property string varSlot:"A"
-  property string chord:"CTRL+C"
+  property string chord:"SUPER+C"
   property int hold:40
   property int repeats:1
   property var keyAction:null
@@ -124,7 +124,7 @@ Ui.Panel {
           }
           Column {
             width:parent.width;spacing:Style.space(8);visible:root.app&&root.app.page==="Keys"
-            Ui.TextField {width:parent.width;text:root.chord;placeholderText:"CTRL+SHIFT+S";onTextEdited:root.chord=text}
+            Ui.TextField {width:parent.width;text:root.chord;placeholderText:"SUPER+C / SUPER+V";onTextEdited:root.chord=text}
             Flow {width:parent.width;spacing:Style.space(8)
               Ui.NumberField {label:"Hold ms";value:root.hold;from:1;to:60000;onModified:function(value){root.hold=value}}
               Ui.NumberField {label:"Repeat";value:root.repeats;from:1;to:1000;onModified:function(value){root.repeats=value}}

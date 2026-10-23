@@ -167,6 +167,10 @@ test("environment point, zone and shell edits",()=>{
   expect(p.steps[0].actions[2]).toEqual({type:"type",text:"fish",interval_ms:0})
 })
 test("shells use user commands and terminal chords, never native process execution",()=>{
+  expect(()=>compile("{shell type}")).toThrow("Shell alias must")
+  expect(()=>compile("{screen unwanted}")).toThrow("takes no arguments")
+  for(const op of ["pwsh","bash","shell X"]){const bad=state();bad.shells.P="type";bad.shells.X="type";expect(()=>W.compile("{"+op+"}",bad,context)).toThrow("shell starter")}
+  const badCapture=state();badCapture.shells.P="type";expect(()=>W.compile("{zone Z,C}",badCapture,context)).toThrow("shell starter")
   const s=state();s.shells.P="pwsh -NoLogo";s.shells.T="SUPER+F12"
   const actions=W.compile("{pwsh}",s,context).steps[0].actions
   expect(actions.map(a=>a.type)).toEqual(["keyssequence","wait","type","keyssequence"])
