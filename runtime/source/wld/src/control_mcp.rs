@@ -27,6 +27,9 @@ fn recovery(status: u16) -> Value {
 fn rpc_error(id: Value, code: i32, message: &str, data: Value) -> Value {
     json!({"jsonrpc":"2.0","id":id,"error":{"code":code,"message":message,"data":data}})
 }
+fn available(item: &Value) -> bool {
+    item.get("platform").is_none_or(|p| p == "wayland")
+}
 
 pub fn http(settings: &Settings, method: &str, path: &str, body: &Value) -> Result<Value> {
     let mut stream = TcpStream::connect_timeout(&settings.address, Duration::from_secs(2))
@@ -81,10 +84,12 @@ pub fn tools() -> Value {
             .as_array()
             .unwrap()
             .iter()
+            .filter(|tool| available(tool))
             .map(|tool| {
                 let mut tool = tool.clone();
                 tool.as_object_mut().unwrap().remove("method");
                 tool.as_object_mut().unwrap().remove("route");
+                tool.as_object_mut().unwrap().remove("platform");
                 tool["inputSchema"] = if tool["name"] == "macrohelp_control" {
                     control_protocol::schema()["request"].clone()
                 } else {
@@ -169,9 +174,11 @@ impl Session {
                     .as_array()
                     .unwrap()
                     .iter()
+                    .filter(|r| available(r))
                     .map(|r| {
                         let mut r = r.clone();
                         r.as_object_mut().unwrap().remove("route");
+                        r.as_object_mut().unwrap().remove("platform");
                         r
                     })
                     .collect();
@@ -190,7 +197,7 @@ impl Session {
                     .as_array()
                     .unwrap()
                     .iter()
-                    .find(|r| r["uri"] == uri)
+                    .find(|r| available(r) && r["uri"] == uri)
                 {
                     let text = if let Some(route) = resource["route"].as_str() {
                         match call("GET", route, &json!({})) {
@@ -237,7 +244,7 @@ impl Session {
                     .as_array()
                     .unwrap()
                     .iter()
-                    .find(|t| t["name"] == request["params"]["name"]);
+                    .find(|t| available(t) && t["name"] == request["params"]["name"]);
                 if let Some(tool) = tool {
                     let method = tool["method"].as_str().unwrap();
                     let path = tool["route"].as_str().unwrap();
@@ -356,7 +363,7 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .len(),
-            7
+            8
         );
         let result=session.dispatch(&json!({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"macrohelp_control","arguments":{"menu":2,"no_replace":true}}}),&call).unwrap();
         assert_eq!(result["result"]["structuredContent"]["run"], "one");

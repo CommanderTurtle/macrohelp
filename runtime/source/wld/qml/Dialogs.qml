@@ -74,7 +74,7 @@ Item {
     function submit(value, fromButton) {
         if(!dialogOpen || working || capturing)return
         try {
-            var result=DialogState.submit(dialogState,value===undefined?dialogState.text:value,service.environment,service.physicalCursor,Workflow)
+            var result=DialogState.submit(dialogState,value===undefined?dialogState.text:value,service.environment,service.physicalCursor,Workflow,service.monitors)
             dialogState=result.state
             if(dialogState.capturing&&fromButton){var armed=DialogState.clone(dialogState);armed.captureReady=true;dialogState=armed}
             if(result.swap){openDialog(result.swap,undefined,true);return}

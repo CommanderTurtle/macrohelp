@@ -84,7 +84,7 @@ function description(s, env) {
   return {title:title+(s.name?" · "+s.name:""),hint:s.capturing?"Press a chord, then release it":hints[s.stage]||s.stage,buttons:shortcuts,
     multiline:["Edit","Script","Var","Paste","Help"].indexOf(s.stage)>=0,readonly:s.stage==="Help"||s.capturing,command:commandStage(s),manual:s.stage==="Manual"}
 }
-function submit(original, text, env, cursor, W) {
+function submit(original, text, env, cursor, W, monitors) {
   var s=clone(original),effects=[],close=false,swap="",raw=String(text),cmd=raw.trim().toLowerCase(),key=cmd.toUpperCase()
   s.error=""
   function change(section,k,value){effects.push({kind:"change",section:section,key:k,value:value})}
@@ -151,7 +151,7 @@ function submit(original, text, env, cursor, W) {
       if(slots.indexOf(key)>=0){s.slot=key;if(s.pendingZone){change("zones",key,s.pendingZone);close=true}else field(s,"ZoneEdit",(env.zones[key]||[]).join(","))}
       else if(cmd==="b"||cmd==="play"||cmd==="buffer")field(s,"ZonePlaySelect")
       else throw Error("Choose Z, X, C, V or B")
-    } else if(s.stage==="ZoneEdit") {change("zones",s.slot,W.zoneValue(raw,env));close=true}
+    } else if(s.stage==="ZoneEdit") {change("zones",s.slot,W.zoneValue(raw,env,monitors));close=true}
     else if(s.stage==="ZonePlaySelect"||s.stage==="ZoneCaptureZoneSelect") {
       if(s.stage==="ZonePlaySelect"&&(cmd==="b"||cmd==="clip"||cmd==="capture"))field(s,"ZoneCaptureZoneSelect")
       else if(slots.indexOf(key)>=0&&env.zones[key]){s.slot=key;field(s,s.stage==="ZonePlaySelect"?"ZonePlayFlow":"ZoneCaptureFlow")}
@@ -182,8 +182,8 @@ function submit(original, text, env, cursor, W) {
       else if(s.stage==="ExportPath"||s.stage==="ImportPath")change("paths",s.stage==="ExportPath"?"export":"import",raw)
       else if(s.stage==="Shell")change("shells",s.slot,raw)
       else if(s.stage==="Var")change("vars",s.slot,raw)
-      else if(s.stage==="Point")change("points",Number(s.slot),["s","save","cursor"].indexOf(cmd)>=0?point(cursor):W.pointValue(raw,env))
-      else if(s.stage==="ZoneEdit")change("zones",s.slot,W.zoneValue(raw,env))
+      else if(s.stage==="Point")change("points",Number(s.slot),["s","save","cursor"].indexOf(cmd)>=0?point(cursor):W.pointValue(raw,env,monitors))
+      else if(s.stage==="ZoneEdit")change("zones",s.slot,W.zoneValue(raw,env,monitors))
       back()
     }
   } else if(s.kind==="record_keys") {

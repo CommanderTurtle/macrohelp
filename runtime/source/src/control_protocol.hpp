@@ -32,7 +32,10 @@ inline void fields(const Json& v, const std::vector<std::string>& allowed) {
 }
 inline void coordinates(const Json& v, size_t count) {
     require(v.is_array() && v.size() == count, "Invalid integer coordinates");
-    for (const auto& n : v) require(integer(n, -100000, 100000), "Invalid integer coordinates");
+    for (const auto& n : v) {
+        require(!n.is_string(), "Windows coordinates require integer physical pixels; board codes are Wayland-only. Use macrohelp_coords.");
+        require(integer(n, -100000, 100000), "Invalid integer coordinates");
+    }
 }
 inline void textSafety(const Json& v, unsigned depth = 0) {
     require(depth < 64, "JSON nesting exceeds 64 levels");

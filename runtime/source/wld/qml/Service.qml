@@ -156,6 +156,7 @@ Item {
   function runSaved(name){if(busy||localBusy||pending){error="Stop the current operation first";return}localBusy=true;var token=generation;hidePanel();http("POST","/run",{task:name},function(v,e){if(token!==root.generation)return;root.localBusy=false;if(!e){root.change("","last_task",v);root.message="Scheduled #"+v.task_number}})}
   function assemble(context,token,build,fail){
     if(token!==generation)return
+    context.monitors=root.monitors
     try{build()}
     catch(e){
       if(!e.rgd){fail(e);return}
@@ -307,7 +308,7 @@ Item {
       if(!controlRun&&request.run){answer(null,{status:404,message:"Control run is no longer active"});return}
       if(busy||localBusy||pending||dialogs.working||recordingPath||(activePanel&&activePanel.captureAction)||(!controlRun&&dialogs.dialogOpen)){answer(null,{status:409,message:"Overlay is busy; inspect state or stop first"});return}
       if(controlRun&&request.no_replace!==undefined&&request.no_replace!==controlRun.noReplace){answer(null,{status:409,message:"no_replace is fixed for the active run"});return}
-      var plan=Control.prepare(request,environment,physicalCursor,controlRun?dialogs.dialogState:null,Workflow,DialogState)
+      var plan=Control.prepare(request,environment,physicalCursor,controlRun?dialogs.dialogState:null,Workflow,DialogState,monitors)
       if(plan.effects.filter(function(e){return ["queue","play","zone","save_schedule"].indexOf(e.kind)>=0}).length>1)throw Error("Use one executable flow per control run")
       var before=Workflow.copy(environment)
       if(!controlRun){controlRun={id:String(Date.now())+"-"+(++serial),noReplace:!!request.no_replace,saved:before,hadPersist:persist.running};if(controlRun.noReplace)persist.stop()}

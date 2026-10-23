@@ -42,3 +42,14 @@ test('view patches enforce one-way exclusion for UI and HTTP without enabling th
   expect(service).toContain('readonly property var board: Workflow.board(physicalCursor)')
   expect(service).toContain('if(event.path==="/v1/board")')
 })
+
+test('board-only coordinates outside known displays fail before native task creation',()=>{
+  const monitors=[{x:0,y:0,width:3840,height:2160,scale:2}]
+  expect(W.pointValue('_aj,_h',state(),monitors)).toEqual([1775,375])
+  expect(()=>W.pointValue('_zz,_a',state(),monitors)).toThrow('outside connected displays')
+  expect(()=>W.zoneValue('_a,_a,_zz,_h',state(),monitors)).toThrow('outside connected displays')
+  expect(()=>W.compile('{set point a _zz,_a}{point a}',state(),{monitors})).toThrow('outside connected displays')
+  expect(W.pointValue('35075,25',state(),monitors)).toEqual([35075,25])
+  expect(W.compile('{type _zz}',state(),{monitors}).steps[0].actions[0].content).toBe('_zz')
+  expect(W.pointValue('-_a,_h',state(),[{x:-960,y:0,width:1920,height:1080,scale:2}])).toEqual([-25,375])
+})

@@ -2,7 +2,7 @@ import {test,expect} from "bun:test"
 import {readFileSync} from "node:fs"
 import {runInNewContext} from "node:vm"
 const read=name=>readFileSync(new URL(name,import.meta.url),"utf8")
-const W=runInNewContext(read("../qml/model/Workflow.js")+"\n({copy,keys,keyName,wait,move,paste,expression,vector,numeric,coordinate,pointValue,zoneValue,pasteSequence,clearState,viewPatch})")
+const W=runInNewContext(read("../qml/model/Workflow.js")+"\n({copy,keys,keyName,wait,move,paste,expression,vector,numeric,coordinate,coordinateValues,pointValue,zoneValue,pasteSequence,clearState,viewPatch})")
 const D=runInNewContext(read("../qml/model/Dialogs.js")+"\n({open,clone,field,point,submit,preview,recorded,addStep,description,mouseDismiss,categories,help})")
 const C=runInNewContext(read("../qml/model/Control.js")+"\n({merge,prepare})")
 const env=()=>({version:1,script:"",registry:"/tmp/data",shells:{X:"bash",C:"sh",G:"python",P:"pwsh",T:""},paths:{export:"/tmp/export.json",import:"/tmp/import.json"},vars:{A:"original",S:"kept",D:"",F:""},buffers:{Z:"hello",X:"world",C:"",V:""},zones:{Z:[0,0,50,50],X:null,C:null,V:null},points:Array(16).fill(null),view:{crosshair:true,grid:false,coordinates:true,keys:true,coordinates_only:false},last_task:null})
@@ -18,6 +18,13 @@ test("HTTP board inputs normalize coordinates without rewriting script, variable
   const result=C.prepare({menu:3,origin:['_aj','_h'],config:{script:'{type _aj}',vars:{A:'_a'},buffers:{Z:'_h'},points:{1:['_a','_h']},zones:{X:['_a',0,'_aj','_h']}}},env(),cursor,null,W,D)
   expect(result.state.origin).toEqual([1775,375]);expect(result.environment.points[0]).toEqual([25,375]);expect(result.environment.zones.X).toEqual([25,0,1775,375])
   expect(result.environment.script).toBe('{type _aj}');expect(result.environment.vars.A).toBe('_a');expect(result.environment.buffers.Z).toBe('_h')
+})
+
+test("invalid/offscreen HTTP board inputs leave the live environment unchanged",()=>{
+  const original=env(),before=JSON.stringify(original),monitors=[{x:0,y:0,width:1920,height:1080,scale:1}]
+  for(const request of [{origin:['_zz','_a']},{config:{points:{1:['_zz','_a']}}},{menu:2,inputs:['1','_zz,_a']},{config:{points:{1:['_zzzz','_a']}}}])
+    expect(()=>C.prepare(request,original,cursor,null,W,D,monitors)).toThrow()
+  expect(JSON.stringify(original)).toBe(before)
 })
 
 test("HTTP menu inputs use the real Registry Hub transitions and produce native effects",()=>{
@@ -55,7 +62,7 @@ test("continued editor config overrides replace stale displayed text before Play
 
 function service(overrides={}) {
   const source=read("../qml/Service.qml"),timer=()=>({running:false,restart(){this.running=true},stop(){this.running=false}})
-  const s={environment:env(),cursor:{...cursor},physicalCursor:{...cursor},ready:true,connected:true,busy:false,localBusy:false,pending:null,recordingPath:false,error:"",serial:0,generation:0,
+  const s={environment:env(),cursor:{...cursor},physicalCursor:{...cursor},monitors:[],ready:true,connected:true,busy:false,localBusy:false,pending:null,recordingPath:false,error:"",serial:0,generation:0,
     controlRun:null,controlLast:null,controlPending:0,dispatch:null,activePanel:null,DialogState:D,Workflow:W,Control:C,persist:timer(),calls:[],saves:[],
     call(value){this.calls.push(value);if(value.method==="save-state")this.saves.push(W.copy(value.state))},
     dialogs:{dialogOpen:false,working:false,dialogState:null,openDialog(kind){this.dialogOpen=true;this.dialogState=D.open(kind,cursor)},closeDialog(){this.dialogOpen=false;this.working=false},focusInput(){}},
@@ -85,6 +92,15 @@ test("HTTP help is the actual native manual and does not open a run even while b
   expect(reply.result).toEqual({platform:"wayland",topic:"registry_hub",text:D.help()})
   expect(s.controlRun).toBeNull();expect(s.dialogs.dialogOpen).toBe(false)
   expect(s.saves).toHaveLength(0);expect(JSON.stringify(s.environment)).toBe(before)
+})
+
+test("board reads remain available while busy and hidden; offscreen requests return clean errors",()=>{
+  const s=service({busy:true,board:{x:'_aj',y:'_h',text:'_aj, _h',center:{x:1775,y:375},cell_size:50}})
+  const before=JSON.stringify(s.environment),reply=send(s,{},'/v1/board')
+  expect(reply.result).toEqual(s.board);expect(s.controlRun).toBeNull();expect(JSON.stringify(s.environment)).toBe(before)
+  const idle=service({monitors:[{x:0,y:0,width:1920,height:1080,scale:1}]})
+  expect(send(idle,{origin:['_zz','_a']}).error.status).toBe(400)
+  expect(idle.controlRun).toBeNull();expect(idle.saves).toHaveLength(0)
 })
 
 test("no-replace overrides are used during work but never saved, then restored on completion",()=>{

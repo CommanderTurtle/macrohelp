@@ -15,6 +15,7 @@ static std::string mcpAsset(int id) {
 int mcp(const Settings& settings) {
     const std::vector<std::string> versions = {"2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"};
     const auto contract = Json::parse(mcpAsset(101));
+    auto available = [](const Json& item) { return !item.contains("platform") || item["platform"] == "windows"; };
     auto read = [&](const std::string& method, const std::string& path, const Json& body) {
         auto reply = http(settings, method, path, body);
         if (!reply.value("ok", false)) throw Error(reply.at("error").value("status",503), reply.at("error").value("message","Overlay control failed"));
@@ -51,16 +52,18 @@ int mcp(const Settings& settings) {
             else if (method == "tools/list") {
                 result = {{"tools",Json::array()}};
                 for (auto tool : contract["tools"]) {
-                    tool.erase("method");tool.erase("route");
+                    if (!available(tool)) continue;
+                    tool.erase("method");tool.erase("route");tool.erase("platform");
                     tool["inputSchema"]=tool["name"]=="macrohelp_control"?schema()["request"]:Json{{"type","object"},{"properties",Json::object()},{"additionalProperties",false}};
                     result["tools"].push_back(tool);
                 }
             } else if (method == "resources/list") {
                 result={{"resources",Json::array()}};
-                for(auto resource:contract["resources"]){resource.erase("route");result["resources"].push_back(resource);}
+                for(auto resource:contract["resources"]){if(!available(resource))continue;resource.erase("route");resource.erase("platform");result["resources"].push_back(resource);}
             } else if (method == "resources/read") {
                 require(params.contains("uri")&&params["uri"].is_string(),"Resource uri must be a string",-32602);
-                auto found=std::find_if(contract["resources"].begin(),contract["resources"].end(),[&](const Json& r){return r["uri"]==params["uri"];});
+                require(params["uri"]!="macrohelp://board","Board coordinates are Wayland-only; use macrohelp_coords for Windows pixel coordinates",-32602);
+                auto found=std::find_if(contract["resources"].begin(),contract["resources"].end(),[&](const Json& r){return available(r)&&r["uri"]==params["uri"];});
                 require(found!=contract["resources"].end(),"Unknown resource; use resources/list",-32002);
                 std::string text;
                 if(!found->contains("route"))text=mcpAsset(102);
@@ -72,7 +75,8 @@ int mcp(const Settings& settings) {
             } else if (method == "tools/call") {
                 require(params.contains("name")&&params["name"].is_string(),"Tool name must be a string",-32602);
                 auto name = params.value("name", "");
-                auto tool=std::find_if(contract["tools"].begin(),contract["tools"].end(),[&](const Json& t){return t["name"]==name;});
+                require(name!="macrohelp_board","Board coordinates are Wayland-only; use macrohelp_coords for Windows pixel coordinates",-32602);
+                auto tool=std::find_if(contract["tools"].begin(),contract["tools"].end(),[&](const Json& t){return available(t)&&t["name"]==name;});
                 require(tool != contract["tools"].end(), "Unknown tool; use tools/list", -32602);
                 auto arguments = params.value("arguments", Json::object());
                 Json value;bool failed=false;

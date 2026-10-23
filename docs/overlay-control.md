@@ -143,6 +143,29 @@ temporary configuration and recovery. It is also embedded as the MCP resource
 `macrohelp_help` and `macrohelp_schema` instead. Both native clients share one
 tool/resource catalog; help grammar remains specific to the running platform.
 
+Wayland additionally exposes `macrohelp_board` and `macrohelp://board` for the
+live board labels and cell centers. Windows omits these from discovery and returns
+a guided error if explicitly requested. Unsupported/invalid coordinate strings
+fail before dispatch; underscores inside text, variables or buffers stay literal.
+Wayland checks board inputs against already-known display bounds when available.
+
+Register the built MCP and guide with a client (no build, download or service startup):
+
+```sh
+bash ./integrate.sh --target omp --dry-run
+bash ./integrate.sh --target omp
+bash ./integrate.sh --target hermes --profile NAME --env /absolute/overlay.env
+bash ./integrate.sh uninstall --target omp
+```
+
+On Windows use `./integrate.ps1` with the same arguments. `--target all` selects
+OMP and Hermes; named profiles must be explicitly selected. `--mcp PATH` overrides
+binary detection. `OMP_HOME` and `HERMES_HOME` override client directories.
+Existing unrelated servers/settings are preserved, changes are backed up beside
+the affected files, and tokens remain in the overlay's private key/env file.
+Hermes uses its native `config` command and keeps control calls sequential;
+OMP merges only the `macrohelp` entry in its documented `mcp.json`.
+
 Invalid tool arguments return `isError:true` with `error.status`, `message` and
 `next` guidance; malformed JSON-RPC returns a protocol error with recovery data.
 Nothing automatically rewrites or retries an action. Inspect state before retrying

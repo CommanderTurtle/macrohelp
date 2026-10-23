@@ -30,6 +30,22 @@ Menu numbers: `0` Save Cursor, `1` Paste Buffers, `2` Registry Hub, `3` Circle
 Placer, `4/5/6` left/right/middle click, `7` Stop All, `8` Display, `9` Record Keys.
 Use `macrohelp_coords` for the displayed coordinates without moving the pointer.
 
+On Wayland, `macrohelp_board` (or `macrohelp://board`) reads the live board labels
+and physical-pixel cell centers, whether or not the grid is visible. Cells are
+50 physical pixels: `_a` = 25, `_h` = 375, `_aj` = 1775; `-_a` = -25.
+Use these only in point/zone coordinate fields or the HTTP `origin`. For example,
+`{set point a _a,_h}` saves point 1 at `[25,375]`; `a`–`p` alias slots 1–16.
+`{type _aj}`, ordinary variable assignments and paste buffers remain literal.
+Do not rescale coordinates for display scaling.
+
+Display settings use `config.view`; inspect state before changing them. Wayland
+adds `big_crosshair`: enabling it disables `grid`, and enabling `grid` disables
+it. Disabling either does not enable the other. A config-only request such as
+`{"config":{"view":{"big_crosshair":true}}}` saves that setting without opening
+a menu. To keep a temporary preview open, use menu `8` with `no_replace:true`,
+then cancel that run to restore the previous settings. Board controls are absent from the
+Windows MCP catalog; use the running schema rather than assuming platform parity.
+
 For example, prepare a temporary workflow in the editor without playing it:
 
 ```json
@@ -53,6 +69,9 @@ Supply only fields needed for the task. Omitted fields remain unchanged.
 `no_replace:true` temporarily overrides supplied values through completion, then
 restores the previous configuration; otherwise supplied changes are saved.
 Continuations inherit this setting. It cannot change midway through a run.
+Invalid board labels or cell centers outside known displays return validation
+errors without moving the pointer. On Windows use integer pixel coordinates;
+board labels are unsupported. Correct the rejected coordinate, not the entire flow.
 
 Temporary configuration is **not a dry run**: Play, paste, clicks, captures,
 imports/exports and schedule creation still have their normal effects. Do not

@@ -10,6 +10,14 @@ function viewPatch(original,patch) { var view=copy(original||{});Object.keys(pat
 function pointSlot(value) { var v=String(value);return /^[a-p]$/i.test(v)?v.toLowerCase().charCodeAt(0)-97:numeric(v,1,16,"Point")-1 }
 function numeric(v,min,max,label) { var n=Number(v);if(!isFinite(n)||n<min||n>max)throw Error(label+" must be "+min+"…"+max);return n }
 function coordinate(v) { return Math.round(numeric(/^-?_[a-z]+$/i.test(String(v))?boardCoordinate(v):v,-100000,100000,"Coordinate")) }
+function coordinateValues(values,monitors) {
+  var result=values.map(coordinate)
+  if(values.some(function(v){return /^-?_[a-z]+$/i.test(String(v))})&&monitors&&monitors.length){
+    var scale=monitorScale(monitors),screens=monitors.filter(function(m){return isFinite(m.x)&&isFinite(m.y)&&m.width>0&&m.height>0})
+    for(var i=0;i<result.length;i+=2)if(screens.length&&!screens.some(function(m){var w=m.transform%2?m.height:m.width,h=m.transform%2?m.width:m.height;return result[i]>=m.x*scale&&result[i+1]>=m.y*scale&&result[i]<m.x*scale+w&&result[i+1]<m.y*scale+h}))throw Error("Board coordinate is outside connected displays; read /v1/board and use a visible cell")
+  }
+  return result
+}
 function wait(ms) { return {type:"wait",duration:numeric(ms,0,86400000,"Wait")/1000} }
 function paste(text) { return {type:"paste",content:String(text),contentId:"",loop:1} }
 function keyName(raw) {
@@ -87,8 +95,8 @@ function vector(text,origin) {
   dx=dx/length*radius;dy=dy/length*radius
   return {radius:radius,angle:Math.atan2(dy,dx),target:[Math.round(origin[0]+dx),Math.round(origin[1]-dy)]}
 }
-function pointValue(text,state){var raw=String(text).trim().replace(/^\$/,""),p=/^(?:point|pt)?\s*(\d+|[a-p])$/i.exec(raw);if(p){var saved=state.points[pointSlot(p[1])];if(!saved)throw Error("Save point first");return copy(saved)}var a=raw.split(/[,\s]+/).filter(Boolean);if(a.length!==2)throw Error("Use x,y or a point number");return a.map(coordinate)}
-function zoneValue(text,state){var raw=String(text).trim(),slot=raw.toUpperCase().replace(/^ZONE[\s_-]*/,"");if(/^[ZXCV]$/.test(slot)){if(!state.zones[slot])throw Error("Save zone first");return copy(state.zones[slot])}var a=raw.split(/[,\s]+/).filter(Boolean);if(a.length===2)return pointValue(a[0],state).concat(pointValue(a[1],state));if(a.length!==4)throw Error("Use rectangle, two point numbers or zone slot");return a.map(coordinate)}
+function pointValue(text,state,monitors){var raw=String(text).trim().replace(/^\$/,""),p=/^(?:point|pt)?\s*(\d+|[a-p])$/i.exec(raw);if(p){var saved=state.points[pointSlot(p[1])];if(!saved)throw Error("Save point first");return copy(saved)}var a=raw.split(/[,\s]+/).filter(Boolean);if(a.length!==2)throw Error("Use x,y or a point number");return coordinateValues(a,monitors)}
+function zoneValue(text,state,monitors){var raw=String(text).trim(),slot=raw.toUpperCase().replace(/^ZONE[\s_-]*/,"");if(/^[ZXCV]$/.test(slot)){if(!state.zones[slot])throw Error("Save zone first");return copy(state.zones[slot])}var a=raw.split(/[,\s]+/).filter(Boolean);if(a.length===2)return pointValue(a[0],state,monitors).concat(pointValue(a[1],state,monitors));if(a.length!==4)throw Error("Use rectangle, two point numbers or zone slot");return coordinateValues(a,monitors)}
 function clearState(original){var state=copy(original);state.script="";state.registry="";state.shells={X:"",C:"sh",G:"",P:"pwsh",T:""};state.vars={A:"",S:"",D:"",F:""};state.points=Array(16).fill(null);state.paths={import:"",export:""};return state}
 function pasteSequence(slots,state){if(!slots.length||slots.length>1000)throw Error("Choose 1–1000 buffers");slots.forEach(function(k){if(!/^[ZXCV]$/.test(k))throw Error("Unknown buffer")});slots.forEach(function(k){if(!state.buffers[k])throw Error("Buffer "+k+" is empty")});var chosen=slots;var actions=[wait(100),keys("LEFT_MOUSE"),wait(80)];chosen.forEach(function(k,i){if(i)actions.push(wait(80));actions.push(paste(state.buffers[k]))});actions.push(wait(100));return actions}
 function reference(s,state) {
@@ -291,13 +299,13 @@ function compile(source,original,context,resume) {
       else if(kind==="shell"&&/^[XCGPT]$/.test(k))state.shells[k]=v
       else if(k==="REGISTRY")state.registry=v
       else if(kind==="point"||kind==="zone"){
-        var a=v.split(/[,\s]+/).filter(Boolean).map(coordinate)
+        var a=coordinateValues(v.split(/[,\s]+/).filter(Boolean),context.monitors)
         if(kind==="point"&&/^([1-9]|1[0-6]|[A-P])$/.test(k)&&a.length===2)state.points[pointSlot(k)]=a
         else if(kind==="zone"&&/^[ZXCV]$/.test(k)&&a.length===4)state.zones[k]=a
         else throw Error("Invalid point or zone")
       } else throw Error("Unknown set target")
     }else if(op==="wait")emit(wait(arg))
-    else if(op==="point"||op==="pt")emit(move(pointValue(arg,state),100))
+    else if(op==="point"||op==="pt")emit(move(pointValue(arg,state,context.monitors),100))
     else if(op==="type"){var typed=paste(arg),textParts=formatParts(rawArg,state,live);if(textParts.some(function(p){return typeof p!=="string"}))typed.macrohelp_parts=textParts;emit(typed)}
     else if(op==="press")emit(press(arg))
     else if(op==="paste"||op==="buf"||op==="enter"){

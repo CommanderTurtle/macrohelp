@@ -1,18 +1,18 @@
 // Translate the public API into the same dialog state transitions and effects.
-function merge(original, patch, W) {
+function merge(original, patch, W, monitors) {
   var env=W.copy(original)
   Object.keys(patch||{}).forEach(function(section){
     if(section==="script"||section==="registry")env[section]=patch[section]
     else if(section==="view")env.view=W.viewPatch(env.view,patch.view)
-    else if(section==="points")Object.keys(patch.points).forEach(function(key){env.points[Number(key)-1]=patch.points[key]===null?null:patch.points[key].map(W.coordinate)})
-    else if(section==="zones")Object.keys(patch.zones).forEach(function(key){env.zones[key]=patch.zones[key]===null?null:patch.zones[key].map(W.coordinate)})
+    else if(section==="points")Object.keys(patch.points).forEach(function(key){env.points[Number(key)-1]=patch.points[key]===null?null:W.coordinateValues(patch.points[key],monitors)})
+    else if(section==="zones")Object.keys(patch.zones).forEach(function(key){env.zones[key]=patch.zones[key]===null?null:W.coordinateValues(patch.zones[key],monitors)})
     else {if(!env[section])env[section]={};Object.keys(patch[section]).forEach(function(key){env[section][key]=W.copy(patch[section][key])})}
   })
   if(unescape(encodeURIComponent(JSON.stringify(env))).length>1024*1024)throw Error("Merged environment exceeds 1 MiB")
   return env
 }
-function prepare(request, original, cursor, current, W, D) {
-  var env=merge(original,request.config,W),origin=request.origin?{x:W.coordinate(request.origin[0]),y:W.coordinate(request.origin[1])}:cursor
+function prepare(request, original, cursor, current, W, D, monitors) {
+  var env=merge(original,request.config,W,monitors),xy=request.origin?W.coordinateValues(request.origin,monitors):null,origin=xy?{x:xy[0],y:xy[1]}:cursor
   var state=request.menu!==undefined?D.open(["save_cursor","paste_buffers","registry_hub","circle_placer","click_left","click_right","click_middle","stop_all","view_toggles","record_keys"][request.menu],origin):current?W.copy(current):null
   var effects=[],closed=false
   // A continued open editor must not overwrite a supplied config patch with
@@ -44,7 +44,7 @@ function prepare(request, original, cursor, current, W, D) {
       else {effects.push(e);if(e.kind==="export")closed=true}
     })
   }
-  function submit(text){if(!state)throw Error("Choose a menu");consume(D.submit(state,text,env,origin,W))}
+  function submit(text){if(!state)throw Error("Choose a menu");consume(D.submit(state,text,env,origin,W,monitors))}
   function script(){if(!state||state.kind!=="registry_hub")throw Error("Registry Hub required");if(["Command","Script"].indexOf(state.stage)<0)throw Error("Finish the current Registry Hub input first");if(state.stage==="Script")env.script=state.text}
   ;(request.inputs||[]).forEach(function(input,index){
     try {

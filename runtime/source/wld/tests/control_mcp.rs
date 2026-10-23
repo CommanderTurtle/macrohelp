@@ -29,6 +29,8 @@ fn exercise(executable: &std::ffi::OsStr, native: bool) {
             .push((method.to_owned(), path.to_owned(), body.clone()));
         if path == "/v1/coords" {
             Ok(json!({"x":-123,"y":456}))
+        } else if path == "/v1/board" {
+            Ok(json!({"x":"-_c","y":"_j","text":"-_c, _j","center":{"x":-125,"y":475},"cell_size":50}))
         } else if path == "/v1/help" {
             Ok(
                 json!({"platform":"fixture","topic":"registry_hub","text":"Native Help: {type text}"}),
@@ -68,7 +70,7 @@ fn exercise(executable: &std::ffi::OsStr, native: bool) {
         json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"contract-test","version":"1"}}}),
         json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
         json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}),
-        json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"macrohelp_control","arguments":{"menu":2,"inputs":["Z","{type a,b}","P"],"no_replace":true}}}),
+        json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"macrohelp_control","arguments":{"menu":2,"inputs":["Z","{type a,b _aj}","P"],"config":{"vars":{"A":"_aj"},"buffers":{"Z":"_a,_h"}},"no_replace":true}}}),
         json!({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"macrohelp_state"}}),
         json!({"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"macrohelp_stop"}}),
         json!({"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"macrohelp_coords"}}),
@@ -85,6 +87,10 @@ fn exercise(executable: &std::ffi::OsStr, native: bool) {
         json!({"jsonrpc":"2.0","id":17,"method":"tools/call","params":{"name":"macrohelp_control","arguments":{"run":"busy"}}}),
         json!({"jsonrpc":"2.0","id":18,"method":"tools/call","params":{"name":"macrohelp_help","arguments":{"menu":2}}}),
         json!({"jsonrpc":"2.0","id":19,"method":"resources/read","params":{"uri":"macrohelp://does-not-exist"}}),
+        json!({"jsonrpc":"2.0","id":20,"method":"tools/call","params":{"name":"macrohelp_board"}}),
+        json!({"jsonrpc":"2.0","id":21,"method":"resources/read","params":{"uri":"macrohelp://board"}}),
+        json!({"jsonrpc":"2.0","id":22,"method":"tools/call","params":{"name":"macrohelp_control","arguments":{"origin":["_aj","_h"],"config":{"vars":{"A":"_aj"}}}}}),
+        json!({"jsonrpc":"2.0","id":23,"method":"tools/call","params":{"name":"macrohelp_control","arguments":{"origin":["_zzzz","_a"]}}}),
     ];
     let mut input = process.stdin.take().unwrap();
     for request in requests {
@@ -110,8 +116,22 @@ fn exercise(executable: &std::ffi::OsStr, native: bool) {
         .lines()
         .map(|line| serde_json::from_str::<Value>(line).unwrap())
         .collect::<Vec<_>>();
-    assert_eq!(responses.len(), 21);
-    assert_eq!(responses[1]["result"]["tools"], control_mcp::tools());
+    assert_eq!(responses.len(), 25);
+    let actual_tools = responses[1]["result"]["tools"].as_array().unwrap();
+    let mut expected_tools = control_mcp::tools().as_array().unwrap().clone();
+    if native {
+        expected_tools.retain(|t| t["name"] != "macrohelp_board");
+        // Windows intentionally keeps integer-only coordinates and its native view schema.
+        for tool in &mut expected_tools {
+            if tool["name"] == "macrohelp_control" {
+                let actual = actual_tools.iter().find(|t| t["name"] == "macrohelp_control").unwrap();
+                assert_eq!(actual["inputSchema"]["properties"]["origin"]["items"]["type"], "integer");
+                assert!(actual["inputSchema"]["properties"]["config"]["properties"]["view"]["properties"].get("big_crosshair").is_none());
+                tool["inputSchema"] = actual["inputSchema"].clone();
+            }
+        }
+    }
+    assert_eq!(actual_tools, &expected_tools);
     assert_eq!(
         responses[0]["result"]["instructions"],
         control_mcp::contract()["instructions"]
@@ -145,8 +165,8 @@ fn exercise(executable: &std::ffi::OsStr, native: bool) {
         "Native Help: {type text}"
     );
     let resources = responses[7]["result"]["resources"].as_array().unwrap();
-    assert_eq!(resources.len(), 3);
-    assert!(resources.iter().all(|r| r.get("route").is_none()));
+    assert_eq!(resources.len(), if native { 3 } else { 4 });
+    assert!(resources.iter().all(|r| r.get("route").is_none() && r.get("platform").is_none()));
     assert_eq!(
         responses[8]["result"]["contents"][0]["text"],
         include_str!("../../../../skills/macrohelp/SKILL.md")
@@ -192,13 +212,32 @@ fn exercise(executable: &std::ffi::OsStr, native: bool) {
             .contains("your own active run")
     );
     assert_eq!(responses[18]["error"]["code"], -32002);
-    assert_eq!(responses[19]["error"]["code"], -32700);
-    assert!(responses[19]["error"]["data"]["next"].is_string());
-    assert_eq!(responses[20]["id"], 999);
-    assert!(responses[20]["result"].is_object());
+    if native {
+        for index in [19, 20] {
+            assert_eq!(responses[index]["error"]["code"], -32602);
+            assert!(responses[index]["error"]["message"].as_str().unwrap().contains("Wayland-only"));
+        }
+        assert_eq!(responses[21]["result"]["isError"], true);
+        assert!(responses[21]["result"]["structuredContent"]["error"]["message"].as_str().unwrap().contains("Windows"));
+    } else {
+        assert_eq!(responses[19]["result"]["isError"], false);
+        assert_eq!(responses[19]["result"]["structuredContent"]["center"]["x"], -125);
+        assert_eq!(serde_json::from_str::<Value>(responses[20]["result"]["contents"][0]["text"].as_str().unwrap()).unwrap(), responses[19]["result"]["structuredContent"]);
+        assert_eq!(responses[21]["result"]["isError"], false);
+        assert_eq!(calls.last().unwrap().2["origin"], json!(["_aj","_h"]));
+        assert_eq!(calls.last().unwrap().2["config"]["vars"]["A"], "_aj");
+    }
+    assert_eq!(responses[22]["result"]["isError"], true);
+    assert_eq!(responses[22]["result"]["structuredContent"]["error"]["status"], 400);
+    assert_eq!(responses[23]["error"]["code"], -32700);
+    assert!(responses[23]["error"]["data"]["next"].is_string());
+    assert_eq!(responses[24]["id"], 999);
+    assert!(responses[24]["result"].is_object());
     // Only accepted calls reach HTTP; no invalid call or recovery hint replays work.
-    assert_eq!(calls.len(), 7);
+    assert_eq!(calls.len(), if native { 7 } else { 10 });
     assert_eq!(calls[3].0, "GET");
     assert_eq!(calls[3].1, "/v1/coords");
-    assert_eq!(calls[0].2["inputs"], json!(["Z", "{type a,b}", "P"]));
+    assert_eq!(calls[0].2["inputs"], json!(["Z", "{type a,b _aj}", "P"]));
+    assert_eq!(calls[0].2["config"]["vars"]["A"], "_aj");
+    assert_eq!(calls[0].2["config"]["buffers"]["Z"], "_a,_h");
 }
