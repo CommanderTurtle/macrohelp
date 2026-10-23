@@ -1,12 +1,58 @@
 import { test, expect } from "bun:test"
 import { readFileSync } from "node:fs"
 import { runInNewContext } from "node:vm"
+import {spawnSync} from "node:child_process"
 const model = new URL("../qml/model/Workflow.js", import.meta.url)
 const W = runInNewContext(readFileSync(model,"utf8")+"\n({compile,keys,circle,move,drag,resolve,desktopShortcuts,zone,containsPoint,monitorScale,displayPoint})")
-const state=()=>({version:1,script:"",registry:"/tmp/data.md",shells:{X:"bash",C:"sh",G:"uv run python"},vars:{A:"hello",S:"",D:"",F:""},buffers:{Z:"world",X:"",C:"",V:""},zones:{Z:[1,2,30,40],X:[1,2,30,40],C:null,V:[1,2,30,40]},points:[[10,20],...Array(15).fill(null)],last_task:{task_number:1}})
+const state=()=>({version:1,script:"",registry:"/tmp/data.md",shells:{X:"bash",C:"sh",G:"uv run python",P:"pwsh"},vars:{A:"hello",S:"",D:"",F:""},buffers:{Z:"world",X:"",C:"",V:""},zones:{Z:[1,2,30,40],X:[1,2,30,40],C:null,V:[1,2,30,40]},points:[[10,20],...Array(15).fill(null)],last_task:{task_number:1}})
 const bindings=[{modmask:68,key:"Print",description:"Extract text (OCR)",dispatcher:"__lua"},{modmask:0,key:"Print",description:"Screenshot"},{modmask:64,key:"Return",description:"Terminal"},{modmask:64,key:"C",description:"Universal copy"}]
 const context={tasks:[{name:"Saved"}],status:{scheduled:[],running:[],finished:[{task_number:1,state:"finished"}]},shortcuts:W.desktopShortcuts(bindings)}
 const compile=s=>W.compile(s,state(),context)
+
+test("capture schedules preserve C++ actions and deliberate delays; screen only opens the picker",()=>{
+  const rect=state().zones.Z
+  const shot=W.zone(rect,"Z",context.shortcuts),ocr=W.zone(rect,"X",context.shortcuts),copy=W.zone(rect,"V",context.shortcuts)
+  expect(shot.map(a=>a.type)).toEqual(["keyssequence","wait","cursormovements","wait","cursormovements","wait"])
+  expect(shot[0].keysmap[0]).toEqual([100,["PRINT_SCREEN"]])
+  expect(shot[1].duration).toBe(2);expect(shot[2].cursormovsmap).toEqual([[0,300,1,2]])
+  expect(shot[3].duration).toBe(.2);expect(shot[4].cursormovsmap).toEqual([[0,100,1,2],[0,400,30,40]])
+  expect(shot[5].duration).toBe(2)
+  expect(ocr[0].keysmap[0]).toEqual([100,["WINDOWS","CONTROL_LEFT","PRINT_SCREEN"]])
+  expect(ocr.some(a=>a.type==="keyssequence"&&a.keysmap[0][1].includes("LEFT_MOUSE"))).toBe(false)
+  const picker=compile("{screen}").steps[0]
+  expect(picker.capture).toBe(true);expect(picker.actions).toEqual(shot.slice(0,2))
+  if(process.env.MACROHELP_CPP_CONTROL_TEST){
+    const result=spawnSync(process.env.MACROHELP_CPP_CONTROL_TEST,["--zone-contract"],{encoding:"utf8"})
+    expect(result.status).toBe(0)
+    const native=JSON.parse(result.stdout)
+    const clean=actions=>JSON.parse(JSON.stringify(actions)).map(a=>{delete a.keysSeqId;delete a.cursorMovsId;return a})
+    for(const [index,actions] of [[0,shot],[1,ocr],[3,copy]]){
+      const expected=clean(index===1?native[index].actions.slice(3):native[index].actions),actual=clean(actions)
+      // Only platform-native shortcut chords differ, never the action timing.
+      const at=index===3?4:0
+      actual[at].keysmap[0][1]=expected[at].keysmap[0][1]
+      expect(actual).toEqual(expected)
+    }
+    expect(clean(picker.actions).map(a=>a.type)).toEqual(clean(native[4].actions).map(a=>a.type))
+  }
+})
+
+test("single-line OCR updates the clipboard through manual PowerShell keys and exits both shells",()=>{
+  const actions=compile("{zone Z,C}").steps[0].actions
+  expect(actions.slice(0,6)).toEqual(W.zone(state().zones.Z,"X",context.shortcuts))
+  const shell=actions.slice(6),typed=shell.filter(a=>a.type==="type").map(a=>a.text)
+  expect(typed).toEqual(["pwsh","$macrohelpText = Get-Clipboard -Raw; Set-Clipboard -Value (($macrohelpText -replace '[\\r\\n]+', ' ').Trim())","exit","exit"])
+  expect(shell.filter(a=>a.type==="wait").every(a=>a.duration===.2)).toBe(true)
+  expect(shell.some(a=>a.type==="systemcommand")).toBe(false)
+  const p=compile("{zonebuf Z,C,V}");expect(p.steps[1].singleLine).toBe(true)
+  // A user-provided native single-line shortcut does not open a shell.
+  const native=W.zone(state().zones.Z,"C",W.desktopShortcuts(bindings,{singleLine:"SUPER+F8"}))
+  expect(native).toHaveLength(6);expect(native.some(a=>a.type==="type")).toBe(false)
+  for(const command of ["",undefined]){const missing=state();missing.shells.P=command;expect(()=>W.compile("{zone Z,C}",missing,context)).toThrow("Set the single-line PowerShell command")}
+  const custom=state();custom.shells.P="my-powershell --profile";expect(W.compile("{zone Z,C}",custom,context).steps[0].actions.find(a=>a.type==="type").text).toBe("my-powershell --profile")
+  const literal=compile("{type echo @'\ncontent\n'@}{CTRL+SHIFT+V}").steps[0].actions
+  expect(literal[0].content).toBe("echo @'\ncontent\n'@");expect(literal[1].keysmap[0][1]).toEqual(["CONTROL_LEFT","SHIFT_LEFT","V"])
+})
 
 test("only visual projections scale physical points; compiled task coordinates stay physical",()=>{
   const scale=W.monitorScale([{width:3840,height:2160,scale:2}])

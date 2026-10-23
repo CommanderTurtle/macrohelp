@@ -92,6 +92,8 @@ pub fn tools() -> Value {
                 tool.as_object_mut().unwrap().remove("platform");
                 tool["inputSchema"] = if tool["name"] == "macrohelp_control" {
                     control_protocol::schema()["request"].clone()
+                } else if tool.get("inputSchema").is_some() {
+                    tool["inputSchema"].clone()
                 } else {
                     empty.clone()
                 };
@@ -154,6 +156,11 @@ impl Session {
                     ));
                 }
                 self.initialized = true;
+                let skills = match call("GET","/v1/skills",&json!({})) {
+                    Ok(value) => value["text"].as_str().unwrap_or("User saved skills: unavailable").to_owned(),
+                    Err(_) => "User saved skills: unavailable (use macrohelp_skills after connecting)".into(),
+                };
+                let instructions=format!("{}\n{}",contract()["instructions"].as_str().unwrap(),skills);
                 let version = request["params"]["protocolVersion"].as_str().unwrap_or("");
                 let version = if ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"]
                     .contains(&version)
@@ -163,7 +170,7 @@ impl Session {
                     "2025-11-25"
                 };
                 Ok(
-                    json!({"protocolVersion":version,"capabilities":{"tools":{"listChanged":false},"resources":{"subscribe":false,"listChanged":false}},"serverInfo":{"name":"macrohelp-overlay","version":"1.1.0"},"instructions":contract()["instructions"]}),
+                    json!({"protocolVersion":version,"capabilities":{"tools":{"listChanged":false},"resources":{"subscribe":false,"listChanged":false}},"serverInfo":{"name":"macrohelp-overlay","version":"1.1.0"},"instructions":instructions}),
                 )
             }
             "ping" => Ok(json!({})),
@@ -253,6 +260,9 @@ impl Session {
                     } else if path == "/v1/control" {
                         control_protocol::normalize(&args)
                             .and_then(|args| call(method, path, &args))
+                    } else if path == "/v1/skills" && !args.as_object().unwrap().is_empty() {
+                        let query=args.get("rgd").is_none();
+                        crate::control_skills::request(&args,query).and_then(|body|call("POST",if query{"/v1/skills/query"}else{path},&body))
                     } else if !args.as_object().unwrap().is_empty() {
                         Err(ApiError::new(400, "This tool accepts no arguments"))
                     } else {
@@ -326,9 +336,26 @@ pub fn run(settings: &Settings) -> Result<()> {
 mod tests {
     use super::*;
     #[test]
+    fn skills_route_listing_query_save_and_remove_without_execution() {
+        let mut session=Session::default();
+        let calls=std::cell::RefCell::new(Vec::new());
+        let call=|method:&str,path:&str,body:&Value|{calls.borrow_mut().push((method.to_owned(),path.to_owned(),body.clone()));Ok(json!({"text":"User saved skills: none"}))};
+        let initialized=session.dispatch(&json!({"jsonrpc":"2.0","id":1,"method":"initialize"}),&call).unwrap();
+        assert!(initialized["result"]["instructions"].as_str().unwrap().ends_with("User saved skills: none"));
+        for (args,verb,path) in [(json!({}),"GET","/v1/skills"),(json!({"name":"Shot","rgd":"I7S1"}),"POST","/v1/skills"),(json!({"name":"Shot"}),"POST","/v1/skills/query"),(json!({"name":"REMOVE","rgd":"Shot"}),"POST","/v1/skills")] {
+            let reply=session.dispatch(&json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"macrohelp_skills","arguments":args}}),&call).unwrap();
+            assert_eq!(reply["result"]["isError"],false);let seen=calls.borrow();let last=seen.last().unwrap();assert_eq!(last.0,verb);assert_eq!(last.1,path);
+        }
+        let count=calls.borrow().len();
+        let rejected=session.dispatch(&json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"macrohelp_skills","arguments":{"name":"Shot","rgd":"i7s1;bad"}}}),&call).unwrap();
+        assert_eq!(rejected["result"]["isError"],true);assert_eq!(calls.borrow().len(),count);
+        assert!(calls.borrow().iter().all(|(_,path,_)|path.starts_with("/v1/skills")));
+    }
+    #[test]
     fn lifecycle_and_tools_forward_without_a_second_executor() {
         let mut session = Session::default();
         let call = |method: &str, path: &str, body: &Value| {
+            if path=="/v1/skills" {return Ok(json!({"skills":{},"text":"User saved skills: none"}));}
             assert_eq!(method, "POST");
             assert_eq!(path, "/v1/control");
             assert_eq!(body["no_replace"], true);
@@ -363,7 +390,7 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .len(),
-            8
+            9
         );
         let result=session.dispatch(&json!({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"macrohelp_control","arguments":{"menu":2,"no_replace":true}}}),&call).unwrap();
         assert_eq!(result["result"]["structuredContent"]["run"], "one");

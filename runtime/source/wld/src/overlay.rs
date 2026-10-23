@@ -178,9 +178,10 @@ pub fn hypr(command: &str) -> Result<Value> {
     }
 }
 pub fn default_state() -> Value {
-    json!({"version":1,"script":"","registry":"","paths":{"import":"","export":""},"shells":{"X":"bash","C":"sh","G":"uv run python","P":"pwsh","T":""},"vars":{"A":"","S":"","D":"","F":""},"buffers":{"Z":"","X":"","C":"","V":""},"zones":{"Z":null,"X":null,"C":null,"V":null},"points":vec![Value::Null;16],"view":{"crosshair":true,"big_crosshair":false,"grid":false,"coordinates":true,"panel":true,"keys":true,"coordinates_only":false},"last_task":null})
+    json!({"version":1,"script":"","registry":"","skills":{},"paths":{"import":"","export":""},"shells":{"X":"bash","C":"sh","G":"uv run python","P":"pwsh","T":""},"vars":{"A":"","S":"","D":"","F":""},"buffers":{"Z":"","X":"","C":"","V":""},"zones":{"Z":null,"X":null,"C":null,"V":null},"points":vec![Value::Null;16],"view":{"crosshair":true,"big_crosshair":false,"grid":false,"coordinates":true,"panel":true,"keys":true,"coordinates_only":false},"last_task":null})
 }
 pub fn validate_state(value: &Value) -> Result<()> {
+    if let Some(skills)=value.get("skills") { crate::control_skills::validate(skills)?; }
     if value["version"] != 1
         || !value["script"].is_string()
         || !value["registry"].is_string()
@@ -332,6 +333,7 @@ fn read_state(path: &Path) -> Result<Value> {
     for (key, value) in missing {
         state["view"][key] = value;
     }
+    if state.get("skills").is_none() { state["skills"]=json!({}); }
     validate_state(&state)?;
     for key in ["P", "T"] {
         if state["shells"].get(key).is_none() {
@@ -514,6 +516,7 @@ fn handle(config: &Config, r: &Value) -> Result<Value> {
         "stop" => { crate::rgd::cancel(); http(config, "POST", "/stop", &json!({})) },
         "rgd-cancel" => { crate::rgd::cancel(); Ok(json!(true)) },
         "rgd-read" => crate::rgd::read(string(r,"file")?, string(r,"reference")?, r["rgd_generation"].as_u64().unwrap_or_else(crate::rgd::generation), |verb,path,body| http(config,verb,path,body)),
+        "rgd-strings" => crate::rgd::strings(string(r,"file")?, string(r,"reference")?, r["rgd_generation"].as_u64().unwrap_or_else(crate::rgd::generation), |verb,path,body| http(config,verb,path,body)),
         "save-state" => {
             write_state(&config.state_dir.join("overlay.json"), &r["state"], true)?;
             Ok(json!(true))
@@ -673,7 +676,7 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
             Ok(line) => {
                 let response = match serde_json::from_str::<Value>(&line) {
                     Ok(mut r)
-                        if matches!(r["method"].as_str(), Some("http" | "stop" | "regedited" | "rgd-read")) =>
+                        if matches!(r["method"].as_str(), Some("http" | "stop" | "regedited" | "rgd-read" | "rgd-strings")) =>
                     {
                         // Slow controller/tools I/O must not stall the pointer/key HUD.
                         requests.retain(|worker| !worker.is_finished());

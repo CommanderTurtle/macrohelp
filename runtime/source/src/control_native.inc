@@ -37,6 +37,7 @@ static Json environment() {
         auto z = g_zoneBuffers[i]; env["zones"][key] = z.set ? Json::array({z.start.x,z.start.y,z.end.x,z.end.y}) : Json(nullptr);
     }
     for (int i = 0; i < 16; ++i) env["points"].push_back(g_registryPointSet[i] ? Json::array({g_registryPoints[i].x,g_registryPoints[i].y}) : Json(nullptr));
+    env["skills"]=g_userSkills;
     return env;
 }
 static Json merge(Json env, const Json& patch) {
@@ -51,6 +52,7 @@ static Json merge(Json env, const Json& patch) {
 static void apply(const Json& env) {
     auto wide = [](const Json& v) { return Utf8ToWString(v.get<std::string>()); };
     g_registryScript = wide(env["script"]); g_registryFilePath = wide(env["registry"]);
+    g_userSkills=env.value("skills",Json::object());
     g_registryPowerShellPath = wide(env["shells"]["X"]); g_registryCmdPath = wide(env["shells"]["C"]); g_regeditedExePath = wide(env["shells"]["G"]);
     g_registryPwshPath = wide(env["shells"]["P"]); g_registryTerminalPath = wide(env["shells"]["T"]);
     g_registryImportPath = wide(env["paths"]["import"]); g_registryExportPath = wide(env["paths"]["export"]);
@@ -95,7 +97,7 @@ static Json snapshot() {
         if(menu=="registry_hub"){state["variable"]=g_registryHubState.activeVar;state["point"]=g_registryHubState.activePoint;state["slot"]=g_registryHubState.activePasteSlot;state["zoneSlot"]=g_registryHubState.activeZoneSlot;}
         if(menu=="circle_placer"){state["radius"]=g_circlePlacement.radius;state["target"]=g_circlePlacement.targetValid?Json::array({g_circlePlacement.target.x,g_circlePlacement.target.y}):Json(nullptr);state["zoneStart"]={g_circlePlacement.zoneStart.x,g_circlePlacement.zoneStart.y};state["zoneMode"]=g_circlePlacement.zoneMode;}
     }
-    return {{"api_version",1},{"ready",true},{"connected",connected},{"busy",!run.is_null()||h!=nullptr||task>0||RegistryDispatchActive()},{"sequence",RegistryDispatchStatus()},{"run",run.is_null()?Json(nullptr):run["id"]},
+    return {{"api_version",1},{"ready",true},{"connected",connected},{"busy",!run.is_null()||h!=nullptr||task>0||RegistryDispatchActive()||g_registryRgdReading},{"sequence",RegistryDispatchStatus()},{"run",run.is_null()?Json(nullptr):run["id"]},
         {"last_run",last},{"environment",environment()},{"dialog",d},{"last_task",{{"id",g_lastTasketTaskNumber},{"state",WStringToUtf8(g_lastTasketTaskState)},{"message",WStringToUtf8(g_lastTasketTaskMessage)}}},{"error",error.empty()?Json(nullptr):Json(error)}};
 }
 static void closeDialogs() {
@@ -209,10 +211,27 @@ static Json handle(const std::string& path,const Json& body) {
     }
     if(path=="/v1/state")return control::success(snapshot());
     if(path=="/v1/stop"){ControlStop();return control::success({{"stop_requested",true},{"state",snapshot()}});}
+    if(path=="/v1/skills"||path=="/v1/skills/query") {
+        if(path=="/v1/skills"&&body.empty())return control::success(control::skillsSnapshot(g_userSkills));
+        control::require(run.is_null()&&!dialog()&&!RegistryDispatchActive()&&task==0&&!g_waitingForKey&&!g_registryRgdReading,"Overlay is busy; inspect state first",409);
+        auto request=control::skillRequest(body,path=="/v1/skills/query");auto name=request["name"].get<std::string>();
+        if(path=="/v1/skills") {
+            auto next=g_userSkills;
+            if(LowerAscii(name)=="remove")next.erase(request["rgd"].get<std::string>());else next[name]=request["rgd"];
+            control::validateSkills(next);auto env=environment();env["skills"]=next;
+            control::require(env.dump().size()<=control::Limit,"Merged environment exceeds 1 MiB",413);
+            g_userSkills=next;SaveRegistryHubState();return control::success(control::skillsSnapshot(next));
+        }
+        control::require(g_userSkills.contains(name),"Unknown saved skill",404);
+        auto ref=g_userSkills[name].get<std::string>();
+        auto file=TrimWide(g_registryFilePath);auto text=g_registryRgdStringsReader(file,ref);
+        return control::success({{"name",name},{"rgd",ref},{"summary",control::skillSummary(text)},
+            {"request",{{"menu",2},{"inputs",{"Z","{rgd "+ref+"}","P"}},{"config",{{"registry",WStringToUtf8(file)}}},{"no_replace",true}}}});
+    }
     if(body.contains("menu")&&body["menu"]==7){ControlStop();return control::success(snapshot());}
     control::require(run.is_null()||body.value("run","")==run["id"],"Another control run is active",409);
     control::require(!run.is_null()||!body.contains("run"),"Control run is no longer active",404);
-    control::require(!RegistryDispatchActive()&&task==0&&!g_waitingForKey&&(!dialog()||IsWindowEnabled(dialog()))&&(ControlActive()||dialog()==nullptr),"Overlay is busy; inspect state or stop first",409);
+    control::require(!g_registryRgdReading&&!RegistryDispatchActive()&&task==0&&!g_waitingForKey&&(!dialog()||IsWindowEnabled(dialog()))&&(ControlActive()||dialog()==nullptr),"Overlay is busy; inspect state or stop first",409);
     if(!run.is_null()&&body.contains("no_replace"))control::require(body["no_replace"]==run["no_replace"],"no_replace is fixed for the active run",409);
     auto before=environment();auto merged=merge(before,body.at("config"));
     if(run.is_null()) {

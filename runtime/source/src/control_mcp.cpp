@@ -46,7 +46,10 @@ int mcp(const Settings& settings) {
                 auto version = params.value("protocolVersion", versions[0]);
                 if (std::find(versions.begin(), versions.end(), version) == versions.end()) version = versions[0];
                 initialized=true;
+                std::string skills="User saved skills: unavailable (use macrohelp_skills after connecting)";
+                try{skills=read("GET","/v1/skills",Json::object()).value("text",skills);}catch(const std::exception&){}
                 result = {{"protocolVersion",version},{"capabilities",{{"tools",{{"listChanged",false}}},{"resources",{{"subscribe",false},{"listChanged",false}}}}},{"serverInfo",{{"name","macrohelp-overlay"},{"version","1.1.0"}}},{"instructions",contract["instructions"]}};
+                result["instructions"]=contract["instructions"].get<std::string>()+"\n"+skills;
             } else if (method == "ping") result = Json::object();
             else if (!initialized) throw Error(-32002,"Initialize MCP first");
             else if (method == "tools/list") {
@@ -54,7 +57,7 @@ int mcp(const Settings& settings) {
                 for (auto tool : contract["tools"]) {
                     if (!available(tool)) continue;
                     tool.erase("method");tool.erase("route");tool.erase("platform");
-                    tool["inputSchema"]=tool["name"]=="macrohelp_control"?schema()["request"]:Json{{"type","object"},{"properties",Json::object()},{"additionalProperties",false}};
+                    tool["inputSchema"]=tool["name"]=="macrohelp_control"?schema()["request"]:tool.value("inputSchema",Json{{"type","object"},{"properties",Json::object()},{"additionalProperties",false}});
                     result["tools"].push_back(tool);
                 }
             } else if (method == "resources/list") {
@@ -82,9 +85,13 @@ int mcp(const Settings& settings) {
                 Json value;bool failed=false;
                 try {
                     require(arguments.is_object(),"Tool arguments must be an object");
+                    std::string verb=(*tool)["method"],route=(*tool)["route"];
                     if (name == "macrohelp_control") arguments = normalize(arguments);
+                    else if(name=="macrohelp_skills"&&!arguments.empty()){
+                        bool query=!arguments.contains("rgd");arguments=skillRequest(arguments,query);verb="POST";if(query)route="/v1/skills/query";
+                    }
                     else require(arguments.empty(), "This tool takes no arguments");
-                    value=read((*tool)["method"],(*tool)["route"],arguments);
+                    value=read(verb,route,arguments);
                 } catch (const std::exception& e) { auto detail=dynamic_cast<const Error*>(&e);failed=true;value={{"error",{{"status",detail?detail->status:503},{"message",e.what()}}}}; }
                 if(failed)value["error"]["next"]=contract["recovery"].value(std::to_string(value["error"]["status"].get<int>()),contract["recovery"]["default"].get<std::string>());
                 result = {{"content",Json::array({{{"type","text"},{"text",value.dump()}}})},{"structuredContent",value},{"isError",failed}};

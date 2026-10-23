@@ -128,7 +128,7 @@ struct Server::Impl {
             if (!code && (req.has_header("Transfer-Encoding") || req.get_header_value_count("Content-Length") > 1)) { code = 400; message = "Ambiguous request framing"; }
             if(!code&&preflight){
                 const auto method=req.get_header_value("Access-Control-Request-Method");
-                bool allowed=(method=="GET"&&(req.path=="/v1/health"||req.path=="/v1/state"||req.path=="/v1/schema"||req.path=="/v1/coords"||req.path=="/v1/help"))||(method=="POST"&&(req.path=="/v1/control"||req.path=="/v1/stop"));
+                bool allowed=(method=="GET"&&(req.path=="/v1/health"||req.path=="/v1/state"||req.path=="/v1/schema"||req.path=="/v1/coords"||req.path=="/v1/help"||req.path=="/v1/skills"))||(method=="POST"&&(req.path=="/v1/control"||req.path=="/v1/stop"||req.path=="/v1/skills"||req.path=="/v1/skills/query"));
                 res.status=allowed?204:404;return httplib::Server::HandlerResponse::Handled;
             }
             auto type=req.get_header_value("Content-Type");type=trim(type.substr(0,type.find(';')));
@@ -143,6 +143,7 @@ struct Server::Impl {
                 Json body = Json::object();
                 if (req.method == "POST" && !req.body.empty()) body = parse(req.body);
                 if (req.path == "/v1/control") body = normalize(body);
+                if(req.method=="POST"&&req.path.rfind("/v1/skills",0)==0)body=skillRequest(body,req.path=="/v1/skills/query");
                 auto reply = req.path == "/v1/schema" ? success(schema()) : handler(req.path, body);
                 res.status = reply.value("ok", false) ? 200 : reply.at("error").value("status", 500);
                 res.set_content(reply.dump(), "application/json");
@@ -150,8 +151,8 @@ struct Server::Impl {
             catch (const Json::exception&) { res.status = 400; res.set_content(failure(400, "Invalid JSON").dump(), "application/json"); }
             catch (const std::exception&) { res.status = 500; res.set_content(failure(500, "Control request failed").dump(), "application/json"); }
         };
-        for (const char* path : {"/v1/health", "/v1/state", "/v1/schema", "/v1/coords", "/v1/help"}) server.Get(path, route);
-        for (const char* path : {"/v1/control", "/v1/stop"}) server.Post(path, route);
+        for (const char* path : {"/v1/health", "/v1/state", "/v1/schema", "/v1/coords", "/v1/help", "/v1/skills"}) server.Get(path, route);
+        for (const char* path : {"/v1/control", "/v1/stop", "/v1/skills", "/v1/skills/query"}) server.Post(path, route);
         server.set_error_handler([](const httplib::Request&, httplib::Response& res) {
             if (res.body.empty()) res.set_content(failure(res.status, "HTTP request rejected").dump(), "application/json");
         });
@@ -177,7 +178,7 @@ Json http(const Settings& settings, const std::string& method, const std::string
 }
 Json schema() {
     Json s = {{"version",1},{"service","macrohelp-overlay"},{"menus",Menus},
-        {"routes",{"GET /v1/health","GET /v1/schema","GET /v1/state","GET /v1/coords","GET /v1/help","POST /v1/control","POST /v1/stop"}},
+        {"routes",{"GET /v1/health","GET /v1/schema","GET /v1/state","GET /v1/coords","GET /v1/help","POST /v1/control","POST /v1/stop","GET /v1/skills","POST /v1/skills","POST /v1/skills/query"}},
         {"input_semantics","Each string submits one dialog input, including its Enter. Action objects address buttons. CSV starts with a menu; quote fields containing commas. Partial menus return a run ID; include run to continue that menu."},
         {"no_replace","Temporary config overrides for this run; otherwise save supplied fields. Omitted fields are retained. A continued run inherits no_replace."}};
     Json coordinate = {{"type","integer"},{"minimum",-100000},{"maximum",100000}};

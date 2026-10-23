@@ -25,7 +25,7 @@ fn io(error: std::io::Error) -> ApiError {
 fn quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
-fn valid(reference: &str) -> bool {
+pub(crate) fn valid(reference: &str) -> bool {
     reference
         .strip_prefix('i')
         .and_then(|s| s.split_once(['s', 'z']))
@@ -91,12 +91,15 @@ impl Drop for Output {
         let _ = fs::remove_dir(&self.0);
     }
 }
-fn task(output: &Output, file: &str, reference: &str) -> Value {
+fn task(output: &Output, file: &str, reference: &str, strings: bool) -> Value {
     // Positional parameters keep paths/data out of shell syntax. Publish status
     // last: Run Command itself returns before the detached writer has finished.
     let script = "umask 077\nrgd rg \"$1\" \"$2\" >\"$3/output.tmp\" 2>\"$3/error.tmp\"\ncode=$?\nprintf '%s' \"$code\" >\"$3/status.tmp\" && mv -f -- \"$3/status.tmp\" \"$3/done\"";
+    let script = if strings { script.replace("rgd rg", "rgd ist") } else { script.into() };
+    let index = reference[1..].split(['s','z']).next().unwrap();
+    let reference = if strings { index } else { reference };
     let dir = output.0.to_string_lossy();
-    let args = ["-c", script, "macrohelp-rgd", file, reference, &dir]
+    let args = ["-c", &script, "macrohelp-rgd", file, reference, &dir]
         .map(quote)
         .join(" ");
     json!({"name":output.0.file_name().unwrap().to_string_lossy(),"run":true,"cleanup":true,"delay":0,"loop":1,
@@ -111,14 +114,20 @@ pub fn read(
     read_with(
         file,
         reference,
+        false,
         &mut http,
         || GENERATION.load(Ordering::SeqCst) != generation,
         Duration::from_secs(15),
     )
 }
+pub fn strings(file: &str, reference: &str, generation: u64, mut http: impl FnMut(&str,&str,&Value)->Result<Value>) -> Result<Value> {
+    let value=read_with(file,reference,true,&mut http,||GENERATION.load(Ordering::SeqCst)!=generation,Duration::from_secs(15))?;
+    Ok(json!({"summary":crate::control_skills::summary(value["text"].as_str().unwrap_or(""))}))
+}
 fn read_with(
     file: &str,
     reference: &str,
+    strings: bool,
     http: &mut impl FnMut(&str, &str, &Value) -> Result<Value>,
     cancelled: impl Fn() -> bool,
     timeout: Duration,
@@ -140,7 +149,7 @@ fn read_with(
     if cancelled() {
         return Err(ApiError::new(409, "rgd read cancelled"));
     }
-    http("POST", "/temp-task", &task(&output, file, reference))?;
+    http("POST", "/temp-task", &task(&output, file, reference, strings))?;
     let deadline = Instant::now() + timeout;
     loop {
         if cancelled() {
@@ -167,6 +176,22 @@ fn read_with(
 mod tests {
     use super::*;
     #[test]
+    fn summary_reads_use_ist_through_the_same_run_command() {
+        let base=std::env::temp_dir().join(format!("macrohelp-ist-test-{}-{}",std::process::id(),SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+        fs::create_dir(&base).unwrap();
+        let result=read_with("/data/a 'quoted' registry","i7s1",true,&mut |_,path,body| {
+            if path=="/health" {return Ok(json!({"tasks_dir":base}));}
+            let action=&body["task"]["actions"][0];let args=action["sysCommandParam2"].as_str().unwrap();
+            assert_eq!(action["sysCommandType"],"executeprogram");assert!(args.contains("rgd ist"));
+            assert!(args.contains("'7'"));assert!(!args.contains("i7s1"));
+            let staged=base.join(body["name"].as_str().unwrap());
+            fs::write(staged.join("output.tmp"),"string 1: Summary: safe metadata").unwrap();
+            fs::write(staged.join("done"),"0").unwrap();Ok(json!({}))
+        },||false,Duration::ZERO).unwrap();
+        assert_eq!(crate::control_skills::summary(result["text"].as_str().unwrap()),"Summary: safe metadata");
+        assert_eq!(fs::read_dir(&base).unwrap().count(),0);fs::remove_dir(base).unwrap();
+    }
+    #[test]
     fn run_command_output_is_private_atomic_and_ephemeral() {
         let base = std::env::temp_dir().join(format!(
             "macrohelp-rgd-test-{}",
@@ -185,6 +210,7 @@ mod tests {
             let result = read_with(
                 "/home/me/a 'quoted;$ file",
                 "i6z6",
+                false,
                 &mut |method, path, body| {
                     if path == "/health" {
                         assert_eq!(method, "GET");

@@ -4,7 +4,7 @@ import {runInNewContext} from "node:vm"
 const read=name=>readFileSync(new URL(name,import.meta.url),"utf8")
 const W=runInNewContext(read("../qml/model/Workflow.js")+"\n({copy,keys,keyName,wait,move,paste,expression,vector,numeric,coordinate,coordinateValues,pointValue,zoneValue,pasteSequence,clearState,viewPatch})")
 const D=runInNewContext(read("../qml/model/Dialogs.js")+"\n({open,clone,field,point,submit,preview,recorded,addStep,description,mouseDismiss,categories,help})")
-const C=runInNewContext(read("../qml/model/Control.js")+"\n({merge,prepare})")
+const C=runInNewContext(read("../qml/model/Control.js")+"\n({merge,prepare,skillsSnapshot,updateSkill,skillQuery})")
 const env=()=>({version:1,script:"",registry:"/tmp/data",shells:{X:"bash",C:"sh",G:"python",P:"pwsh",T:""},paths:{export:"/tmp/export.json",import:"/tmp/import.json"},vars:{A:"original",S:"kept",D:"",F:""},buffers:{Z:"hello",X:"world",C:"",V:""},zones:{Z:[0,0,50,50],X:null,C:null,V:null},points:Array(16).fill(null),view:{crosshair:true,grid:false,coordinates:true,keys:true,coordinates_only:false},last_task:null})
 const cursor={x:20,y:30}
 
@@ -77,6 +77,27 @@ function service(overrides={}) {
   return s
 }
 const send=(s,body,path="/v1/control")=>{s.handleControl({ticket:1,body,path});return s.calls.findLast(c=>c.method==="control-reply")}
+
+test("saved skills stay data, are discoverable while busy and query through backend ist only",()=>{
+  const s=service()
+  expect(send(s,{},"/v1/skills").result.text).toBe("User saved skills: none")
+  expect(send(s,{name:"Screenshot",rgd:"i7s1"},"/v1/skills").result.skills.Screenshot).toBe("i7s1")
+  expect(s.saves.at(-1).skills.Screenshot).toBe("i7s1")
+  send(s,{name:"__proto__",rgd:"i8z1"},"/v1/skills")
+  expect(Object.keys(s.environment.skills)).toEqual(["Screenshot","__proto__"])
+  const call=s.call;s.call=(request,callback)=>{call(request);if(request.method==="rgd-strings")callback({summary:"Summary: capture"},null)}
+  const result=send(s,{name:"Screenshot"},"/v1/skills/query").result
+  expect(result.summary).toBe("Summary: capture");expect(result.request).toEqual({menu:2,inputs:["Z","{rgd i7s1}","P"],config:{registry:s.environment.registry},no_replace:true})
+  expect(s.calls.some(c=>c.method==="rgd-strings"&&c.reference==="i7s1")).toBe(true)
+  expect(s.calls.some(c=>c.method==="http")).toBe(false);expect(s.controlRun).toBeNull();expect(s.localBusy).toBe(false)
+  s.busy=true
+  expect(send(s,{},"/v1/skills").result.skills.Screenshot).toBe("i7s1")
+  expect(send(s,{name:"Remove",rgd:"Screenshot"},"/v1/skills").error.status).toBe(409)
+  s.busy=false
+  send(s,{name:"REMOVE",rgd:"Screenshot"},"/v1/skills")
+  expect(s.environment.skills.Screenshot).toBeUndefined()
+  expect(send(s,{name:"missing"},"/v1/skills/query").error.status).toBe(404)
+})
 
 test("HTTP defaults to the physical cursor and leaves explicit origin coordinates unchanged",()=>{
   for(const explicit of [false,true]){

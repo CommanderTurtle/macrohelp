@@ -215,8 +215,8 @@ fn request(stream: &mut TcpStream, settings: &Settings, dispatch: &Dispatch) -> 
     }
     if method == "OPTIONS" && settings.cors {
         let requested = headers.get("access-control-request-method").map(String::as_str).unwrap_or("");
-        let allowed = (requested == "GET" && ["/v1/health","/v1/schema","/v1/state","/v1/coords","/v1/board","/v1/help"].contains(&path.as_str()))
-            || (requested == "POST" && ["/v1/control","/v1/stop"].contains(&path.as_str()));
+        let allowed = (requested == "GET" && ["/v1/health","/v1/schema","/v1/state","/v1/coords","/v1/board","/v1/help","/v1/skills"].contains(&path.as_str()))
+            || (requested == "POST" && ["/v1/control","/v1/stop","/v1/skills","/v1/skills/query"].contains(&path.as_str()));
         if !allowed { return Err(ApiError::new(404,"Unknown overlay control route")); }
         return Ok(json!({"cors":true}));
     }
@@ -228,8 +228,8 @@ fn request(stream: &mut TcpStream, settings: &Settings, dispatch: &Dispatch) -> 
         (method.as_str(), path.as_str()),
         (
             "GET",
-            "/v1/health" | "/v1/schema" | "/v1/state" | "/v1/coords" | "/v1/board" | "/v1/help"
-        ) | ("POST", "/v1/control" | "/v1/stop")
+            "/v1/health" | "/v1/schema" | "/v1/state" | "/v1/coords" | "/v1/board" | "/v1/help" | "/v1/skills"
+        ) | ("POST", "/v1/control" | "/v1/stop" | "/v1/skills" | "/v1/skills/query")
     ) {
         return Err(ApiError::new(404, "Unknown overlay control route"));
     }
@@ -280,6 +280,8 @@ fn request(stream: &mut TcpStream, settings: &Settings, dispatch: &Dispatch) -> 
     }
     let body = if path == "/v1/control" {
         control_protocol::normalize(&body)?
+    } else if method == "POST" && path.starts_with("/v1/skills") {
+        crate::control_skills::request(&body,path.ends_with("/query"))?
     } else {
         body
     };

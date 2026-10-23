@@ -26,6 +26,9 @@ separate. CORS is off by default; no origin is hardcoded.
 
 | Method | Route | Result |
 | --- | --- | --- |
+| GET | `/v1/skills` | Saved names/references and printable inventory; no execution. |
+| POST | `/v1/skills` | Save `{"name":"Screenshot","rgd":"i7s1"}`; remove with `{"name":"remove","rgd":"Screenshot"}`. |
+| POST | `/v1/skills/query` | `{"name":"Screenshot"}` → first `Summary` line (else `<none>`) and an existing `no_replace` control request. |
 | GET | `/v1/health` | Overlay readiness and backend connection |
 | GET | `/v1/schema` | Request/config schema and menu inventory |
 | GET | `/v1/state` | Config, native dialog, active/last run, busy/error state |

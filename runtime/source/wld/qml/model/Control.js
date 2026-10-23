@@ -1,4 +1,22 @@
 // Translate the public API into the same dialog state transitions and effects.
+function skillsSnapshot(env) {
+  var map=JSON.parse(JSON.stringify(env.skills||{})),names=Object.keys(map).sort()
+  return {skills:map,text:"User saved skills:"+(names.length?"\n"+names.map(function(n){return n+" → "+map[n]}).join("\n"):" none")}
+}
+function updateSkill(env,request) {
+  var next=JSON.parse(JSON.stringify(env)),map=next.skills||{}
+  if(request.name.toLowerCase()==="remove")delete map[request.rgd]
+  else Object.defineProperty(map,request.name,{value:request.rgd,writable:true,enumerable:true,configurable:true})
+  if(Object.keys(map).length>256)throw Error("At most 256 saved skills")
+  next.skills=map
+  if(unescape(encodeURIComponent(JSON.stringify(next))).length>1024*1024)throw Error("Merged environment exceeds 1 MiB")
+  return next
+}
+function skillQuery(env,name,summary) {
+  if(!Object.prototype.hasOwnProperty.call(env.skills||{},name))throw Error("Unknown saved skill")
+  var ref=env.skills[name]
+  return {name:name,rgd:ref,summary:summary||"<none>",request:{menu:2,inputs:["Z","{rgd "+ref+"}","P"],config:{registry:env.registry},no_replace:true}}
+}
 function merge(original, patch, W, monitors) {
   var env=W.copy(original)
   Object.keys(patch||{}).forEach(function(section){

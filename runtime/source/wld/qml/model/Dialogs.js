@@ -56,7 +56,7 @@ function recorded(s, sample, name) {
 function description(s, env) {
   var title={save_cursor:"Save Cursor",paste_buffers:"Paste Buffers",registry_hub:"Registry Hub",circle_placer:"Circle Placer",click_left:"Left Click",click_right:"Right Click",click_middle:"Middle Click",stop_all:"Stop All",view_toggles:"Display",record_keys:"Record Keys"}[s.kind]||s.kind
   var hints={Name:"Name",Distance:"Radius, -20i+20j, or 316@-2i+2j",Mode:"R · radians   D · degrees",Angle:s.unit==="radians"?"Radians · pi/2":"Degrees",Confirm:"Z · move   X · append   C · next circle   V · zone",ZoneAction:"Z · snip   X · text   C · single line   V · copy   B · store zone",
-    Edit:"Buffer "+s.slot+" · Shift+Enter for a new line",PasteSelect:"Z / X / C / V · paste   B · sequence",PasteSequence:"Buffer order · Z,X,C,V",ZoneCommand:"Z / X / C / V · edit   B · play",ZonePlaySelect:"Z / X / C / V · choose zone   B · capture to buffer",ZonePlayFlow:"Z · snip   X · text   C · single line   V · copy",ZoneCaptureZoneSelect:"Z / X / C / V · source zone",ZoneCaptureFlow:"X · text   C · single line   V · copy",ZoneCaptureTarget:"Z / X / C / V · destination buffer",ZoneEdit:"x1,y1,x2,y2 · two point numbers · saved zone",ZoneSelect:"Z / X / C / V · edit zone",Point:"x,y · point number · S to save current cursor",Paste:"Paste text · Shift+Enter for a new line",HoldMs:"Hold milliseconds · 1–600000",Script:"Workflow · Shift+Enter for a new line",Manual:"Choose up to three keys per step",RegistryPath:"Registry file path",ExportPath:"Export file path",ImportPath:"Import file path",Shell:"Shell "+s.slot,Var:"Variable "+s.slot}
+    Edit:"Buffer "+s.slot+" · Shift+Enter for a new line",PasteSelect:"Z / X / C / V · paste   B · sequence",PasteSequence:"Buffer order · Z,X,C,V",ZoneCommand:"Z / X / C / V · edit   B · play",ZonePlaySelect:"Z / X / C / V · choose zone   B · capture to buffer",ZonePlayFlow:"Z · screenshot   V · copy   X · OCR   C · single line   S · picker",ZoneCaptureZoneSelect:"Z / X / C / V · source zone",ZoneCaptureFlow:"X · text   C · single line   V · copy",ZoneCaptureTarget:"Z / X / C / V · destination buffer",ZoneEdit:"x1,y1,x2,y2 · two point numbers · saved zone",ZoneSelect:"Z / X / C / V · edit zone",Point:"x,y · point number · S to save current cursor",Paste:"Paste text · Shift+Enter for a new line",HoldMs:"Hold milliseconds · 1–600000",Script:"Workflow · Shift+Enter for a new line",Manual:"Choose up to three keys per step",RegistryPath:"Registry file path",ExportPath:"Export file path",ImportPath:"Import file path",Shell:"Shell "+s.slot,Var:"Variable "+s.slot}
   if(s.stage==="Command") {
     if(s.kind==="save_cursor")hints.Command="Z · save   X · add point   C · save + click   V · cancel"
     else if(s.kind==="paste_buffers")hints.Command="Z / X / C / V · edit   B · paste   N · zones"
@@ -71,8 +71,8 @@ function description(s, env) {
   if(commandStage(s)){
     if(s.stage==="Mode")buttons(["r","d"],["Radians","Degrees"])
     else if(s.stage==="Confirm")buttons(["z","x","c","v"],["Move","Append","Next circle","Zone"])
-    else if(s.stage==="ZoneAction")buttons(["z","x","c","v","b"],["Snip","Text","Single line","Copy","Store zone"])
-    else if(s.stage==="ZonePlayFlow")buttons(["z","x","c","v"])
+    else if(s.stage==="ZoneAction")buttons(["z","v","x","c","s","b"],["Screenshot zone","Copy zone","OCR zone","OCR single line","Screenshot picker","Store zone"])
+    else if(s.stage==="ZonePlayFlow")buttons(["z","v","x","c","s"],["Screenshot zone","Copy zone","OCR zone","OCR single line","Screenshot picker"])
     else if(s.stage==="ZoneCaptureFlow")buttons(["x","c","v"])
     else if(s.stage==="Command"&&s.kind==="save_cursor")buttons(["z","x","c"],["Save","Add point","Save + click"])
     else if(s.stage==="Command"&&s.kind==="record_keys")buttons(["z","x","c"],["Capture","Manual","Paste"])
@@ -132,6 +132,7 @@ function submit(original, text, env, cursor, W, monitors) {
       } else throw Error("Use Z, X, C or V")
     } else if(s.stage==="ZoneAction") {
       if(cmd==="b"||cmd==="buffer"){effects.push({kind:"zone-router",rect:s.pendingZone});close=true}
+      else if(cmd==="s"||cmd==="screen")zone("S",s.pendingZone)
       else if(slots.indexOf(key)>=0)zone(key,s.pendingZone)
       else throw Error("Use Z, X, C, V or B")
     }
@@ -156,7 +157,7 @@ function submit(original, text, env, cursor, W, monitors) {
       if(s.stage==="ZonePlaySelect"&&(cmd==="b"||cmd==="clip"||cmd==="capture"))field(s,"ZoneCaptureZoneSelect")
       else if(slots.indexOf(key)>=0&&env.zones[key]){s.slot=key;field(s,s.stage==="ZonePlaySelect"?"ZonePlayFlow":"ZoneCaptureFlow")}
       else throw Error("Choose a saved zone")
-    } else if(s.stage==="ZonePlayFlow") {if(slots.indexOf(key)<0)throw Error("Choose Z, X, C or V");zone(key,env.zones[s.slot])}
+    } else if(s.stage==="ZonePlayFlow") {if(slots.indexOf(key)<0&&key!=="S"&&cmd!=="screen")throw Error("Choose Z, V, X, C or S");zone(cmd==="screen"?"S":key,env.zones[s.slot])}
     else if(s.stage==="ZoneCaptureFlow") {if(["X","C","V"].indexOf(key)<0)throw Error("Choose X, C or V");s.method=key;field(s,"ZoneCaptureTarget")}
     else if(s.stage==="ZoneCaptureTarget") {if(slots.indexOf(key)<0)throw Error("Choose Z, X, C or V");zone(s.method,env.zones[s.slot],key)}
   } else if(s.kind==="registry_hub") {
@@ -208,7 +209,7 @@ function submit(original, text, env, cursor, W, monitors) {
   return {state:s,effects:effects,close:close,swap:swap}
 }
 function help() {
-  return "Registry Hub\nZ script · P play · L clear local workflow · Q display · R registry file · E/I export/import paths\nA/S/D/F variables · 1–16 points · N zones · X/C/G shells · shell P/T additional shell settings\n\nWorkflow\n{point 1} {paste Z} {buf Z,X} {enter Z} {click on} {click off}\n{type text} {wait 200} {CTRL+S} {left} {right} {middle} {wheelup 3} {wheeldown 3}\n{set A value} {set paste Z text} {set point 1 x,y} {set zone Z x1,y1,x2,y2}\n{zone Z,X} {zonebuf Z,X,V} {rgd i6s6} {rgd i6z6} {rgdclip reference} {rgdappend reference}\n{terminal} {bash} {pwsh} {cmd} {python} {shell X}\n{play schedule} {profile name} {if A contains text} {else} {endif}\n\n$A/$S/$D/$F variables · $Z/$X/$C/$V buffers · $1…$16 points · $REGISTRY · $REGEDITED\n\nEach explicit wait starts the next native task. Play builds that task from current values after the preceding task finishes; its first action is the wait. Stop All cancels remaining dispatches.\n\nShift+Enter adds a line. Enter saves the current field. Escape closes.\nZone methods: Z screenshot, X text, C single-line text, V select and copy. Desktop shortcuts are read from your existing compositor bindings.\nCircle: radius → R/D → angle; i is right, j is up; 316@-2i+2j scales the vector. V starts/ends a zone; B stores it in a named zone."
+  return "{screen} opens the native screenshot picker without a zone drag. S selects it in zone method menus; Circle B still stores a zone. C single-line OCR uses a native shortcut when configured, otherwise a temporary shell P (pwsh) session updates the clipboard with spaces and exits both shells.\n\nRegistry Hub\nZ script · P play · L clear local workflow · Q display · R registry file · E/I export/import paths\nA/S/D/F variables · 1–16 points · N zones · X/C/G shells · shell P/T additional shell settings\n\nWorkflow\n{point 1} {paste Z} {buf Z,X} {enter Z} {click on} {click off}\n{type text} {wait 200} {CTRL+S} {left} {right} {middle} {wheelup 3} {wheeldown 3}\n{set A value} {set paste Z text} {set point 1 x,y} {set zone Z x1,y1,x2,y2}\n{zone Z,X} {zonebuf Z,X,V} {rgd i6s6} {rgd i6z6} {rgdclip reference} {rgdappend reference}\n{terminal} {bash} {pwsh} {cmd} {python} {shell X}\n{play schedule} {profile name} {if A contains text} {else} {endif}\n\n$A/$S/$D/$F variables · $Z/$X/$C/$V buffers · $1…$16 points · $REGISTRY · $REGEDITED\n\nEach explicit wait starts the next native task. Play builds that task from current values after the preceding task finishes; its first action is the wait. Stop All cancels remaining dispatches.\n\nShift+Enter adds a line. Enter saves the current field. Escape closes.\nZone methods: Z screenshot, X text, C single-line text, V select and copy. Desktop shortcuts are read from your existing compositor bindings.\nCircle: radius → R/D → angle; i is right, j is up; 316@-2i+2j scales the vector. V starts/ends a zone; B stores it in a named zone."
 }
 function categories() {
   return [

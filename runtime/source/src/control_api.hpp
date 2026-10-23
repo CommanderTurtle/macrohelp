@@ -1,5 +1,6 @@
 #pragma once
 #include "control_protocol.hpp"
+#include "control_skills.hpp"
 #include <functional>
 #include <memory>
 

@@ -327,7 +327,7 @@ pub fn schema() -> Value {
         .as_array_mut()
         .unwrap()
         .insert(4, json!("GET /v1/help"));
-    schema["routes"].as_array_mut().unwrap().push(json!("GET /v1/board"));
+    schema["routes"].as_array_mut().unwrap().extend([json!("GET /v1/skills"),json!("POST /v1/skills"),json!("POST /v1/skills/query"),json!("GET /v1/board")]);
     schema["request"]["properties"]["origin"]["items"] = coordinate_item_schema();
     let mut sections = json!({"script":{"type":"string"},"registry":{"type":"string"}});
     for (section, keys) in [

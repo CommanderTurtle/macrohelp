@@ -55,14 +55,32 @@ function desktopShortcuts(bindings,options) {
     if(String(b.key).length>1&&!/^(PRINT|PRINTSCREEN|PRINT_SCREEN|RETURN|ENTER|TAB|ESCAPE|ESC|SPACE|SPACEBAR|F\d{1,2}|BACKSPACE|DELETE|INSERT|HOME|END|LEFT|RIGHT|UP|DOWN)$/i.test(b.key))action.keysmap["0"][1][mods.length]=String(b.key)
     return action
   }
-  var ocr=find("ocr",/\bOCR\b|extract text|omarchy-(?:capture-text|ppocr-capture)\b/i,true)
-  return {Z:find("screenshot",/^Screenshot\b|omarchy-capture-screenshot\b/i),X:ocr,C:find("singleLine",/single[- ]line.*(?:OCR|text)|(?:OCR|text).*single[- ]line/i)||ocr,copy:find("copy",/^Universal copy\b/i),terminal:find("terminal",/^Terminal\b|omarchy-launch-terminal\b/i),waitMs:numeric(options.captureWaitMs===undefined?2000:options.captureWaitMs,100,60000,"Capture wait")}
+  var ocr=find("ocr",/\bOCR\b|extract text|omarchy-(?:capture-text|ppocr-capture)\b/i,true),singleLine=find("singleLine",/single[- ]line.*(?:OCR|text)|(?:OCR|text).*single[- ]line/i)
+  return {Z:find("screenshot",/^Screenshot\b|omarchy-capture-screenshot\b/i),X:ocr,C:singleLine||ocr,nativeSingleLine:!!singleLine,copy:find("copy",/^Universal copy\b/i),terminal:find("terminal",/^Terminal\b|omarchy-launch-terminal\b/i),waitMs:numeric(options.captureWaitMs===undefined?2000:options.captureWaitMs,100,60000,"Capture wait")}
 }
-function zone(rect,method,shortcuts) {
+function screen(shortcuts) {
+  if(!shortcuts||!shortcuts.Z)throw Error("Choose a desktop screenshot shortcut in the plugin's shortcuts setting")
+  return [copy(shortcuts.Z),wait(shortcuts.waitMs===undefined?2000:shortcuts.waitMs)]
+}
+function singleLineClipboard(shortcuts,state) {
+  var shells=(state||{}).shells||{},terminal=shells.T?keys(shells.T,100):shortcuts.terminal,command=shells.P
+  if(!terminal)throw Error("Choose a terminal shortcut for single-line OCR")
+  if(!command||/[\r\n\x00-\x1f\x7f]/.test(command))throw Error("Set the single-line PowerShell command in shell P")
+  function type(text){return {type:"type",text:text,interval_ms:0}}
+  // Never paste OCR into executable shell syntax: it remains clipboard data.
+  // The two exits close the temporary pwsh session and its parent terminal.
+  return [copy(terminal),wait(200),type(command),keys("ENTER",100),wait(200),
+    type("$macrohelpText = Get-Clipboard -Raw; Set-Clipboard -Value (($macrohelpText -replace '[\\r\\n]+', ' ').Trim())"),keys("ENTER",100),wait(200),
+    type("exit"),keys("ENTER",100),wait(200),type("exit"),keys("ENTER",100),wait(200)]
+}
+function zone(rect,method,shortcuts,state) {
+  if(method==="S")return screen(shortcuts)
   if(!rect||rect.length!==4||rect.some(function(n){return !isFinite(n)}))throw Error("Save a zone first")
   if(rect[0]===rect[2]||rect[1]===rect[3])throw Error("Zone must have positive area")
   if(!/^[ZXCV]$/.test(method))throw Error("Zone method must be Z, X, C or V")
   var actions=[],pause=shortcuts&&shortcuts.waitMs!==undefined?shortcuts.waitMs:2000
+  // Windows' pre-focus click works around its selection buffer. Native Omarchy
+  // capture needs no activation click (and must not click the user's document).
   if(method!=="V"){
     if(!shortcuts||!shortcuts[method])throw Error("Choose a desktop shortcut in the Macrohelp plugin's shortcuts setting")
     actions.push(copy(shortcuts[method]),wait(pause))
@@ -72,6 +90,7 @@ function zone(rect,method,shortcuts) {
     if(!shortcuts||!shortcuts.copy)throw Error("Choose a desktop copy shortcut in the Macrohelp plugin's shortcuts setting")
     actions.push(copy(shortcuts.copy),wait(1000))
   }
+  if(method==="C"&&!shortcuts.nativeSingleLine)actions=actions.concat(singleLineClipboard(shortcuts,state))
   return actions
 }
 function circle(origin,radius,angle,unit) {
@@ -327,13 +346,14 @@ function compile(source,original,context,resume) {
       if(op==="zonebuf"){
         if(slots.length===2){method=slot;destination=slots[1]}else if(slots.length===3)destination=slots[2];else throw Error("Use {zonebuf zone,method,buffer}")
         if(!/^[ASDFZXCV]$/.test(destination))throw Error("Invalid destination buffer/variable")
-        if(method==="Z")throw Error("Images cannot be saved in a text buffer")
+        if(method==="Z"||method==="S")throw Error("Images cannot be saved in a text buffer")
         live[destination]=true
       }else if(slots.length>2)throw Error("Use {zone zone,method}")
-      zone(rect,method,context.shortcuts).forEach(emit)
+      zone(rect,method,context.shortcuts,state).forEach(emit)
       steps[steps.length-1].capture=true
-      if(destination)local({kind:"clipboard",slot:destination})
-    }else if(op==="rgdclip"||op==="rgdappend")local({kind:"regedited",action:op==="rgdclip"?"clip":"append",file:state.registry,reference:arg})
+      if(destination){local({kind:"clipboard",slot:destination,singleLine:method==="C"})}
+    }else if(op==="screen"&&!arg){screen(context.shortcuts).forEach(emit);steps[steps.length-1].capture=true}
+    else if(op==="rgdclip"||op==="rgdappend")local({kind:"regedited",action:op==="rgdclip"?"clip":"append",file:state.registry,reference:arg})
     else if(op==="shell"||["terminal","pwsh","powershell","bash","cmd","python","py","regedited","regbin"].indexOf(op)>=0){
       var alias=op==="shell"?arg.toUpperCase():op==="bash"?"X":op==="cmd"?"C":op==="pwsh"||op==="powershell"?"P":"G"
       if(!/^[XCGP]$/.test(alias))throw Error("Shell alias must be X, C, G or P")

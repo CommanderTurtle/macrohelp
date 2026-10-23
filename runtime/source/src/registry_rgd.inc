@@ -56,8 +56,9 @@ static std::wstring RegistryRgdArgument(const std::wstring& value) {
     for(auto ch:value){if(ch==L'\\'){++slashes;continue;}result.append(slashes*(ch==L'"'?2:1)+(ch==L'"'?1:0),L'\\');slashes=0;result+=ch;}
     result.append(slashes*2,L'\\');return result+L"\"";
 }
-static control::Json RegistryRgdTask(const RegistryRgdOutput& output,const std::wstring& file,const std::string& reference) {
-    auto args=L"rg "+RegistryRgdArgument(file)+L" "+RegistryRgdArgument(Utf8ToWString(reference));
+static control::Json RegistryRgdTask(const RegistryRgdOutput& output,const std::wstring& file,const std::string& reference,bool strings=false) {
+    auto index=reference.substr(1,reference.find_first_of("sz")-1);
+    auto args=std::wstring(strings?L"ist ":L"rg ")+RegistryRgdArgument(file)+L" "+RegistryRgdArgument(Utf8ToWString(strings?index:reference));
     std::wstring script=L"$ErrorActionPreference='Stop';$d="+QuotePowerShellLiteral(output.directory.wstring())+L";"
         L"$utf8=[Text.UTF8Encoding]::new($false);$code=1;$p=$null;try{"
         L"$p=[Diagnostics.Process]::new();$p.StartInfo.FileName='rgd';$p.StartInfo.Arguments="+QuotePowerShellLiteral(args)+L";"
@@ -73,7 +74,7 @@ static control::Json RegistryRgdTask(const RegistryRgdOutput& output,const std::
     auto document=BuildTasketDocumentJson("Registry include",{BuildSystemCommandActionJson("powershell.exe","-NoLogo -NoProfile -NonInteractive -EncodedCommand "+EncodePowerShellCommand(script))},0);
     return {{"name",WStringToUtf8(output.directory.filename().wstring())},{"run",true},{"cleanup",true},{"delay",0},{"loop",1},{"task",control::Json::parse(document)}};
 }
-static std::string RegistryRgdReadOutput(const std::wstring& file,const std::string& reference,const std::shared_ptr<std::atomic<bool>>& cancelled) {
+static std::string RegistryRgdReadOutput(const std::wstring& file,const std::string& reference,const std::shared_ptr<std::atomic<bool>>& cancelled,bool strings=false) {
     std::string response;std::wstring status;
     bool accepted=HttpGetLocalTasket(L"/health",&response,&status);
     control::require(accepted,WStringToUtf8(status),503);
@@ -81,7 +82,7 @@ static std::string RegistryRgdReadOutput(const std::wstring& file,const std::str
     control::require(data.contains("tasks_dir")&&data["tasks_dir"].is_string(),"Controller did not return its schedule directory",502);
     RegistryRgdOutput output(Utf8ToWString(data["tasks_dir"].get<std::string>()));
     control::require(!cancelled->load(),"rgd read cancelled",409);
-    auto body=RegistryRgdTask(output,file,reference).dump();
+    auto body=RegistryRgdTask(output,file,reference,strings).dump();
     accepted=HttpPostLocalTasket(L"/temp-task",body,&response,&status);
     control::require(accepted,WStringToUtf8(status),503);
     auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(15);
@@ -95,12 +96,13 @@ static std::string RegistryRgdReadOutput(const std::wstring& file,const std::str
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 }
-static std::string ReadRegistryRgd(const std::wstring& file,const std::string& reference) {
+static std::string ReadRegistryRgdOperation(const std::wstring& file,const std::string& reference,bool strings) {
+    control::require(!file.empty()&&file[0]!=L'-'&&RegistryRgdReference(reference),"Use a Registry Hub file and an rgd reference");
     control::require(!g_registryRgdReading,"A Registry Hub include is already being read",409);
     g_registryRgdReading=true;g_registryRgdCancel=std::make_shared<std::atomic<bool>>(false);
     struct Reset{~Reset(){g_registryRgdReading=false;g_registryRgdCancel.reset();}}reset;
     auto cancelled=g_registryRgdCancel;
-    auto result=std::async(std::launch::async,[=]{return RegistryRgdReadOutput(file,reference,cancelled);});
+    auto result=std::async(std::launch::async,[=]{return RegistryRgdReadOutput(file,reference,cancelled,strings);});
     bool quit=false;int quitCode=0;
     while(result.wait_for(std::chrono::milliseconds(10))!=std::future_status::ready){
         MSG message;
@@ -114,7 +116,10 @@ static std::string ReadRegistryRgd(const std::wstring& file,const std::string& r
     return result.get();
 }
 // Injectable for native compiler checks; production always uses the daemon.
+static std::string ReadRegistryRgd(const std::wstring& file,const std::string& reference){return ReadRegistryRgdOperation(file,reference,false);}
+static std::string ReadRegistryRgdStrings(const std::wstring& file,const std::string& reference){return ReadRegistryRgdOperation(file,reference,true);}
 static decltype(&ReadRegistryRgd) g_registryRgdReader=ReadRegistryRgd;
+static decltype(&ReadRegistryRgdStrings) g_registryRgdStringsReader=ReadRegistryRgdStrings;
 struct RegistrySourceToken {
     std::string text,source;
     std::vector<std::string> ancestry;

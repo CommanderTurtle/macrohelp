@@ -17,6 +17,11 @@ int main(int argc,char** argv) {
     using namespace control;
     try {
         if(argc==2&&std::string(argv[1])=="--schema"){std::cout<<schema().dump()<<'\n';return 0;}
+        if(argc==2&&std::string(argv[1])=="--zone-contract") {
+            Json result=Json::array();
+            for(int flow=0;flow<5;++flow){std::vector<std::string> actions;std::wstring status;check(LoadZoneFlowActionList(flow,{1,2},{30,40},actions,nullptr,nullptr,&status),"Zone contract failed");result.push_back(Json::parse(BuildTasketDocumentJson("fixture",actions,1)));}
+            std::cout<<result.dump()<<'\n';return 0;
+        }
         if(argc==2&&std::string(argv[1])=="--normalize") {
             std::string line;while(std::getline(std::cin,line)) {
                 try{std::cout<<success(normalize(parse(line))).dump()<<'\n';}
@@ -31,6 +36,30 @@ int main(int argc,char** argv) {
         }
         for(int i=0;i<10;++i)check(normalize({{"menu",Menus[i]}})["menu"]==i,"Menu mapping");
         auto before=native_control::environment();
+        {
+            g_registryScript=L"{screen}";std::string document;std::wstring status;int count=0;
+            check(CompileRegistryHubScriptToTaskJson(&document,&count,&status),"Screenshot picker compilation failed");
+            auto actions=Json::parse(document)["actions"];
+            check(count==2&&actions[0]["type"]=="keyssequence"&&actions[1]["duration"]==2,"Picker added a zone drag or lost its wait");
+            native_control::apply(before);
+        }
+        {
+            check(skillsSnapshot(g_userSkills)["text"]=="User saved skills: none","Empty skills text");
+            check(skillRequest({{"name","REMOVE"},{"rgd","Screenshot"}})["rgd"]=="Screenshot","Remove name casing");
+            check(skillSummary("string 1: Summary: capture\nSummary later")=="Summary: capture","ist Summary prefix");
+            check(skillSummary("text Summary: not a prefix")=="<none>","Summary substring accepted");
+            g_controlTemporary=true; // Exercise persistence payload without writing user state.
+            native_control::handle("/v1/skills",{{"name","Screenshot"},{"rgd","i7s1"}});
+            check(g_userSkills["Screenshot"]=="i7s1"&&RegistryHubStateToText().find("---SKILLS---")!=std::string::npos,"Skills not in native state");
+            auto previous=g_registryRgdStringsReader;g_registryRgdStringsReader=FixtureRgdReader;
+            g_registryFilePath=L"fixture";rgdFixtures={{"fixture\ni7s1","string 1: Summary: capture\nstring 2: ignored"}};
+            auto query=native_control::handle("/v1/skills/query",{{"name","Screenshot"}})["result"];
+            check(query["summary"]=="Summary: capture"&&query["request"]["no_replace"]==true,"Skill query lost summary or temporary recipe");
+            check(normalize(query["request"])["inputs"][1]=="{rgd i7s1}","Skill recipe changed execution grammar");
+            native_control::handle("/v1/skills",{{"name","rEmOvE"},{"rgd","Screenshot"}});
+            check(g_userSkills.empty(),"Remove skill failed");g_registryRgdStringsReader=previous;
+            g_controlTemporary=false;native_control::apply(before);
+        }
         {
             auto previous=g_registryRgdReader;g_registryRgdReader=FixtureRgdReader;
             const std::wstring file=L"C:\\work\\a 'quoted;$ registry.txt";

@@ -506,6 +506,7 @@ std::wstring g_regeditedExePath;
 std::wstring g_registryPwshPath = L"pwsh";
 std::wstring g_registryTerminalPath = L"wt";
 std::wstring g_registryFilePath;
+control::Json g_userSkills=control::Json::object();
 std::wstring g_registryExportPath;
 std::wstring g_registryImportPath;
 int g_lastTasketTaskNumber = 0;
@@ -2390,6 +2391,7 @@ static int ZoneFlowFromCommand(const std::string& command, bool textOnly = false
     if (command == "x" || command == "text") return 1;
     if (command == "c" || command == "single" || command == "singleline") return 2;
     if (command == "v" || command == "copy" || command == "zonecopy") return 3;
+    if (!textOnly && (command == "s" || command == "screen")) return 4;
     return -1;
 }
 
@@ -2988,7 +2990,7 @@ static void UpdatePasteBuffersDialogText(HWND hwnd) {
         std::wstring prompt = ZoneBufferSlotLabel(g_pasteBufferState.activeZoneSlot) + L" method";
         SetDlgItemTextW(hwnd, IDC_STATIC_PASTE_BUFFER_PROMPT, prompt.c_str());
         SetDlgItemTextW(hwnd, IDC_STATIC_PASTE_BUFFER_HINT,
-            L"Z snip+copy | X text | C single-line | V zone+copy");
+            L"Z screenshot | V copy | X OCR | C single-line | S screenshot picker");
         SetDlgItemTextW(hwnd, IDC_STATIC_PASTE_BUFFER_STATUS,
             L"Runs the saved zone immediately through Tasket.");
     } else if (g_pasteBufferState.stage == PasteBufferStage::ZoneCaptureZoneSelect) {
@@ -3283,7 +3285,7 @@ static bool RunPasteBufferCommand(HWND hwnd, const std::wstring& rawCommand) {
         if (flowIndex >= 0) return PlayZoneBufferFlow(hwnd, flowIndex);
         SetDlgItemTextW(hwnd, IDC_EDIT_PASTE_BUFFER_VALUE, L"");
         SetDlgItemTextW(hwnd, IDC_STATIC_PASTE_BUFFER_STATUS,
-            L"Choose Z snip, X text, C single-line, or V zone+copy.");
+            L"Choose Z screenshot, V copy, X OCR, C single-line, or S picker.");
         FocusPasteBufferEdit(hwnd);
         return true;
     }
@@ -4365,6 +4367,11 @@ static bool LoadZoneFlowActionList(
         if (desc) *desc = "Macrohelp temporary zone drag plus copy.";
         if (taskName) *taskName = "Macrohelp zone copy temp";
         actions = {zoneActions, copyActions};
+    } else if (flowIndex == 4) {
+        if(!LoadTemplateActions(L"Open snipping tool example.scht",&openActions,status))return false;
+        if(desc)*desc="Macrohelp native screenshot picker.";
+        if(taskName)*taskName="Macrohelp screenshot picker temp";
+        actions={openActions};
     } else {
         if (status) *status = L"Unknown zone flow.";
         return false;
@@ -5693,6 +5700,10 @@ static bool CompileRegistryHubToken(
     if (lower.rfind("play ", 0) == 0) {
         actions.push_back(BuildRunningOtherTaskActionJson(TrimAscii(token.substr(5)), 0, 1));
         return true;
+    }
+    if (lower == "screen") {
+        std::string open; if(!LoadTemplateActions(L"Open snipping tool example.scht",&open,status))return false;
+        actions.push_back(open);return true;
     }
     if (lower == "powershell") {
         AppendOpenPowerShellPreviewActions(actions);
@@ -7329,6 +7340,7 @@ static bool RunCircleZoneActionShortcut(HWND hwnd) {
     else if (command == "x" || command == "text") flowIndex = 1;
     else if (command == "c" || command == "single" || command == "singleline") flowIndex = 2;
     else if (command == "v" || command == "copy" || command == "zonecopy") flowIndex = 3;
+    else if (command == "s" || command == "screen") flowIndex = 4;
     else if (command == "b" || command == "buffer" || command == "zonebuffer") {
         POINT start = g_circlePlacement.zoneStart;
         POINT end = g_circlePlacement.zoneEnd;
@@ -7822,6 +7834,7 @@ static std::string RegistryHubStateToText() {
     out << "---SHELL P---\n" << WStringToUtf8(g_registryPwshPath) << "\n";
     out << "---SHELL T---\n" << WStringToUtf8(g_registryTerminalPath) << "\n";
     out << "---VIEW---\n" << control::Json({{"crosshair",g_crosshairVisible},{"grid",g_gridVisible},{"coordinates",g_coordinatesVisible},{"panel",g_coordPanelVisible},{"keys",g_keyDisplayVisible},{"coordinates_only",g_coordinatesOnlyMode}}).dump() << "\n";
+    out << "---SKILLS---\n" << g_userSkills.dump() << "\n";
     out << "---REGISTRY---\n" << WStringToUtf8(g_registryFilePath) << "\n";
     out << "---EXPORT PATH---\n" << WStringToUtf8(g_registryExportPath) << "\n";
     out << "---IMPORT PATH---\n" << WStringToUtf8(g_registryImportPath) << "\n";
@@ -8081,6 +8094,7 @@ static void LoadRegistryHubState() {
     auto section = [&](const std::string& marker) {
         return Utf8ToWString(SectionTextAfterMarker(data, marker));
     };
+    try {auto text=WStringToUtf8(section("---SKILLS---"));if(!text.empty()){auto skills=control::Json::parse(text);control::validateSkills(skills);g_userSkills=skills;}}catch(const std::exception&){/* Older or invalid library: keep defaults. */}
     auto extra = section("---SHELL P---"); if (!extra.empty()) g_registryPwshPath = extra;
     extra = section("---SHELL T---"); if (!extra.empty()) g_registryTerminalPath = extra;
     try {
@@ -8316,6 +8330,7 @@ static std::wstring RegistryHubHelpText() {
         L"{zone Z,X} plays zone buffer Z using method X.\r\n"
         L"{zone Z,C} plays zone buffer Z using method C.\r\n"
         L"{zone V,V} plays zone buffer V using drag-copy.\r\n"
+        L"{screen} opens the native screenshot picker without a zone drag. S selects it in zone method menus.\r\n"
         L"{zonebuf Z,X,V} captures zone Z using method X, opens the paste-buffer HUD, and saves the clipboard into paste buffer V.\r\n"
         L"Image capture cannot be saved into a text paste buffer, so zonebuf supports X, C, and V only.\r\n\r\n"
         L"Export / Import File\r\n"

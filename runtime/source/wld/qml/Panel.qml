@@ -155,7 +155,7 @@ Ui.Panel {
           Column {
             width:parent.width;spacing:Style.space(8);visible:root.app&&root.app.page==="Zones"
             Ui.Dropdown {width:parent.width;label:"Zone";value:root.slot;options:["Z","X","C","V"];onChanged:function(value){root.slot=value;root.app.zoneSlot=value}}
-            Ui.Dropdown {width:parent.width;label:"Method · Z screenshot / X OCR / C custom OCR / V copy";value:root.zoneMethod;options:["Z","X","C","V"];onChanged:function(value){root.zoneMethod=value}}
+            Ui.Dropdown {width:parent.width;label:"Z screenshot / V copy / X OCR / C single line / S picker";value:root.zoneMethod;options:["Z","V","X","C","S"];onChanged:function(value){root.zoneMethod=value}}
             Ui.TextField {width:parent.width;text:root.regionText;placeholderText:"x1,y1,x2,y2";onTextEdited:root.regionText=text}
             Flow {width:parent.width;spacing:Style.space(6)
               Ui.Button{text:"Save rectangle";onClicked:root.attempt(function(){root.app.change("zones",root.slot,root.coords(root.regionText,4))})}

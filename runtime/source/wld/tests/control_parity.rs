@@ -30,9 +30,22 @@ fn shared_wire_fixtures_and_optional_cpp_parity() {
     };
     let schema = Command::new(&exe).arg("--schema").output().unwrap();
     assert!(schema.status.success());
+    // Board labels and the large crosshair are intentionally Wayland-only.
+    // Compare every common field rather than requiring those on Windows.
+    let mut native_schema=control_protocol::schema();
+    native_schema["routes"].as_array_mut().unwrap().retain(|v|v!="GET /v1/board");
+    let integer=json!({"type":"integer","minimum":-100000,"maximum":100000});
+    native_schema["request"]["properties"]["origin"]["items"]=integer.clone();
+    let sections=&mut native_schema["request"]["properties"]["config"]["properties"];
+    sections["view"]["properties"].as_object_mut().unwrap().remove("big_crosshair");
+    for group in ["points","zones"] {
+        for value in sections[group]["properties"].as_object_mut().unwrap().values_mut() {
+            value["oneOf"][1]["items"]=integer.clone();
+        }
+    }
     assert_eq!(
         serde_json::from_slice::<Value>(&schema.stdout).unwrap(),
-        control_protocol::schema()
+        native_schema
     );
     let mut child = Command::new(&exe)
         .arg("--normalize")

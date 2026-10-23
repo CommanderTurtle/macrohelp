@@ -27,7 +27,9 @@ fn exercise(executable: &std::ffi::OsStr, native: bool) {
         seen.lock()
             .unwrap()
             .push((method.to_owned(), path.to_owned(), body.clone()));
-        if path == "/v1/coords" {
+        if path == "/v1/skills" {
+            Ok(json!({"skills":{},"text":"User saved skills: none"}))
+        } else if path == "/v1/coords" {
             Ok(json!({"x":-123,"y":456}))
         } else if path == "/v1/board" {
             Ok(json!({"x":"_c","y":"_j","text":"_c, _j","center":{"x":125,"y":475},"cell_size":50}))
@@ -134,7 +136,7 @@ fn exercise(executable: &std::ffi::OsStr, native: bool) {
     assert_eq!(actual_tools, &expected_tools);
     assert_eq!(
         responses[0]["result"]["instructions"],
-        control_mcp::contract()["instructions"]
+        format!("{}\nUser saved skills: none",control_mcp::contract()["instructions"].as_str().unwrap())
     );
     assert_eq!(
         responses[0]["result"]["capabilities"]["resources"]["subscribe"],
@@ -165,7 +167,7 @@ fn exercise(executable: &std::ffi::OsStr, native: bool) {
         "Native Help: {type text}"
     );
     let resources = responses[7]["result"]["resources"].as_array().unwrap();
-    assert_eq!(resources.len(), if native { 3 } else { 4 });
+    assert_eq!(resources.len(), if native { 4 } else { 5 });
     assert!(resources.iter().all(|r| r.get("route").is_none() && r.get("platform").is_none()));
     assert_eq!(
         responses[8]["result"]["contents"][0]["text"],
@@ -234,10 +236,11 @@ fn exercise(executable: &std::ffi::OsStr, native: bool) {
     assert_eq!(responses[24]["id"], 999);
     assert!(responses[24]["result"].is_object());
     // Only accepted calls reach HTTP; no invalid call or recovery hint replays work.
-    assert_eq!(calls.len(), if native { 7 } else { 10 });
-    assert_eq!(calls[3].0, "GET");
-    assert_eq!(calls[3].1, "/v1/coords");
-    assert_eq!(calls[0].2["inputs"], json!(["Z", "{type a,b _aj}", "P"]));
-    assert_eq!(calls[0].2["config"]["vars"]["A"], "_aj");
-    assert_eq!(calls[0].2["config"]["buffers"]["Z"], "_a,_h");
+    assert_eq!(calls.len(), if native { 8 } else { 11 });
+    assert_eq!(calls[0].1,"/v1/skills");
+    assert_eq!(calls[4].0, "GET");
+    assert_eq!(calls[4].1, "/v1/coords");
+    assert_eq!(calls[1].2["inputs"], json!(["Z", "{type a,b _aj}", "P"]));
+    assert_eq!(calls[1].2["config"]["vars"]["A"], "_aj");
+    assert_eq!(calls[1].2["config"]["buffers"]["Z"], "_a,_h");
 }

@@ -212,13 +212,13 @@ Item {
     if(stepIndex>=steps.length){if(dispatch&&dispatch.next){nextDispatch(token);return}dispatch=null;busy=false;hidden=false;message="Finished";save();refresh();return}
     var step=steps[stepIndex++]
     function done(value,error){if(token!==root.generation)return;if(error){root.busy=false;root.dispatch=null;root.hidden=false;if(root.controlRun)root.controlRun.failure=error;if(root.connected)root.error=error;return}if(step.slot&&value&&value.text!==undefined)root.change(/^[ASDF]$/.test(step.slot)?"vars":"buffers",step.slot,step.singleLine?value.text.replace(/[\r\n]+/g," ").trim():value.text);root.nextStep(token)}
-    if(step.kind==="input"){hidden=!!step.capture;if(dispatch){message=dispatch.index+"/"+dispatch.total+" sequence is running";console.info("Macrohelp: "+message)}queue(Workflow.resolve(step.actions,environment),function(v,e){if(token!==root.generation)return;if(e){done(null,e);return}root.currentJob=v.task;poll.restart()},0,dispatch?"Macrohelp sequence "+dispatch.index+" of "+dispatch.total:undefined)}
+    if(step.kind==="input"){hidden=!!step.capture;if(dispatch){message=dispatch.index+"/"+dispatch.total+" sequence is running";console.info("Macrohelp: "+message)}queue(Workflow.resolve(step.actions,environment),function(v,e){if(token!==root.generation)return;if(e){done(null,e);return}root.currentJob=v.task;poll.restart()},step.capture?1:0,dispatch?"Macrohelp sequence "+dispatch.index+" of "+dispatch.total:undefined)}
     else if(step.kind==="clipboard")readClipboard(function(v,e){if(token!==root.generation)return;root.hidePanel();root.pending=function(){done(v,e)};startDelay.restart()})
     else if(step.kind==="regedited")call({method:"regedited",action:step.action,file:step.file,reference:step.reference},done)
   }
   function finishClipboard(value,failure){var callback=clipboardCallback;clipboardCallback=null;clipboardTimeout.stop();localBusy=false;if(callback)callback(value,failure)}
   function readClipboard(callback){if(localBusy){if(callback)callback(null,"Clipboard operation already active");return}localBusy=true;var token=generation,request=++clipboardSerial;clipboardCallback=callback;clipboardTimeout.restart();var complete=function(v,e){if(token===root.generation&&request===root.clipboardSerial&&root.clipboardCallback)root.finishClipboard(v,e)};if(activePanel&&activePanel.opened)clipboardRequested(complete);else dialogs.readClipboard(complete)}
-  function useZone(slot,method,target){play(target?"{zonebuf "+slot+","+method+","+target+"}":"{zone "+slot+","+method+"}")}
+  function useZone(slot,method,target){play(method==="S"?"{screen}":target?"{zonebuf "+slot+","+method+","+target+"}":"{zone "+slot+","+method+"}")}
   function chooseFile(save,callback,filename){if(picker.running){error="File chooser already open";return}pickerCallback=callback;picker.command=["zenity","--file-selection","--title=Macrohelp"].concat(save?["--save"]:[]).concat(filename?["--filename="+filename]:[]);picker.running=true}
   function transferPath(kind){var paths=environment.paths||{};return String(paths[kind]||"").trim()}
   function browsePath(kind){var token=generation;chooseFile(kind==="export",function(path){if(token===root.generation)root.change("paths",kind,path)},transferPath(kind)|| (kind==="export"?"macrohelp-environment.json":""))}
@@ -249,7 +249,7 @@ Item {
       if(token!==root.generation)return
       if(failure){root.busy=false;if(root.controlRun)root.controlRun.failure=failure;return}
       try {
-        root.steps=[{kind:"input",actions:Workflow.zone(rect,method,context.shortcuts),capture:true}]
+        root.steps=[{kind:"input",actions:method==="S"?Workflow.screen(context.shortcuts):Workflow.zone(rect,method,context.shortcuts,root.environment),capture:true}]
         if(target)root.steps.push({kind:"clipboard",slot:target,singleLine:method==="C"})
         root.stepIndex=0;root.hidePanel();root.pending=function(){root.nextStep(token)};startDelay.restart()
       }catch(e){root.busy=false;root.error=e.message;if(root.controlRun)root.controlRun.failure=e.message}
@@ -301,6 +301,22 @@ Item {
       if(event.path==="/v1/coords"){if(!ready){answer(null,{status:503,message:"Overlay not ready"});return}answer({x:Math.round(physicalCursor.x),y:Math.round(physicalCursor.y)});return}
       if(event.path==="/v1/board"){if(!ready){answer(null,{status:503,message:"Overlay not ready"});return}answer(board);return}
       if(event.path==="/v1/stop"){stop();answer({stop_requested:true,state:controlSnapshot()});return}
+      if(event.path==="/v1/skills"||event.path==="/v1/skills/query"){
+        if(!ready){answer(null,{status:503,message:"Overlay not ready"});return}
+        if(event.path==="/v1/skills"&&!Object.keys(event.body).length){answer(Control.skillsSnapshot(environment));return}
+        if(controlRun||busy||localBusy||pending||dialogs.working||recordingPath||dialogs.dialogOpen||(activePanel&&activePanel.captureAction)){answer(null,{status:409,message:"Overlay is busy; inspect state first"});return}
+        if(event.path==="/v1/skills"){environment=Control.updateSkill(environment,event.body);save();answer(Control.skillsSnapshot(environment));return}
+        if(!Object.prototype.hasOwnProperty.call(environment.skills||{},event.body.name)){answer(null,{status:404,message:"Unknown saved skill"});return}
+        var skill=Control.skillQuery(environment,event.body.name)
+        if(!String(environment.registry||"").trim())throw Error("Set the Registry Hub file path first")
+        var skillToken=generation;localBusy=true
+        call({method:"rgd-strings",file:environment.registry,reference:skill.rgd},function(value,failure){
+          if(skillToken!==root.generation){answer(null,{status:409,message:"Skill query cancelled"});return}
+          root.localBusy=false
+          if(failure)answer(null,{status:503,message:failure})
+          else {skill.summary=value.summary;answer(skill)}
+        });return
+      }
       var request=event.body
       if(request.menu===7){stop();answer(controlSnapshot());return}
       if(!ready){answer(null,{status:503,message:"Overlay not ready"});return}
