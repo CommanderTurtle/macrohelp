@@ -12,4 +12,4 @@ mkdir -p "$BIN"
 cargo build --locked --release --manifest-path "$SOURCE/Cargo.toml" --target-dir "$TARGET"
 install -m 700 "$TARGET/release/macrohelpctl" "$BIN/macrohelpctl"
 printf 'Overlay client built. Enable io.github.commanderturtle.macrohelp, or run omarchy-restart-shell if already loaded.\n'
-printf 'No HTTP server was built, installed or started.\n'
+printf 'The execution daemon remains a separate build and manually started process.\n'

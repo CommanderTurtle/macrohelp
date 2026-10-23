@@ -163,6 +163,10 @@ Overlay evidence: [Windows implementation](../runtime/source/src/main.cpp),
 | O80 · Build / reload | CMake native executable | Present: independent Rust client build + shell QML; kept-loaded service/client rebuild requires shell reload |
 | O81 · Tray right-click menu | Visibility, buffers, keys, circle, clicks, stop, view, hub, cursor, Exit | Partial: equivalent actions distributed across bar/panel pages; right-click is Stop only, not a duplicate tray menu |
 | O82 · Tray Exit | Quit overlay executable | Native replacement: disable Macrohelp plugin; never exit the shared Omarchy shell |
+| O83 · Overlay control reads | GET `/v1/health`, `/v1/schema`, `/v1/state` | Present: same authenticated loopback contract; native menu state, no live key feed |
+| O84 · Overlay control actions | POST `/v1/control`, `/v1/stop`; existing native handlers/compiler | Present: same request schema; existing QML dialog transitions/compiler and separate execution daemon |
+| O85 · Temporary control config | `no_replace`, supplied-only patches, owned run, busy/stop/result state | Present: overrides retained through asynchronous completion, then restored without persistence |
+| O86 · MCP control | Native C++ `macrohelp-mcp` stdio client | Present: `macrohelpctl mcp`; both forward to the same overlay HTTP contract |
 
 </details>
 

@@ -9,6 +9,7 @@ use std::{
     path::Path,
     process::{Command, Stdio},
     sync::{
+        Arc,
         atomic::{AtomicBool, Ordering},
         mpsc,
     },
@@ -566,7 +567,7 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "--help") {
         println!(
-            "macrohelpctl [session|stop|health] [--env PATH]\nOverlay client; requires a separately started HTTP controller for execution."
+            "macrohelpctl [session|stop|health|mcp] [--env PATH]\nOverlay client and MCP adapter; execution still requires the separate HTTP daemon."
         );
         return Ok(());
     }
@@ -579,6 +580,11 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .map(String::as_str)
         .unwrap_or_else(|| default_path.to_str().unwrap_or(".env"));
     let config = Config::load(Path::new(path))?;
+    if mode == "mcp" {
+        let settings =
+            crate::control_http::Settings::load(&config)?.ok_or("Overlay control is disabled")?;
+        return crate::control_mcp::run(&settings).map_err(Into::into);
+    }
     if mode == "stop" {
         let result = http(&config, "POST", "/stop", &json!({}));
         if result.as_ref().is_err_and(|e| e.status >= 500) {
@@ -627,6 +633,8 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
         }
     });
     let mut tracking = true;
+    let control_bridge = Arc::new(crate::control_http::Bridge::default());
+    let mut control_server: Option<crate::control_http::Server> = None;
     let mut keys = false;
     let mut dialog_keys = DialogKeys::default();
     let heatmap_path = config.state_dir.join("heatmap.json");
@@ -665,7 +673,30 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                     Ok(r) => {
-                        let result = if r["method"] == "tracking" {
+                        let result = if r["method"] == "control-start" {
+                            if let Some(server) = &control_server {
+                                Ok(json!({"enabled":true,"address":server.address.to_string()}))
+                            } else {
+                                crate::control_http::Settings::load(&config).and_then(|settings| {
+                                    if let Some(settings) = settings {
+                                        let address = settings.address.to_string();
+                                        control_server = Some(crate::control_http::Server::bind(
+                                            settings,
+                                            control_bridge.dispatch(),
+                                        )?);
+                                        Ok(json!({"enabled":true,"address":address}))
+                                    } else {
+                                        Ok(json!({"enabled":false}))
+                                    }
+                                })
+                            }
+                        } else if r["method"] == "control-live" {
+                            Ok(json!(
+                                control_bridge.live(r["ticket"].as_u64().unwrap_or(0))
+                            ))
+                        } else if r["method"] == "control-reply" {
+                            control_bridge.reply(&r)
+                        } else if r["method"] == "tracking" {
                             tracking = r["enabled"].as_bool().unwrap_or(false);
                             Ok(json!(true))
                         } else if r["method"] == "keys" {
@@ -813,6 +844,8 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
         heatmap::save(&heatmap_path, &book)?;
     }
     STOP.store(true, Ordering::Relaxed);
+    control_bridge.close();
+    drop(control_server);
     for worker in requests {
         let _ = worker.join();
     }

@@ -2,6 +2,7 @@
 
 See the [HTTP daemon and overlay parity tables](docs/feature-parity.md) for exact
 Windows/Wayland counterparts and outstanding menu differences.
+Overlay-owned HTTP/MCP controls: [Control API](docs/overlay-control.md).
 
 This package intentionally has two runtime folders:
 
@@ -147,7 +148,7 @@ bash runtime/source/wld/build.sh
 omarchy plugin enable io.github.commanderturtle.macrohelp
 ```
 
-The overlay build contains only the client. It never builds, starts or supervises
+The overlay build includes its own control API. It never builds, starts or supervises
 the HTTP server or Omarsket. HUD/local tools remain available without a server;
 unanswered HTTP requests are silent. It uses the shell's live theme and rendering,
 not a separate Quickshell instance. The `envFile` plugin setting can override the

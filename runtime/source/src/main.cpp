@@ -39,6 +39,10 @@
 #include <algorithm>
 #include <stdexcept>
 #include <utility>
+#include <condition_variable>
+#include <deque>
+#include <future>
+#include "control_api.hpp"
 
 #include "resource.h"
 
@@ -52,6 +56,19 @@
 #pragma comment(lib, "dwmapi.lib")
 
 using namespace Gdiplus;
+
+// Remote requests use native handlers, but never block on a modal error box.
+static bool g_controlFeeding = false;
+static bool g_controlTemporary = false;
+static int g_controlBufferReturns = 0;
+static std::wstring g_controlNativeError;
+static int ControlMessageBox(HWND, LPCWSTR, LPCWSTR, UINT);
+#define MessageBoxW(hwnd, text, title, flags) ControlMessageBox(hwnd, text, title, flags)
+static bool ControlActive();
+static void ControlTaskScheduled(int);
+static void ControlCaptureBuffer(int, bool);
+static std::string ControlPrepareTask(const std::string&);
+static void ControlStop();
 
 // =============================================================================
 // CONFIGURATION
@@ -429,6 +446,7 @@ bool        g_coordPanelVisible = true;
 bool        g_keyDisplayVisible = true;
 bool        g_gridVisible = false;
 bool        g_coordinatesOnlyMode = false;
+bool        g_coordinatesVisible = true;
 bool        g_running = true;
 
 // GDI / GDI+
@@ -477,6 +495,8 @@ std::wstring g_registryVars[4];
 std::wstring g_registryPowerShellPath;
 std::wstring g_registryCmdPath = L"cmd";
 std::wstring g_regeditedExePath;
+std::wstring g_registryPwshPath = L"pwsh";
+std::wstring g_registryTerminalPath = L"wt";
 std::wstring g_registryFilePath;
 std::wstring g_registryExportPath;
 std::wstring g_registryImportPath;
@@ -1709,6 +1729,7 @@ static void HideCirclePreviewIfMouseMoved() {
 }
 
 void WriteBackendState(bool force) {
+    if (g_controlTemporary) return;
     static DWORD lastWriteTick = 0;
     DWORD now = GetTickCount();
     if (!force && now - lastWriteTick < 100) return;
@@ -4189,15 +4210,17 @@ static bool ScheduleTasketTempTask(const std::string& taskName, const std::strin
     body += cleanup ? "true," : "false,";
     body += "\"delay\":" + std::to_string(delaySeconds < 0 ? 0 : delaySeconds) + ",";
     body += "\"loop\":1,";
-    body += "\"task\":" + taskJson;
+    body += "\"task\":" + ((ControlActive() && run) ? ControlPrepareTask(taskJson) : taskJson);
     body += "}";
 
     std::string response;
     bool ok = HttpPostLocalTasket(L"/temp-task", body, &response, status);
+    if (!ok && g_controlFeeding) g_controlNativeError = status ? *status : L"Tasket rejected the task";
     if (ok && status) {
         double taskNumber = 0.0;
         if (JsonNumberValue(response, "task_number", taskNumber)) {
             g_lastTasketTaskNumber = (int)taskNumber;
+            if (run) ControlTaskScheduled(g_lastTasketTaskNumber);
         }
         *status = Utf8ToWString(JsonStringValue(response, "message"));
         if (status->empty()) *status = L"Temporary Tasket task scheduled.";
@@ -4371,8 +4394,14 @@ static bool ScheduleTasketZoneCaptureToPasteBuffer(int flowIndex, POINT start, P
     }
 
     char targetKey = (char)PasteBufferSlotKey(targetSlot);
+    if (ControlActive()) {
+        auto task = BuildTasketDocumentJson(desc, actions, 1);
+        bool ok = ScheduleTasketTempTask("macrohelp_zone_capture_temp", task, 1, status);
+        if (ok) ControlCaptureBuffer(targetSlot, flowIndex == 2);
+        return ok;
+    }
     std::vector<std::vector<std::string>> saveSteps = {
-        {"SHIFT_LEFT", "ALT_LEFT", "0"},
+        {"SHIFT_LEFT", "ALT_LEFT", "1"},
         {std::string(1, targetKey)},
         {"CONTROL_LEFT", "A"},
         {"CONTROL_LEFT", "V"},
@@ -5242,6 +5271,8 @@ static void AppendLiteralPasteEnterActions(
 
 static bool ResolveShellAlias(const std::string& rawKey, std::wstring& alias, std::string& slug) {
     std::string key = LowerAscii(TrimAscii(rawKey));
+    if (key == "p" || key == "pwsh") { alias = g_registryPwshPath; slug = "p"; return true; }
+    if (key == "t" || key == "terminal") { alias = g_registryTerminalPath; slug = "t"; return true; }
     if (key == "x" || key == "bash") {
         alias = g_registryPowerShellPath;
         slug = "x";
@@ -5319,9 +5350,10 @@ static bool AppendZoneCaptureSaveActions(
         if (status) *status = L"Zone capture target paste buffer is invalid.";
         return false;
     }
+    if (ControlActive()) ++g_controlBufferReturns;
     char targetKey = (char)PasteBufferSlotKey(targetSlot);
     std::vector<std::vector<std::string>> saveSteps = {
-        {"SHIFT_LEFT", "ALT_LEFT", "0"},
+        {"SHIFT_LEFT", "ALT_LEFT", "1"},
         {std::string(1, targetKey)},
         {"CONTROL_LEFT", "A"},
         {"CONTROL_LEFT", "V"},
@@ -5733,7 +5765,10 @@ static bool CompileRegistryHubScriptToTaskJson(std::string* taskJson, int* actio
 static bool ScheduleTasketRegistryHubScript(std::wstring* status) {
     std::string task;
     int actionCount = 0;
-    if (!CompileRegistryHubScriptToTaskJson(&task, &actionCount, status)) return false;
+    if (!CompileRegistryHubScriptToTaskJson(&task, &actionCount, status)) {
+        if (g_controlFeeding) g_controlNativeError = status ? *status : L"Workflow compilation failed";
+        return false;
+    }
     if (task.empty() || actionCount <= 0) return true;
     bool ok = ScheduleTasketTempTask("macrohelp_registry_hub_flow_temp", task, 1, status);
     return ok;
@@ -6377,7 +6412,7 @@ void UpdateFastOverlay(POINT screenPt) {
     }
 
     bool showLines = g_crosshairVisible && !g_coordinatesOnlyMode;
-    bool showTag = g_crosshairVisible || g_coordinatesOnlyMode;
+    bool showTag = g_coordinatesVisible && (g_crosshairVisible || g_coordinatesOnlyMode);
     if (!showLines && !showTag) {
         HideFastOverlay();
         return;
@@ -6674,6 +6709,11 @@ LRESULT CALLBACK CrosshairWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             return 0;
 
         case WM_HOTKEY: {
+            if (ControlActive() && !g_controlFeeding && !(wParam == IDH_PASTE_BUFFERS && g_controlBufferReturns > 0)) {
+                if (wParam == IDH_STOP_ALL_TASKET) ControlStop();
+                return 0;
+            }
+            if (ControlActive() && wParam == IDH_PASTE_BUFFERS && !g_controlFeeding) --g_controlBufferReturns;
             if (wParam == IDH_SAVE_CURSOR) {
                 if (g_hwndRecordDlg && IsWindow(g_hwndRecordDlg)) {
                     CloseRecordKeysDialog(g_hwndRecordDlg);
@@ -6965,6 +7005,7 @@ LRESULT CALLBACK CoordPanelWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
                 int cmd = TrackPopupMenu(hm, TPM_RETURNCMD | TPM_NONOTIFY,
                                          pt.x, pt.y, 0, hwnd, nullptr);
                 DestroyMenu(hm);
+                if (ControlActive() && cmd != IDM_STOP_ALL_TASKET && cmd != IDM_EXIT) return 0;
                 switch (cmd) {
                     case IDM_TOGGLE_CROSSHAIR:
                         g_crosshairVisible = !g_crosshairVisible;
@@ -7334,7 +7375,7 @@ LRESULT CALLBACK CirclePlacerDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
             WORD id = LOWORD(wParam);
             WORD notify = HIWORD(wParam);
 
-            if (id == IDC_EDIT_CIRCLE_VALUE && notify == EN_CHANGE) {
+            if (!g_controlFeeding && id == IDC_EDIT_CIRCLE_VALUE && notify == EN_CHANGE) {
                 if (g_circlePlacement.stage == CircleStage::Distance ||
                     g_circlePlacement.stage == CircleStage::Angle) {
                     UpdatePreviewFromInput(hwnd);
@@ -7490,7 +7531,7 @@ LRESULT CALLBACK ClickActionDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
 
         case WM_COMMAND:
             if (LOWORD(wParam) == IDC_EDIT_CLICK_VALUE &&
-                HIWORD(wParam) == EN_CHANGE &&
+                !g_controlFeeding && HIWORD(wParam) == EN_CHANGE &&
                 g_clickActionState.stage == ClickActionStage::Command) {
                 std::wstring text = DialogText(hwnd, IDC_EDIT_CLICK_VALUE);
                 if (text.size() == 1 && wcschr(L"zZxXcCvV", text[0])) {
@@ -7563,7 +7604,7 @@ LRESULT CALLBACK ViewTogglesDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             break;
 
         case WM_COMMAND:
-            if (LOWORD(wParam) == IDC_EDIT_VIEW_VALUE && HIWORD(wParam) == EN_CHANGE) {
+            if (!g_controlFeeding && LOWORD(wParam) == IDC_EDIT_VIEW_VALUE && HIWORD(wParam) == EN_CHANGE) {
                 std::wstring text = DialogText(hwnd, IDC_EDIT_VIEW_VALUE);
                 if (text.size() == 1 && wcschr(L"zZxXcCkKvV", text[0])) {
                     RunViewToggleCommand(hwnd, text);
@@ -7638,7 +7679,7 @@ LRESULT CALLBACK PasteBuffersDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
             break;
 
         case WM_COMMAND:
-            if (LOWORD(wParam) == IDC_EDIT_PASTE_BUFFER_VALUE && HIWORD(wParam) == EN_CHANGE) {
+            if (!g_controlFeeding && LOWORD(wParam) == IDC_EDIT_PASTE_BUFFER_VALUE && HIWORD(wParam) == EN_CHANGE) {
                 bool commandStage =
                     g_pasteBufferState.stage == PasteBufferStage::Command ||
                     g_pasteBufferState.stage == PasteBufferStage::PasteSelect ||
@@ -7742,6 +7783,9 @@ static std::string RegistryHubStateToText() {
     out << "---SHELL X---\n" << WStringToUtf8(g_registryPowerShellPath) << "\n";
     out << "---SHELL C---\n" << WStringToUtf8(g_registryCmdPath) << "\n";
     out << "---SHELL G---\n" << WStringToUtf8(g_regeditedExePath) << "\n";
+    out << "---SHELL P---\n" << WStringToUtf8(g_registryPwshPath) << "\n";
+    out << "---SHELL T---\n" << WStringToUtf8(g_registryTerminalPath) << "\n";
+    out << "---VIEW---\n" << control::Json({{"crosshair",g_crosshairVisible},{"grid",g_gridVisible},{"coordinates",g_coordinatesVisible},{"panel",g_coordPanelVisible},{"keys",g_keyDisplayVisible},{"coordinates_only",g_coordinatesOnlyMode}}).dump() << "\n";
     out << "---REGISTRY---\n" << WStringToUtf8(g_registryFilePath) << "\n";
     out << "---EXPORT PATH---\n" << WStringToUtf8(g_registryExportPath) << "\n";
     out << "---IMPORT PATH---\n" << WStringToUtf8(g_registryImportPath) << "\n";
@@ -7980,6 +8024,7 @@ static bool ImportRegistryHubEnvironment(std::wstring* status) {
 }
 
 static void SaveRegistryHubState() {
+    if (g_controlTemporary) return;
     WriteUtf8File(GetMacrohelpRegistryHubStatePath(), RegistryHubStateToText());
 }
 
@@ -8000,6 +8045,14 @@ static void LoadRegistryHubState() {
     auto section = [&](const std::string& marker) {
         return Utf8ToWString(SectionTextAfterMarker(data, marker));
     };
+    auto extra = section("---SHELL P---"); if (!extra.empty()) g_registryPwshPath = extra;
+    extra = section("---SHELL T---"); if (!extra.empty()) g_registryTerminalPath = extra;
+    try {
+        auto view = control::Json::parse(WStringToUtf8(section("---VIEW---")));
+        g_crosshairVisible = view.value("crosshair",g_crosshairVisible); g_gridVisible = view.value("grid",g_gridVisible);
+        g_coordinatesVisible = view.value("coordinates",g_coordinatesVisible); g_coordPanelVisible = view.value("panel",g_coordPanelVisible);
+        g_keyDisplayVisible = view.value("keys",g_keyDisplayVisible); g_coordinatesOnlyMode = view.value("coordinates_only",g_coordinatesOnlyMode);
+    } catch (const control::Json::exception&) { /* Older state files have no view section. */ }
 
     std::wstring value = section("---SHELL X---");
     if (TrimWide(value).empty()) value = section("---POWERSHELL---");
@@ -8728,7 +8781,7 @@ LRESULT CALLBACK RegistryHubDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             }
             return TRUE;
         case WM_COMMAND:
-            if (LOWORD(wParam) == IDC_EDIT_REGISTRY_HUB_VALUE && HIWORD(wParam) == EN_CHANGE) {
+            if (!g_controlFeeding && LOWORD(wParam) == IDC_EDIT_REGISTRY_HUB_VALUE && HIWORD(wParam) == EN_CHANGE) {
                 if (g_registryHubState.stage == RegistryHubStage::Command ||
                     g_registryHubState.stage == RegistryHubStage::PasteBufferSelect ||
                     g_registryHubState.stage == RegistryHubStage::ZoneSelect) {
@@ -8910,7 +8963,7 @@ LRESULT CALLBACK SaveCursorDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
 
         case WM_COMMAND:
             if (LOWORD(wParam) == IDC_EDIT_NAME &&
-                HIWORD(wParam) == EN_CHANGE &&
+                !g_controlFeeding && HIWORD(wParam) == EN_CHANGE &&
                 g_saveCursorState.stage == SaveCursorStage::Command) {
                 std::wstring text = DialogText(hwnd, IDC_EDIT_NAME);
                 if (text.size() == 1 && wcschr(L"zZxXcCvV", text[0])) {
@@ -9040,7 +9093,7 @@ LRESULT CALLBACK RecordKeysDlgProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
 
         case WM_COMMAND:
             if (LOWORD(wParam) == IDC_EDIT_SEQ_NAME &&
-                HIWORD(wParam) == EN_CHANGE &&
+                !g_controlFeeding && HIWORD(wParam) == EN_CHANGE &&
                 g_recordKeysState.stage == RecordKeysStage::Command) {
                 std::wstring text = DialogText(hwnd, IDC_EDIT_SEQ_NAME);
                 if (text.size() == 1 && wcschr(L"zZxXcCvV", text[0])) {
@@ -9765,6 +9818,8 @@ static bool HandleKeyboardOnlyWriterDialog(MSG& msg) {
 // ENTRY POINT
 // =============================================================================
 
+#include "control_native.inc"
+
 int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     g_hInst = hInstance;
     EnablePhysicalPixelDpiAwareness();
@@ -9852,6 +9907,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     Shell_NotifyIcon(NIM_MODIFY, &nid);
 
     // Main message loop
+    StartControlServer();
     MSG msg;
     while (g_running && GetMessage(&msg, nullptr, 0, 0)) {
         bool dlgMsg = false;
@@ -9887,6 +9943,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     }
 
     // Cleanup
+    StopControlServer();
     Shell_NotifyIcon(NIM_DELETE, &nid);
     UnregisterHotKey(g_hwndCrosshair, IDH_SAVE_CURSOR);
     UnregisterHotKey(g_hwndCrosshair, IDH_RECORD_KEYS);

@@ -1,5 +1,8 @@
 pub mod artifacts;
 pub mod client;
+pub mod control_http;
+pub mod control_mcp;
+pub mod control_protocol;
 pub mod heatmap;
 pub mod overlay;
 pub mod profiles;

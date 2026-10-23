@@ -43,9 +43,11 @@ if errorlevel 1 (
 )
 
 echo [3/3] Linking...
-g++ -o %OUT%\%TARGET% %OUT%\main.o %OUT%\CursorOverlay_res.o ^
+g++ -std=c++17 -O2 -DUNICODE -D_UNICODE -D_WIN32_WINNT=0x0A00 -I%SRC% -c %SRC%\control_api.cpp -o %OUT%\control_api.o
+if errorlevel 1 exit /b 1
+g++ -o %OUT%\%TARGET% %OUT%\main.o %OUT%\control_api.o %OUT%\CursorOverlay_res.o ^
     -static-libgcc -static-libstdc++ ^
-    -luser32 -lgdi32 -lshell32 -lshlwapi -lgdiplus -luuid -mwindows
+    -luser32 -lgdi32 -lshell32 -lshlwapi -lgdiplus -luuid -lwinhttp -lwinmm -ldwmapi -lws2_32 -lbcrypt -ladvapi32 -lcrypt32 -lole32 -mwindows
 if errorlevel 1 (
     echo ERROR: Linking failed.
     exit /b 1
@@ -53,5 +55,7 @@ if errorlevel 1 (
 
 echo.
 echo Build complete: %OUT%\%TARGET%
+g++ -std=c++17 -O2 -DUNICODE -D_UNICODE -D_WIN32_WINNT=0x0A00 -I%SRC% %SRC%\control_mcp.cpp %OUT%\control_api.o -o %OUT%\macrohelp-mcp.exe -lws2_32 -lbcrypt -ladvapi32 -lcrypt32 -lshell32 -lole32 -luuid
+if errorlevel 1 exit /b 1
 echo.
 echo To run: start %OUT%\%TARGET%

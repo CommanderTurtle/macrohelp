@@ -15,8 +15,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Enforce modern C++ conformance (VS 2022/2025+)
 if(MSVC)
     add_compile_options(/W3 /permissive- /Zc:__cplusplus /EHsc)
-    add_link_options(/SUBSYSTEM:WINDOWS)
 endif()
+
+add_library(overlay-control STATIC src/control_api.cpp)
+target_compile_definitions(overlay-control PRIVATE UNICODE _UNICODE _WIN32_WINNT=0x0A00 WIN32_LEAN_AND_MEAN)
+target_link_libraries(overlay-control PUBLIC ws2_32 bcrypt advapi32 crypt32 shell32 ole32)
 
 set(SOURCES src/main.cpp)
 set(RESOURCES res/CursorOverlay.rc)
@@ -30,7 +33,7 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
 )
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
-    user32 gdi32 shell32 shlwapi gdiplus winhttp winmm
+    user32 gdi32 shell32 shlwapi gdiplus winhttp winmm dwmapi overlay-control
 )
 
 if(MSVC)
@@ -42,3 +45,16 @@ endif()
 set_target_properties(${PROJECT_NAME} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
+
+add_executable(macrohelp-mcp src/control_mcp.cpp)
+target_compile_definitions(macrohelp-mcp PRIVATE UNICODE _UNICODE _WIN32_WINNT=0x0A00 WIN32_LEAN_AND_MEAN)
+target_link_libraries(macrohelp-mcp PRIVATE overlay-control)
+set_target_properties(macrohelp-mcp PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(control-native-tests tests/control_native.cpp)
+    target_compile_definitions(control-native-tests PRIVATE UNICODE _UNICODE _WIN32_WINNT=0x0A00 WIN32_LEAN_AND_MEAN)
+    target_link_libraries(control-native-tests PRIVATE user32 gdi32 shell32 shlwapi gdiplus winhttp winmm dwmapi overlay-control)
+    add_test(NAME overlay-control-native COMMAND control-native-tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/control-fixtures.json)
+endif()

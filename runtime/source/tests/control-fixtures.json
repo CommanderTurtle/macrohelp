@@ -1,0 +1,23 @@
+[
+  {"input":"2,Z,\"{type hello, world}\",P,no-replace","valid":true},
+  {"input":"1,Z,\"no-replace\"","valid":true},
+  {"input":"1,\"a\"\"b\n,c\", ","valid":true},
+  {"input":{"menu":"registry_hub","config":{"vars":{"A":"α, 🐢\n\"quoted\""},"points":{"16":[-1,20]},"zones":{"C":null}},"no_replace":true},"valid":true},
+  {"input":{"run":"one","inputs":[{"action":"submit","value":"more"}]},"valid":true},
+  {"input":{"menu":9,"inputs":["Example",{"action":"add_step","keys":["CONTROL_LEFT","S"],"delay":120},{"action":"replay"}]},"valid":true},
+  {"input":{"config":{"view":{"keys":false},"shells":{"P":"pwsh","T":"terminal"}}},"valid":true},
+  {"input":{"menu":10},"valid":false},
+  {"input":{"menu":"02"},"valid":false},
+  {"input":{"menu":-1},"valid":false},
+  {"input":{"inputs":["Z"]},"valid":false},
+  {"input":{"no_replace":"false"},"valid":false},
+  {"input":{"config":{"points":{"0":[1,2]}}},"valid":false},
+  {"input":{"config":{"points":{"01":[1,2]}}},"valid":false},
+  {"input":{"config":{"view":{"keys":"false"}}},"valid":false},
+  {"input":{"config":{"zones":{"Z":[1,2,3]}}},"valid":false},
+  {"input":{"menu":2,"inputs":[{"action":"exec"}]},"valid":false},
+  {"input":{"menu":2,"inputs":[{"action":"submit","value":"nul\u0000text"}]},"valid":false},
+  {"input":{"menu":2,"unknown":true},"valid":false},
+  {"input":"2,\"unclosed","valid":false},
+  {"input":{"menu":9,"inputs":[{"action":"add_step","keys":[],"delay":0}]},"valid":false}
+]

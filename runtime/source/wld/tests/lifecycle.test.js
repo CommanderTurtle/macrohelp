@@ -6,7 +6,7 @@ import { runInNewContext } from "node:vm"
 const source=readFileSync(new URL("../qml/Service.qml",import.meta.url),"utf8")
 function service(overrides={}) {
   const timer=()=>({running:false,restart(){this.running=true},stop(){this.running=false}})
-  const s={generation:0,busy:false,localBusy:false,pending:null,steps:[],stepIndex:0,
+  const s={generation:0,busy:false,localBusy:false,pending:null,steps:[],stepIndex:0,controlRun:null,
     hidden:false,currentJob:null,recordingPath:false,error:"",message:"",environment:{},
     clipboardCallback:null,clipboardSerial:0,activePanel:{opened:true},page:"Workflow",settings:{},
     startDelay:timer(),poll:timer(),clipboardTimeout:timer(),persist:timer(),

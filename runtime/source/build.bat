@@ -30,9 +30,9 @@ if errorlevel 1 (
 )
 
 echo [2/3] Compiling main.cpp...
-cl.exe /nologo /EHsc /O2 /W3 /permissive- /Zc:__cplusplus ^
+cl.exe /nologo /std:c++17 /EHsc /O2 /W3 /permissive- /Zc:__cplusplus ^
     /DUNICODE /D_UNICODE /D_WIN32_WINNT=0x0A00 ^
-    /I%SRC% /Fo%OUT%\ /c %SRC%\main.cpp
+    /I%SRC% /Fo%OUT%\ /c %SRC%\main.cpp %SRC%\control_api.cpp %SRC%\control_mcp.cpp
 if errorlevel 1 (
     echo ERROR: Compilation failed.
     exit /b 1
@@ -40,8 +40,8 @@ if errorlevel 1 (
 
 echo [3/3] Linking...
 link.exe /nologo /SUBSYSTEM:WINDOWS /OUT:%OUT%\%TARGET% ^
-    %OUT%\main.obj %OUT%\CursorOverlay.res ^
-    user32.lib gdi32.lib shell32.lib shlwapi.lib gdiplus.lib
+    %OUT%\main.obj %OUT%\control_api.obj %OUT%\CursorOverlay.res ^
+    user32.lib gdi32.lib shell32.lib shlwapi.lib gdiplus.lib ole32.lib
 if errorlevel 1 (
     echo ERROR: Linking failed.
     exit /b 1
@@ -49,5 +49,7 @@ if errorlevel 1 (
 
 echo.
 echo Build complete: %OUT%\%TARGET%
+link.exe /nologo /SUBSYSTEM:CONSOLE /OUT:%OUT%\macrohelp-mcp.exe %OUT%\control_mcp.obj %OUT%\control_api.obj ole32.lib
+if errorlevel 1 exit /b 1
 echo.
 echo To run: start %OUT%\%TARGET%
