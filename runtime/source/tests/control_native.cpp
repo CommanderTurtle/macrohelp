@@ -24,6 +24,43 @@ int main(int argc,char** argv) {
         }
         for(int i=0;i<10;++i)check(normalize({{"menu",Menus[i]}})["menu"]==i,"Menu mapping");
         auto before=native_control::environment();
+        {
+            std::wstring status;std::string document;
+            auto cursor=PrepareRegistryDispatch(L"{type first}{wait 25}{point 3}{buf A}{wait 0}");
+            check(cursor.total==3,"Explicit wait count");
+            check(CompileRegistryDispatchSegment(cursor,&document,&status),"Initial segment compile");
+            check(Json::parse(document)["actions"].size()==1&&cursor.leadingWait,"Future point expanded before dispatch");
+            check(ApplySavedCursorVariable("point 3",{-12,345}),"Save Cursor point variable");
+            check(ApplySavedCursorVariable("A",{700,800}),"Save Cursor text variable");
+            ++cursor.index;
+            check(CompileRegistryDispatchSegment(cursor,&document,&status),"Live segment compile");
+            auto actions=Json::parse(document)["actions"];
+            check(actions[0]==Json({{"type","wait"},{"duration",.025}}),"Next task does not start with literal wait");
+            check(actions[1]["cursormovsmap"][0][2]==-12&&actions[1]["cursormovsmap"][0][3]==345,"Next task used stale point");
+            check(std::any_of(actions.begin(),actions.end(),[](const Json& action){return action.value("content","")=="700,800";}),"Next task used stale variable");
+            ++cursor.index;check(CompileRegistryDispatchSegment(cursor,&document,&status),"Trailing wait compile");
+            check(Json::parse(document)["actions"][0]==Json({{"type","wait"},{"duration",0}})&&cursor.at==cursor.tokens.size(),"Trailing zero wait lost");
+            g_registryVars[0]=L"yes";
+            cursor=PrepareRegistryDispatch(L"{if A == yes}{click on}{wait 4}{type kept}{else}{type wrong}{endif}");
+            check(CompileRegistryDispatchSegment(cursor,&document,&status)&&document.empty(),"Branch continuation initial segment");
+            g_registryVars[0]=L"no";++cursor.index;
+            check(CompileRegistryDispatchSegment(cursor,&document,&status),"Branch continuation compile");
+            check(cursor.focusClick&&document.find("wrong")==std::string::npos,"Branch or focus mode reevaluated");
+            native_control::apply(before);
+            g_controlTemporary=true;native_control::run={{"id","dispatch-test"},{"no_replace",true},{"saved",before}};
+            native_control::apply(native_control::merge(before,{{"vars",{{"A","temporary"}}}}));
+            g_registryDispatch=PrepareRegistryDispatch(L"{wait 1}");g_registryDispatch.active=true;
+            g_registryDispatchSubmitting=true;check(RegistryDispatchNeedsOrigin(),"Initial control origin lost");
+            g_registryDispatch.index=2;check(!RegistryDispatchNeedsOrigin(),"Origin would precede the next task's wait");g_registryDispatchSubmitting=false;
+            native_control::tick();check(ControlActive()&&g_controlTemporary,"Temporary config released before sequence ended");
+            g_registryDispatch.task=123;
+            auto generation=g_registryDispatchGeneration;CancelRegistryDispatch();
+            check(!RegistryDispatchActive()&&g_registryDispatchGeneration>generation,"Stop did not invalidate pending dispatch");
+            check(native_control::task==123&&g_controlTemporary,"Unconfirmed stop released running task context");
+            native_control::task=0; // Simulate confirmed task completion, without a daemon call.
+            native_control::tick();check(!ControlActive()&&native_control::environment()==before,"Finished sequence did not restore temporary config");
+            g_registryDispatch=RegistryHubDispatch{};
+        }
         auto stateBeforeHelp=native_control::snapshot();
         auto help=native_control::handle("/v1/help",Json::object());
         check(help["result"]["text"]==WStringToUtf8(RegistryHubHelpText()),"Help differs from native manual");

@@ -89,6 +89,18 @@ Requests are capped at 1 MiB/256 inputs. Use one executable flow per run.
 Native validation/errors may leave a field awaiting correction; inspect dialog
 state. After a timeout, inspect state before retrying an action.
 
+Registry Hub Play dispatches a sequence: every explicit `{wait 200}` starts the
+next generated native task, with that wait as its first action. Each task is built
+from current points/variables after its predecessor finishes. Values are fixed
+once that task is dispatched, including during its wait. Helper-generated waits
+stay inside their existing task; standalone saved schedules remain snapshots.
+State exposes `sequence` progress; task names/logs identify `1/n`, `2/n`, etc.
+Stop All cancels the pending sequence as well as backend execution.
+
+Save Cursor names `1`–`16` (also `point 3`) update the corresponding Registry Hub
+point; `A/S/D/F` store the captured `x,y` as a variable. Existing movement-action
+export and the frozen pre-dialog capture position are preserved.
+
 ## MCP
 
 Configure an MCP client's stdio server with one of these commands; the overlay

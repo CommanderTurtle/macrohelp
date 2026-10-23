@@ -55,6 +55,7 @@ Item {
   property var steps: []
   property int stepIndex: 0
   property var currentJob: null
+  property var dispatch: null
   property var pending: null
   property var pickerCallback: null
   property var activePanel: null
@@ -126,7 +127,7 @@ Item {
   function clearWorkflow(){if(busy||localBusy||pending){error="Stop the current operation first";return}generation++;environment=Workflow.clearState(environment);resolvedScript="";save();message="Workflow cleared; paste buffers and zones retained"}
   function vector(text){var v=Workflow.vector(text,circleOrigin);radius=v.radius;angle=v.angle;unit="radians"}
   function exitOverlay(){cancelWork();hidePanel();if(!disablePlugin.running)disablePlugin.running=true}
-  function cancelWork(){generation++;dialogs.closeDialog();steps=[];stepIndex=0;currentJob=null;busy=false;localBusy=false;pending=null;hidden=false;recordingPath=false;clipboardCallback=null;startDelay.stop();poll.stop();clipboardTimeout.stop();if(controlRun)finishControl("cancelled")}
+  function cancelWork(){generation++;dispatch=null;dialogs.closeDialog();steps=[];stepIndex=0;currentJob=null;busy=false;localBusy=false;pending=null;hidden=false;recordingPath=false;clipboardCallback=null;startDelay.stop();poll.stop();clipboardTimeout.stop();if(controlRun)finishControl("cancelled")}
   function stop(){cancelWork();if(!emergency.running)emergency.running=true;message="";remember("Stop requested")}
   function reconnect(){if(!runtime.running)runtime.running=true;else refresh()}
   function queue(actions,callback,delay,name,saveOnly){
@@ -139,7 +140,7 @@ Item {
       if(callback)callback(v,e)
     })
   }
-  function later(actions){if(busy||localBusy||pending){error="An operation is already pending";return}hidePanel();pending=function(){root.queue(actions)};startDelay.restart()}
+  function later(actions){if(localBusy||pending||(busy&&!dispatch)){error="An operation is already pending";return}hidePanel();if(dispatch){queue(actions);return}pending=function(){root.queue(actions)};startDelay.restart()}
   function pointer(){if(!ready)return;var p=[Math.round(cursor.x),Math.round(cursor.y)];change("points",pointIndex,p);remember("Point "+(pointIndex+1)+": "+p.join(", "))}
   function corner(){var p=[Math.round(cursor.x),Math.round(cursor.y)];if(!zoneStart){zoneStart=p;message="First corner saved"}else{change("zones",zoneSlot,zoneStart.concat(p));zoneStart=null;message="Zone "+zoneSlot+" saved"}}
   function togglePath(){recordingPath=!recordingPath;if(recordingPath){path=[[0,0,Math.round(cursor.x),Math.round(cursor.y)]];pathTime=Date.now();message="Recording pointer path"}else message="Path: "+path.length+" points"}
@@ -151,8 +152,24 @@ Item {
     refreshContext(function(context,failure){
       if(token!==root.generation)return
       if(failure){root.busy=false;if(root.controlRun)root.controlRun.failure=failure;return}
-      try {var plan=Workflow.compile(source,root.environment,context);if(origin)plan.steps.unshift({kind:"input",actions:[Workflow.move(origin,0)]});root.resolvedScript=plan.expanded;root.environment=plan.state;root.save();root.steps=plan.steps;root.stepIndex=0;root.hidePanel();root.pending=function(){root.nextStep(token)};startDelay.restart()}
-      catch(e){root.busy=false;root.error=e.message;if(root.controlRun)root.controlRun.failure=e.message}
+      try {context.deferred=true;var plan=Workflow.compile(source,root.environment,context);if(origin)plan.steps.unshift({kind:"input",actions:[Workflow.move(origin,0)]});root.dispatch={next:plan.next,index:1,total:1+Workflow.remainingWaits(plan.next,context),preparing:false};root.resolvedScript=plan.expanded;root.environment=plan.state;root.save();root.steps=plan.steps;root.stepIndex=0;root.hidePanel();root.pending=function(){root.nextStep(token)};startDelay.restart()}
+      catch(e){root.busy=false;root.dispatch=null;root.error=e.message;if(root.controlRun)root.controlRun.failure=e.message}
+    })
+  }
+  function nextDispatch(token){
+    if(token!==generation||!busy||!dispatch||dispatch.preparing)return
+    var next=dispatch.next;dispatch.preparing=true
+    refreshContext(function(context,failure){
+      if(token!==root.generation||!root.busy||!root.dispatch)return
+      root.dispatch.preparing=false
+      if(failure){root.busy=false;root.dispatch=null;if(root.controlRun)root.controlRun.failure=failure;return}
+      try {
+        context.deferred=true
+        var plan=Workflow.compile("",root.environment,context,next)
+        var index=root.dispatch.index+1
+        root.dispatch={next:plan.next,index:index,total:index+Workflow.remainingWaits(plan.next,context),preparing:false}
+        root.environment=plan.state;root.resolvedScript+=plan.expanded;root.save();root.steps=plan.steps;root.stepIndex=0;root.nextStep(token)
+      }catch(e){root.busy=false;root.dispatch=null;root.error=e.message;if(root.controlRun)root.controlRun.failure=e.message}
     })
   }
   function loadProfiles(callback){call({method:"profile-list"},function(v,e){root.profileError=e||"";if(!e)root.profileLibrary=v;if(callback)callback(v,e)})}
@@ -170,10 +187,10 @@ Item {
   }
   function nextStep(token){
     if(token!==generation||!busy)return
-    if(stepIndex>=steps.length){busy=false;hidden=false;message="Finished";save();refresh();return}
+    if(stepIndex>=steps.length){if(dispatch&&dispatch.next){nextDispatch(token);return}dispatch=null;busy=false;hidden=false;message="Finished";save();refresh();return}
     var step=steps[stepIndex++]
-    function done(value,error){if(token!==root.generation)return;if(error){root.busy=false;root.hidden=false;if(root.controlRun)root.controlRun.failure=error;if(root.connected)root.error=error;return}if(step.slot&&value&&value.text!==undefined)root.change(/^[ASDF]$/.test(step.slot)?"vars":"buffers",step.slot,step.singleLine?value.text.replace(/[\r\n]+/g," ").trim():value.text);root.nextStep(token)}
-    if(step.kind==="input"){hidden=!!step.capture;queue(Workflow.resolve(step.actions,environment),function(v,e){if(token!==root.generation)return;if(e){done(null,e);return}root.currentJob=v.task;poll.restart()},0)}
+    function done(value,error){if(token!==root.generation)return;if(error){root.busy=false;root.dispatch=null;root.hidden=false;if(root.controlRun)root.controlRun.failure=error;if(root.connected)root.error=error;return}if(step.slot&&value&&value.text!==undefined)root.change(/^[ASDF]$/.test(step.slot)?"vars":"buffers",step.slot,step.singleLine?value.text.replace(/[\r\n]+/g," ").trim():value.text);root.nextStep(token)}
+    if(step.kind==="input"){hidden=!!step.capture;if(dispatch){message=dispatch.index+"/"+dispatch.total+" sequence is running";console.info("Macrohelp: "+message)}queue(Workflow.resolve(step.actions,environment),function(v,e){if(token!==root.generation)return;if(e){done(null,e);return}root.currentJob=v.task;poll.restart()},0,dispatch?"Macrohelp sequence "+dispatch.index+" of "+dispatch.total:undefined)}
     else if(step.kind==="clipboard")readClipboard(function(v,e){if(token!==root.generation)return;root.hidePanel();root.pending=function(){done(v,e)};startDelay.restart()})
     else if(step.kind==="regedited")call({method:"regedited",action:step.action,file:step.file,reference:step.reference},done)
   }
@@ -218,7 +235,7 @@ Item {
   }
   function controlSnapshot(){
     return {api_version:1,ready:ready,connected:connected,busy:busy||localBusy||!!pending||dialogs.working||!!controlRun,
-      run:controlRun?controlRun.id:null,last_run:controlLast,environment:Workflow.copy(environment),
+      run:controlRun?controlRun.id:null,last_run:controlLast,environment:Workflow.copy(environment),sequence:dispatch?{index:dispatch.index,total:dispatch.total}:null,
       dialog:dialogs.dialogOpen?{menu:dialogs.dialogKind,stage:dialogs.dialogState.stage,state:Workflow.copy(dialogs.dialogState)}:null,
       last_task:environment.last_task||null,error:error||null}
   }
@@ -296,11 +313,11 @@ Item {
     var token=root.generation,job=root.currentJob;if(!job)return
     root.http("GET","/check?id="+job.task_number,{},function(v,e){
       if(token!==root.generation)return
-      if(e){root.busy=false;root.hidden=false;root.currentJob=null;if(root.controlRun)root.controlRun.failure=e;return}
-      if(v.session!==job.session){root.busy=false;root.hidden=false;root.currentJob=null;root.error="Omarsket restarted; workflow stopped";if(root.controlRun)root.controlRun.failure=root.error;return}
+      if(e){root.busy=false;root.dispatch=null;root.hidden=false;root.currentJob=null;if(root.controlRun)root.controlRun.failure=e;return}
+      if(v.session!==job.session){root.busy=false;root.dispatch=null;root.hidden=false;root.currentJob=null;root.error="Omarsket restarted; workflow stopped";if(root.controlRun)root.controlRun.failure=root.error;return}
       if(v.state==="scheduled"||v.state==="running"){poll.restart();return}
       root.currentJob=null;root.hidden=false
-      if(v.state!=="finished"){root.busy=false;root.error=v.error||v.state;if(root.controlRun)root.controlRun.failure=root.error;return}
+      if(v.state!=="finished"){root.busy=false;root.dispatch=null;root.error=v.error||v.state;if(root.controlRun)root.controlRun.failure=root.error;return}
       root.nextStep(token)
     })
   }}
@@ -342,7 +359,7 @@ Item {
         var kinds={"0":"save_cursor","1":"paste_buffers","2":"registry_hub","3":"circle_placer","4":"click_left","5":"click_right","6":"click_middle","7":"stop_all","8":"view_toggles","9":"record_keys"}
         var kind=kinds[r.key]
         if(!kind)return
-        if(root.controlRun){if(kind==="stop_all")root.stop();else root.error="A control run is active; finish or stop it first";return}
+        if(root.controlRun&&!(root.dispatch&&(kind==="save_cursor"||kind==="circle_placer"))){if(kind==="stop_all")root.stop();else root.error="A control run is active; finish or stop it first";return}
         root.showDialog(kind)
         // Circle begins at the real pointer, with keyboard focus and no warp.
         if(kind==="circle_placer")return

@@ -50,7 +50,7 @@ test("continued editor config overrides replace stale displayed text before Play
 function service(overrides={}) {
   const source=read("../qml/Service.qml"),timer=()=>({running:false,restart(){this.running=true},stop(){this.running=false}})
   const s={environment:env(),cursor:{...cursor},ready:true,connected:true,busy:false,localBusy:false,pending:null,recordingPath:false,error:"",serial:0,generation:0,
-    controlRun:null,controlLast:null,controlPending:0,activePanel:null,DialogState:D,Workflow:W,Control:C,persist:timer(),calls:[],saves:[],
+    controlRun:null,controlLast:null,controlPending:0,dispatch:null,activePanel:null,DialogState:D,Workflow:W,Control:C,persist:timer(),calls:[],saves:[],
     call(value){this.calls.push(value);if(value.method==="save-state")this.saves.push(W.copy(value.state))},
     dialogs:{dialogOpen:false,working:false,dialogState:null,openDialog(kind){this.dialogOpen=true;this.dialogState=D.open(kind,cursor)},closeDialog(){this.dialogOpen=false;this.working=false},focusInput(){}},
     controlEffect(){},stop(){this.dialogs.closeDialog();this.busy=false;this.localBusy=false;this.pending=null;this.finishControl("cancelled")},...overrides}

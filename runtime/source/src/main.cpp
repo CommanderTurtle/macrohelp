@@ -27,6 +27,7 @@
 #include <vector>
 #include <sstream>
 #include <iomanip>
+#include <iostream>
 #include <chrono>
 #include <fstream>
 #include <memory>
@@ -66,9 +67,19 @@ static int ControlMessageBox(HWND, LPCWSTR, LPCWSTR, UINT);
 #define MessageBoxW(hwnd, text, title, flags) ControlMessageBox(hwnd, text, title, flags)
 static bool ControlActive();
 static void ControlTaskScheduled(int);
+static void ControlRetainTask(int);
 static void ControlCaptureBuffer(int, bool);
 static std::string ControlPrepareTask(const std::string&);
 static void ControlStop();
+static bool RegistryDispatchActive();
+static bool RegistryDispatchNeedsOrigin();
+static void CancelRegistryDispatch();
+static void TickRegistryDispatch();
+static control::Json RegistryDispatchStatus();
+static int RegistryPointIndexFromCommand(const std::string&);
+static int RegistryVarIndexFromCommand(const std::string&);
+static bool ApplySavedCursorVariable(const std::string&,POINT);
+static void SaveRegistryHubState();
 
 // =============================================================================
 // CONFIGURATION
@@ -2630,6 +2641,10 @@ static bool WriteSaveCursorActions(HWND hwnd, bool includeClick) {
         MessageBoxW(hwnd, L"Failed to save to clicksession.txt.",
                    L"Error", MB_OK | MB_ICONERROR);
     }
+    if(ok&&!g_saveCursorState.coords.empty()) {
+        const auto& p=g_saveCursorState.coords.front();
+        if(ApplySavedCursorVariable(WStringToUtf8(g_saveCursorState.name),{p[2],p[3]}))SaveRegistryHubState();
+    }
     return ok;
 }
 
@@ -4210,7 +4225,7 @@ static bool ScheduleTasketTempTask(const std::string& taskName, const std::strin
     body += cleanup ? "true," : "false,";
     body += "\"delay\":" + std::to_string(delaySeconds < 0 ? 0 : delaySeconds) + ",";
     body += "\"loop\":1,";
-    body += "\"task\":" + ((ControlActive() && run) ? ControlPrepareTask(taskJson) : taskJson);
+    body += "\"task\":" + ((ControlActive() && run && RegistryDispatchNeedsOrigin()) ? ControlPrepareTask(taskJson) : taskJson);
     body += "}";
 
     std::string response;
@@ -4429,6 +4444,7 @@ static bool ScheduleTasketZoneCaptureToPasteBuffer(int flowIndex, POINT start, P
 }
 
 static bool StopAllTasketTasks(std::wstring* status) {
+    CancelRegistryDispatch();
     std::string response;
     bool ok = HttpPostLocalTasket(L"/stop", "{}", &response, status);
     if (ok && status) {
@@ -4477,6 +4493,12 @@ static std::string PointValueUtf8(int pointIndex) {
     std::ostringstream ss;
     ss << g_registryPoints[pointIndex].x << "," << g_registryPoints[pointIndex].y;
     return ss.str();
+}
+static bool ApplySavedCursorVariable(const std::string& name,POINT point) {
+    int slot=RegistryPointIndexFromCommand(name),var=RegistryVarIndexFromCommand(name);
+    if(slot>=0){g_registryPoints[slot]=point;g_registryPointSet[slot]=true;return true;}
+    if(var>=0){g_registryVars[var]=std::to_wstring(point.x)+L","+std::to_wstring(point.y);return true;}
+    return false;
 }
 
 static bool ParsePointCoordinatesLoose(const std::wstring& raw, POINT& point) {
@@ -5762,17 +5784,7 @@ static bool CompileRegistryHubScriptToTaskJson(std::string* taskJson, int* actio
     return true;
 }
 
-static bool ScheduleTasketRegistryHubScript(std::wstring* status) {
-    std::string task;
-    int actionCount = 0;
-    if (!CompileRegistryHubScriptToTaskJson(&task, &actionCount, status)) {
-        if (g_controlFeeding) g_controlNativeError = status ? *status : L"Workflow compilation failed";
-        return false;
-    }
-    if (task.empty() || actionCount <= 0) return true;
-    bool ok = ScheduleTasketTempTask("macrohelp_registry_hub_flow_temp", task, 1, status);
-    return ok;
-}
+#include "registry_dispatch.inc"
 
 static bool SaveRegistryHubCompiledSchts(std::wstring* status) {
     std::string task;
@@ -6672,6 +6684,7 @@ static void DrawCrosshair(HDC hdc) {
 LRESULT CALLBACK CrosshairWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
         case WM_TIMER:
+            if(wParam==4710){TickRegistryDispatch();return 0;}
             if (wParam == IDT_UPDATE_CURSOR) {
                 static POINT s_lastPaintCursor = {LONG_MIN, LONG_MIN};
                 static bool s_lastPreviewActive = false;
@@ -6709,7 +6722,7 @@ LRESULT CALLBACK CrosshairWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
             return 0;
 
         case WM_HOTKEY: {
-            if (ControlActive() && !g_controlFeeding && !(wParam == IDH_PASTE_BUFFERS && g_controlBufferReturns > 0)) {
+            if (ControlActive() && !g_controlFeeding && !(RegistryDispatchActive()&&(wParam==IDH_SAVE_CURSOR||wParam==IDH_CIRCLE_PLACER)) && !(wParam == IDH_PASTE_BUFFERS && g_controlBufferReturns > 0)) {
                 if (wParam == IDH_STOP_ALL_TASKET) ControlStop();
                 return 0;
             }
@@ -8232,6 +8245,8 @@ static std::wstring RegistryHubHelpText() {
         L"Pointer And Click Tokens\r\n"
         L"------------------------\r\n"
         L"{wait 200} waits 200 milliseconds.\r\n"
+        L"During Play, every explicit wait begins the next native task. That task is compiled from current values after the previous task finishes, with the wait as its first action. Stop All cancels remaining dispatches.\r\n"
+        L"Save Cursor names 1-16 (or point 3) update that Registry Hub point; A/S/D/F store x,y in that variable, alongside the existing action export.\r\n"
         L"{pt 1} through {pt 16} move through the canonical Tasket cursor-move template when that point is set. {point N} remains the long alias.\r\n"
         L"{click} or {left} emits a left-click action.\r\n"
         L"{click on} / {click off} changes whether buffer paste tokens click before pasting.\r\n"
@@ -9699,6 +9714,8 @@ bool InitApp() {
 }
 
 void ShutdownApp() {
+    CancelRegistryDispatch();
+    if(g_registryDispatchPoll.valid())g_registryDispatchPoll.wait();
     // Cleanup dialogs
     if (g_hwndSaveDlg && IsWindow(g_hwndSaveDlg)) DestroyWindow(g_hwndSaveDlg);
     if (g_hwndRecordDlg && IsWindow(g_hwndRecordDlg)) DestroyWindow(g_hwndRecordDlg);

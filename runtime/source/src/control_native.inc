@@ -95,7 +95,7 @@ static Json snapshot() {
         if(menu=="registry_hub"){state["variable"]=g_registryHubState.activeVar;state["point"]=g_registryHubState.activePoint;state["slot"]=g_registryHubState.activePasteSlot;state["zoneSlot"]=g_registryHubState.activeZoneSlot;}
         if(menu=="circle_placer"){state["radius"]=g_circlePlacement.radius;state["target"]=g_circlePlacement.targetValid?Json::array({g_circlePlacement.target.x,g_circlePlacement.target.y}):Json(nullptr);state["zoneStart"]={g_circlePlacement.zoneStart.x,g_circlePlacement.zoneStart.y};state["zoneMode"]=g_circlePlacement.zoneMode;}
     }
-    return {{"api_version",1},{"ready",true},{"connected",connected},{"busy",!run.is_null()||h!=nullptr||task>0},{"run",run.is_null()?Json(nullptr):run["id"]},
+    return {{"api_version",1},{"ready",true},{"connected",connected},{"busy",!run.is_null()||h!=nullptr||task>0||RegistryDispatchActive()},{"sequence",RegistryDispatchStatus()},{"run",run.is_null()?Json(nullptr):run["id"]},
         {"last_run",last},{"environment",environment()},{"dialog",d},{"last_task",{{"id",g_lastTasketTaskNumber},{"state",WStringToUtf8(g_lastTasketTaskState)},{"message",WStringToUtf8(g_lastTasketTaskMessage)}}},{"error",error.empty()?Json(nullptr):Json(error)}};
 }
 static void closeDialogs() {
@@ -212,7 +212,7 @@ static Json handle(const std::string& path,const Json& body) {
     if(body.contains("menu")&&body["menu"]==7){ControlStop();return control::success(snapshot());}
     control::require(run.is_null()||body.value("run","")==run["id"],"Another control run is active",409);
     control::require(!run.is_null()||!body.contains("run"),"Control run is no longer active",404);
-    control::require(task==0&&!g_waitingForKey&&(!dialog()||IsWindowEnabled(dialog()))&&(ControlActive()||dialog()==nullptr),"Overlay is busy; inspect state or stop first",409);
+    control::require(!RegistryDispatchActive()&&task==0&&!g_waitingForKey&&(!dialog()||IsWindowEnabled(dialog()))&&(ControlActive()||dialog()==nullptr),"Overlay is busy; inspect state or stop first",409);
     if(!run.is_null()&&body.contains("no_replace"))control::require(body["no_replace"]==run["no_replace"],"no_replace is fixed for the active run",409);
     auto before=environment();auto merged=merge(before,body.at("config"));
     if(run.is_null()) {
@@ -249,19 +249,19 @@ static Json handle(const std::string& path,const Json& body) {
                 SetDlgItemTextW(g_hwndPasteBuffersDlg,IDC_EDIT_PASTE_BUFFER_VALUE,g_pasteBuffers[g_pasteBufferState.activeSlot].c_str());
         }
         for(const auto& input:body["inputs"]) {
-            control::require(task==0,"The preceding input started a task; wait for completion");
+            control::require(task==0&&!RegistryDispatchActive(),"The preceding input started a task; wait for completion");
             action(input);
             control::require(g_controlNativeError.empty(),WStringToUtf8(g_controlNativeError));
         }
         g_controlFeeding=false;
         if(!g_controlTemporary)SaveRegistryHubState();
-        if(!dialog()&&task==0)finish();
+        if(!dialog()&&task==0&&!RegistryDispatchActive())finish();
         return control::success(snapshot());
     } catch(const std::exception& e) {
         g_controlFeeding=false;error=e.what();closeDialogs();
         // A task already accepted by the backend retains ownership until it
         // finishes. Never restore its temporary context while it is running.
-        if(task==0)finish(error); else run["failure"]=error;
+        if(task==0&&!RegistryDispatchActive())finish(error); else run["failure"]=error;
         throw;
     }
 }
@@ -291,7 +291,7 @@ static void tick() {
             }
         }
     }
-    if(!task&&!dialog())finish(error.empty()?run.value("failure",""):error);
+    if(!task&&!dialog()&&!RegistryDispatchActive())finish(error.empty()?(!g_controlNativeError.empty()?WStringToUtf8(g_controlNativeError):run.value("failure","")):error);
 }
 static LRESULT CALLBACK procedure(HWND hwnd,UINT message,WPARAM wp,LPARAM lp) {
     if(message==Request) {
@@ -319,7 +319,8 @@ static int ControlMessageBox(HWND hwnd,LPCWSTR text,LPCWSTR title,UINT flags) {
     if(g_controlFeeding){g_controlNativeError=text?text:L"Native action failed";return IDCANCEL;}
     return (MessageBoxW)(hwnd,text,title,flags);
 }
-static void ControlTaskScheduled(int id){if(ControlActive()){native_control::task=id;native_control::nextPoll=native_control::Clock::now();}}
+static void ControlTaskScheduled(int id){if(ControlActive()&&!RegistryDispatchActive()){native_control::task=id;native_control::nextPoll=native_control::Clock::now();}}
+static void ControlRetainTask(int id){if(ControlActive()&&id>0){native_control::task=id;native_control::nextPoll=native_control::Clock::now();}}
 static void ControlCaptureBuffer(int slot,bool single){native_control::captureSlot=slot;native_control::captureSingleLine=single;}
 static std::string ControlPrepareTask(const std::string& document){
     auto task=control::Json::parse(document);

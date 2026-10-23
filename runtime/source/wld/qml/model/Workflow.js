@@ -145,14 +145,44 @@ function mergePreset(original,data) {
   })
   return state
 }
-function compile(source,original,context) {
-  var state=copy(original),steps=[],stack=[],enabled=true,focusClick=false,live={},actions=0
+function waitCount(source,context,ancestry) {
+  ancestry=ancestry||[]
+  var count=0,token=/\{([^{}]*)\}/g,match
+  while((match=token.exec(String(source)))){
+    var raw=match[1].trim()
+    if(/^wait\s/i.test(raw))count++
+    else if(/^profile\s/i.test(raw)&&ancestry.length<16){
+      try{var name=presetName(raw.slice(8).trim(),context.profiles);if(ancestry.indexOf(name)<0)count+=waitCount(context.profiles[name].script||"",context,ancestry.concat([name]))}catch(e){}
+    }
+  }
+  return count
+}
+function validateStructure(source) {
+  var token=/\{([^{}]*)\}/g,match,at=0,branches=[]
+  while((match=token.exec(String(source)))){
+    if(source.slice(at,match.index).trim())throw Error("Use {type text} for literal text")
+    at=token.lastIndex;var op=match[1].trim().split(/\s+/)[0].toLowerCase()
+    if(op==="if"){if(branches.length>=16)throw Error("Conditions nested too deeply");branches.push(false)}
+    else if(op==="else"){if(!branches.length||branches[branches.length-1])throw Error("Unexpected else");branches[branches.length-1]=true}
+    else if(op==="endif"){if(!branches.length)throw Error("Unexpected endif");branches.pop()}
+  }
+  if(source.slice(at).trim())throw Error("Use {type text} for literal text")
+  if(branches.length)throw Error("Missing endif")
+}
+function remainingWaits(next,context) {
+  if(!next)return 0
+  return next.frames.reduce(function(sum,frame){return sum+waitCount(frame.source,context,frame.ancestry)},0)
+}
+function compile(source,original,context,resume) {
+  var state=copy(original),steps=[],stack=resume?copy(resume.stack):[],enabled=stack.length?stack[stack.length-1].parent&&stack[stack.length-1].value!==stack[stack.length-1].otherwise:true,
+      focusClick=resume?resume.focusClick:false,live=resume?copy(resume.live):{},actions=resume?resume.actions:0,paused=null,leadingWait=!!resume
+  if(context.deferred&&!resume)validateStructure(String(source))
   function emit(action) { var last=steps[steps.length-1];if(!last||last.kind!=="input"){last={kind:"input",actions:[]};steps.push(last)}last.actions.push(action);if(++actions>10000)throw Error("Too many actions") }
   function local(step){steps.push(step)}
   function buffers(text){return text.split(/[,\s]+/).filter(Boolean).map(function(k){return reference(k.toUpperCase(),state)}).join("")}
-  function scan(source,ancestry){
+  function scan(source,ancestry,depth){
   if(source.length>1000000)throw Error("Expanded workflow exceeds 1 MiB")
-  var token=/\{([^{}]*)\}/g,match,at=0,initialDepth=stack.length,expanded=""
+  var token=/\{([^{}]*)\}/g,match,at=0,initialDepth=depth===undefined?stack.length:depth,expanded=""
   function append(text){if(expanded.length+text.length>1000000)throw Error("Expanded workflow exceeds 1 MiB");expanded+=text}
   while((match=token.exec(source))){
     if(source.slice(at,match.index).trim())throw Error("Use {type text} for literal text")
@@ -161,6 +191,10 @@ function compile(source,original,context) {
     if(op==="else"){if(stack.length<=initialDepth||stack[stack.length-1].otherwise)throw Error("Unexpected else");var frame=stack[stack.length-1];frame.otherwise=true;enabled=frame.parent&&!frame.value;append(match[0]);continue}
     if(op==="endif"){if(stack.length<=initialDepth)throw Error("Unexpected endif");enabled=stack.pop().parent;append(match[0]);continue}
     if(!enabled){append(match[0]);continue}
+    if(op==="wait"&&context.deferred&&!leadingWait){
+      paused={frames:[{source:source.slice(match.index),ancestry:ancestry,depth:initialDepth}],stack:copy(stack),focusClick:focusClick,live:copy(live),actions:actions}
+      return expanded
+    }
     var rawArg=arg;arg=expand(arg,state)
     if(op==="profile"){
       if(context.profileError)throw Error(context.profileError)
@@ -168,8 +202,13 @@ function compile(source,original,context) {
       if(ancestry.indexOf(name)>=0||ancestry.length>=16)throw Error("Recursive preset: "+name)
       state=mergePreset(state,data)
       ;["vars","buffers"].forEach(function(section){Object.keys(data[section]||{}).forEach(function(k){delete live[k]})})
+      if(context.deferred)validateStructure(String(data.script||""))
       append(scan(String(data.script||""),ancestry.concat([name])))
+      if(paused){paused.frames.push({source:source.slice(at),ancestry:ancestry,depth:initialDepth});return expanded}
       continue
+    }
+    if(op==="wait"&&context.deferred){
+      leadingWait=false
     }
     append("{"+op+(arg?" "+arg:"")+"}")
     if(op==="set"){
@@ -228,6 +267,10 @@ function compile(source,original,context) {
   if(stack.length!==initialDepth)throw Error("Missing endif")
   return expanded
   }
-  var expanded=scan(String(source),[])
-  return {state:state,steps:steps,expanded:expanded}
+  var expanded="",frames=resume?resume.frames:[{source:String(source),ancestry:[],depth:0}]
+  for(var f=0;f<frames.length;f++){
+    expanded+=scan(frames[f].source,frames[f].ancestry,frames[f].depth)
+    if(paused){paused.frames=paused.frames.concat(frames.slice(f+1));break}
+  }
+  return {state:state,steps:steps,expanded:expanded,next:paused}
 }

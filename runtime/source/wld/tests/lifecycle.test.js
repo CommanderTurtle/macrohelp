@@ -7,7 +7,7 @@ const source=readFileSync(new URL("../qml/Service.qml",import.meta.url),"utf8")
 function service(overrides={}) {
   const timer=()=>({running:false,restart(){this.running=true},stop(){this.running=false}})
   const s={generation:0,busy:false,localBusy:false,pending:null,steps:[],stepIndex:0,controlRun:null,
-    hidden:false,currentJob:null,recordingPath:false,error:"",message:"",environment:{},
+    hidden:false,currentJob:null,dispatch:null,recordingPath:false,error:"",message:"",environment:{},
     clipboardCallback:null,clipboardSerial:0,activePanel:{opened:true},page:"Workflow",settings:{},
     startDelay:timer(),poll:timer(),clipboardTimeout:timer(),persist:timer(),dialogWarp:timer(),dialogBlink:null,
     save(){},hidePanel(){},showPanel(){},remember(){},change(){},refresh(){},
@@ -42,7 +42,7 @@ test("failed preparation and compiler errors release the busy state",()=>{
 })
 
 test("successful preparation schedules its own generation only",()=>{
-  const s=service({Workflow:{compile(){return {state:{script:"ok"},steps:[{kind:"input"}]}}}})
+  const s=service({Workflow:{remainingWaits(){return 0},compile(){return {state:{script:"ok"},steps:[{kind:"input"}]}}}})
   s.refreshContext=callback=>callback({},null)
   s.play("ok")
   expect(s.busy).toBe(true);expect(s.startDelay.running).toBe(true)

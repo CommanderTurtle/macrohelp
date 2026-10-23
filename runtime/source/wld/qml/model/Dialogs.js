@@ -97,7 +97,12 @@ function submit(original, text, env, cursor, W) {
   if(s.kind==="save_cursor") {
     if(s.stage==="Name"){if(!raw.trim())throw Error("Enter a name");s.name=raw.trim();back()}
     else if(["x","add","point"].indexOf(cmd)>=0){s.points.push(point(cursor));s.text=""}
-    else if(["","z","save","c","click"].indexOf(cmd)>=0){var movement=W.move(s.points[0],1000);movement.cursorMovsId=s.name;movement.cursormovsmap=s.points.map(function(p){return [0,1000,p[0],p[1]]});var a=[movement,W.wait(200)];if(cmd==="c"||cmd==="click")a.push(W.keys("LEFT_MOUSE",100),W.wait(200));output(s.name,a)}
+    else if(["","z","save","c","click"].indexOf(cmd)>=0){
+      var saved=s.points[0],named=s.name.trim().replace(/[_\s-]/g,"").replace(/^(?:point|p)/i,"")
+      if(/^(?:[1-9]|1[0-6])$/.test(named))change("points",Number(named)-1,saved.slice())
+      else if(/^[ASDF]$/i.test(s.name.trim()))change("vars",s.name.trim().toUpperCase(),saved.join(","))
+      var movement=W.move(saved,1000);movement.cursorMovsId=s.name;movement.cursormovsmap=s.points.map(function(p){return [0,1000,p[0],p[1]]});var a=[movement,W.wait(200)];if(cmd==="c"||cmd==="click")a.push(W.keys("LEFT_MOUSE",100),W.wait(200));output(s.name,a)
+    }
     else if(cmd==="v")close=true
     else throw Error("Use Z, X, C or V")
   } else if(/^click_/.test(s.kind)) {
@@ -209,7 +214,7 @@ function submit(original, text, env, cursor, W) {
   return {state:s,effects:effects,close:close,swap:swap}
 }
 function help() {
-  return "Registry Hub\nZ script · P play · L clear local workflow · Q display · R registry file · E/I export/import paths\nA/S/D/F variables · 1–16 points · N zones · X/C/G shells · shell P/T additional shell settings\n\nWorkflow\n{point 1} {paste Z} {buf Z,X} {enter Z} {click on} {click off}\n{type text} {wait 200} {CTRL+S} {left} {right} {middle} {wheelup 3} {wheeldown 3}\n{set A value} {set paste Z text} {set point 1 x,y} {set zone Z x1,y1,x2,y2}\n{zone Z,X} {zonebuf Z,X,V} {rgdclip reference} {rgdappend reference}\n{terminal} {bash} {pwsh} {cmd} {python} {shell X}\n{play schedule} {profile name} {if A contains text} {else} {endif}\n\n$A/$S/$D/$F variables · $Z/$X/$C/$V buffers · $1…$16 points · $REGISTRY · $REGEDITED\n\nShift+Enter adds a line. Enter saves the current field. Escape closes.\nZone methods: Z screenshot, X text, C single-line text, V select and copy. Desktop shortcuts are read from your existing compositor bindings.\nCircle: radius → R/D → angle; i is right, j is up; 316@-2i+2j scales the vector. V starts/ends a zone; B stores it in a named zone."
+  return "Registry Hub\nZ script · P play · L clear local workflow · Q display · R registry file · E/I export/import paths\nA/S/D/F variables · 1–16 points · N zones · X/C/G shells · shell P/T additional shell settings\n\nWorkflow\n{point 1} {paste Z} {buf Z,X} {enter Z} {click on} {click off}\n{type text} {wait 200} {CTRL+S} {left} {right} {middle} {wheelup 3} {wheeldown 3}\n{set A value} {set paste Z text} {set point 1 x,y} {set zone Z x1,y1,x2,y2}\n{zone Z,X} {zonebuf Z,X,V} {rgdclip reference} {rgdappend reference}\n{terminal} {bash} {pwsh} {cmd} {python} {shell X}\n{play schedule} {profile name} {if A contains text} {else} {endif}\n\n$A/$S/$D/$F variables · $Z/$X/$C/$V buffers · $1…$16 points · $REGISTRY · $REGEDITED\n\nEach explicit wait starts the next native task. Play builds that task from current values after the preceding task finishes; its first action is the wait. Stop All cancels remaining dispatches.\nSave Cursor names 1–16 (or point 3) update that point; A/S/D/F store x,y in that variable, alongside the existing action export.\n\nShift+Enter adds a line. Enter saves the current field. Escape closes.\nZone methods: Z screenshot, X text, C single-line text, V select and copy. Desktop shortcuts are read from your existing compositor bindings.\nCircle: radius → R/D → angle; i is right, j is up; 316@-2i+2j scales the vector. V starts/ends a zone; B stores it in a named zone."
 }
 function categories() {
   return [

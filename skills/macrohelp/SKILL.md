@@ -63,6 +63,11 @@ finished. Inspect `macrohelp_state`: match `run`/`last_run.id`, check busy state
 and `last_run.error`, and read results before reporting completion. Use one
 executable flow per run. Preserve its ID instead of opening competing menus.
 
+Play splits at explicit waits: each next native task starts with that wait and is
+built from current values after the previous task finishes. Inspect `sequence`
+progress; an individual task finishing is not completion of the whole run.
+Already-dispatched task coordinates do not change during its wait.
+
 ## Correct errors without replaying work
 
 - Malformed JSON or invalid fields: read the error's `next` hint, schema and native
