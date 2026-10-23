@@ -21,6 +21,7 @@ use std::{
 pub struct Settings {
     pub address: SocketAddr,
     pub key: String,
+    pub cors: bool,
 }
 impl Settings {
     pub fn load(config: &Config) -> Result<Option<Self>> {
@@ -52,6 +53,7 @@ impl Settings {
         Ok(Some(Self {
             address: ([127, 0, 0, 1], port).into(),
             key,
+            cors: get("MACROHELP_CORS").as_deref() == Some("true"),
         }))
     }
 }
@@ -202,13 +204,6 @@ fn request(stream: &mut TcpStream, settings: &Settings, dispatch: &Dispatch) -> 
             "Use Content-Length, not Transfer-Encoding",
         ));
     }
-    let expected = format!("Bearer {}", settings.key);
-    if !headers
-        .get("authorization")
-        .is_some_and(|v| same_key(v.as_bytes(), expected.as_bytes()))
-    {
-        return Err(ApiError::new(401, "Overlay control key required"));
-    }
     let host = headers.get("host").map(String::as_str).unwrap_or("");
     if ![
         format!("127.0.0.1:{}", settings.address.port()),
@@ -217,6 +212,17 @@ fn request(stream: &mut TcpStream, settings: &Settings, dispatch: &Dispatch) -> 
     .contains(&host.to_ascii_lowercase())
     {
         return Err(ApiError::new(403, "Loopback Host required"));
+    }
+    if method == "OPTIONS" && settings.cors {
+        let requested = headers.get("access-control-request-method").map(String::as_str).unwrap_or("");
+        let allowed = (requested == "GET" && ["/v1/health","/v1/schema","/v1/state","/v1/coords","/v1/help"].contains(&path.as_str()))
+            || (requested == "POST" && ["/v1/control","/v1/stop"].contains(&path.as_str()));
+        if !allowed { return Err(ApiError::new(404,"Unknown overlay control route")); }
+        return Ok(json!({"cors":true}));
+    }
+    let expected = format!("Bearer {}", settings.key);
+    if !headers.get("authorization").is_some_and(|v| same_key(v.as_bytes(), expected.as_bytes())) {
+        return Err(ApiError::new(401, "Overlay control key required"));
     }
     if !matches!(
         (method.as_str(), path.as_str()),
@@ -290,9 +296,10 @@ pub fn handle(mut stream: TcpStream, settings: &Settings, dispatch: &Dispatch) {
     let (status, body) = envelope(request(&mut stream, settings, dispatch));
     let body = body.to_string();
     let reason = if status == 200 { "OK" } else { "Error" };
+    let cors = if settings.cors { "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: Authorization, Content-Type\r\nAccess-Control-Allow-Private-Network: true\r\n" } else { "" };
     let _ = write!(
         stream,
-        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n\r\n{body}",
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n{cors}\r\n{body}",
         body.len()
     );
 }

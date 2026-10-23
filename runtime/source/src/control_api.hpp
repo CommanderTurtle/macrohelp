@@ -8,6 +8,7 @@ struct Settings {
     bool enabled = true;
     int port = 7778;
     std::string key;
+    bool cors = false;
     static Settings load(const std::string& envPath = ".env");
 };
 Json success(const Json& value);

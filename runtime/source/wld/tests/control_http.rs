@@ -9,6 +9,26 @@ use std::{
     sync::{Arc, Mutex},
 };
 const KEY: &str = "control-contract-test-key-0123456789";
+#[test]
+fn cors_preflight_never_dispatches_or_bypasses_bearer_auth() {
+    for cors in [false,true] {
+        let count=Arc::new(Mutex::new(0));let calls=count.clone();
+        let server=Server::bind(Settings{address:([127,0,0,1],0).into(),key:KEY.into(),cors},Arc::new(move|_,_,_|{*calls.lock().unwrap()+=1;Ok(json!({"ready":true}))})).unwrap();
+        let raw=|method:&str,auth:&str|{
+            let mut stream=TcpStream::connect(server.address).unwrap();
+            write!(stream,"{method} /v1/health HTTP/1.1\r\nHost: {}\r\nOrigin: https://any-site.example\r\nAccess-Control-Request-Method: GET\r\n{auth}\r\n",server.address).unwrap();
+            let mut text=String::new();stream.read_to_string(&mut text).unwrap();text
+        };
+        let preflight=raw("OPTIONS","");
+        assert!(preflight.starts_with(if cors{"HTTP/1.1 200"}else{"HTTP/1.1 401"}));
+        assert_eq!(*count.lock().unwrap(),0);
+        assert_eq!(preflight.contains("Access-Control-Allow-Origin: *"),cors);
+        assert!(!preflight.contains("Access-Control-Allow-Credentials"));
+        assert!(raw("GET","").starts_with("HTTP/1.1 401"));
+        assert!(raw("GET",&format!("Authorization: Bearer {KEY}\r\n")).starts_with("HTTP/1.1 200"));
+        assert_eq!(*count.lock().unwrap(),1);
+    }
+}
 fn call(server: &Server, method: &str, path: &str, body: &str, headers: &str) -> (u16, Value) {
     let mut stream = TcpStream::connect(server.address).unwrap();
     stream
@@ -44,6 +64,7 @@ fn authenticated_http_normalizes_inputs_before_the_ui_boundary() {
         Settings {
             address: ([127, 0, 0, 1], 0).into(),
             key: KEY.into(),
+            cors: false,
         },
         dispatch,
     )
@@ -101,6 +122,7 @@ fn busy_is_explicit_and_stop_uses_the_same_authenticated_route() {
         Settings {
             address: ([127, 0, 0, 1], 0).into(),
             key: KEY.into(),
+            cors: false,
         },
         dispatch,
     )
@@ -121,6 +143,7 @@ fn malformed_framing_does_not_reach_the_overlay() {
         Settings {
             address: ([127, 0, 0, 1], 0).into(),
             key: KEY.into(),
+            cors: false,
         },
         dispatch,
     )

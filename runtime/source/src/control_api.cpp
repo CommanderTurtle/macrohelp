@@ -90,6 +90,7 @@ Settings Settings::load(const std::string& envPath) {
     }
     auto get = [&](const char* name) { const char* v = std::getenv(name); return v ? std::string(v) : env[name]; };
     Settings settings; settings.enabled = get("MACROHELP_CONTROL_ENABLED") != "false";
+    settings.cors = get("MACROHELP_CORS") == "true";
     auto port = get("MACROHELP_CONTROL_PORT");
     if (!port.empty()) {
         require(port.find_first_not_of("0123456789") == std::string::npos && port.size() <= 5, "Invalid control port", 500);
@@ -109,15 +110,27 @@ struct Server::Impl {
         server.set_payload_max_length(Limit).set_read_timeout(5).set_write_timeout(5).set_keep_alive_max_count(1);
         server.set_default_headers({{"Cache-Control","no-store"},{"X-Content-Type-Options","nosniff"}});
         server.set_pre_routing_handler([settings,this](const httplib::Request& req, httplib::Response& res) {
+            if(settings.cors){
+                res.set_header("Access-Control-Allow-Origin","*");
+                res.set_header("Access-Control-Allow-Methods","GET, POST, OPTIONS");
+                res.set_header("Access-Control-Allow-Headers","Authorization, Content-Type");
+                res.set_header("Access-Control-Allow-Private-Network","true");
+            }
+            bool preflight=settings.cors&&req.method=="OPTIONS";
             int code = 0; std::string message;
             size_t headerBytes=req.method.size()+req.target.size()+16;
             for(const auto& header:req.headers)headerBytes+=header.first.size()+header.second.size()+4;
             if(headerBytes>16384){code=431;message="Headers exceed 16 KiB";}
-            if (req.get_header_value_count("Authorization") != 1 || !equalKey(req.get_header_value("Authorization"), "Bearer " + settings.key)) { code = 401; message = "Bearer authentication required"; }
+            if (!preflight&&(req.get_header_value_count("Authorization") != 1 || !equalKey(req.get_header_value("Authorization"), "Bearer " + settings.key))) { code = 401; message = "Bearer authentication required"; }
             auto host = req.get_header_value("Host");
             std::transform(host.begin(),host.end(),host.begin(),[](unsigned char c){return static_cast<char>(std::tolower(c));});
             if (!code && (req.get_header_value_count("Host") != 1 || (host != "127.0.0.1:" + std::to_string(boundPort) && host != "localhost:" + std::to_string(boundPort)))) { code = 400; message = "Invalid loopback Host"; }
             if (!code && (req.has_header("Transfer-Encoding") || req.get_header_value_count("Content-Length") > 1)) { code = 400; message = "Ambiguous request framing"; }
+            if(!code&&preflight){
+                const auto method=req.get_header_value("Access-Control-Request-Method");
+                bool allowed=(method=="GET"&&(req.path=="/v1/health"||req.path=="/v1/state"||req.path=="/v1/schema"||req.path=="/v1/coords"||req.path=="/v1/help"))||(method=="POST"&&(req.path=="/v1/control"||req.path=="/v1/stop"));
+                res.status=allowed?204:404;return httplib::Server::HandlerResponse::Handled;
+            }
             auto type=req.get_header_value("Content-Type");type=trim(type.substr(0,type.find(';')));
             std::transform(type.begin(),type.end(),type.begin(),[](unsigned char c){return static_cast<char>(std::tolower(c));});
             if (!code && req.method == "POST" && type != "application/json") { code = 415; message = "Use application/json"; }

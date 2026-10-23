@@ -83,6 +83,9 @@ struct Harness {
 }
 impl Harness {
     fn new(allow_system: bool) -> Self {
+        Self::with_cors(allow_system,false)
+    }
+    fn with_cors(allow_system: bool, cors: bool) -> Self {
         let dir = std::env::temp_dir().join(format!(
             "macrohelp-http-test-{}-{}",
             std::process::id(),
@@ -101,6 +104,7 @@ impl Harness {
             key: KEY.into(),
             default_delay: 0,
             allow_system,
+            cors,
             env_file: dir.join(".env"),
             state_dir: dir.join("state"),
         };
@@ -172,6 +176,22 @@ fn qt_route_inventory_matches_exactly() {
         .map(|(m, p)| (m.to_string(), p.to_string()))
         .collect();
     assert_eq!(actual, expected);
+}
+
+#[test]
+fn browser_cors_is_opt_in_and_does_not_remove_task_auth() {
+    for cors in [false,true] {
+        let h=Harness::with_cors(false,cors);
+        let origin="Origin: https://any-site.example\r\nAccess-Control-Request-Method: GET\r\n";
+        assert_eq!(h.request("OPTIONS","/tasks",json!({}),None,origin).0,if cors{200}else{401});
+        assert_eq!(h.request("GET","/tasks",json!({}),None,origin).0,401);
+        assert_eq!(h.request("GET","/tasks",json!({}),Some(KEY),origin).0,if cors{200}else{403});
+        let mut stream=TcpStream::connect(h.addr).unwrap();
+        write!(stream,"OPTIONS /tasks HTTP/1.1\r\nHost: {}\r\nOrigin: https://any-site.example\r\nAccess-Control-Request-Method: GET\r\n\r\n",h.addr).unwrap();
+        let mut raw=String::new();stream.read_to_string(&mut raw).unwrap();
+        assert_eq!(raw.contains("Access-Control-Allow-Origin: *"),cors);
+        assert!(!raw.contains("Access-Control-Allow-Credentials"));
+    }
 }
 
 #[test]

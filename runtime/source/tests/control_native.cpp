@@ -3,6 +3,7 @@
 #include "../src/main.cpp"
 #include <iostream>
 #include <filesystem>
+#include "../../../http-daemon/include/httplib.h"
 namespace control::detail {std::string privateKeyFile(const std::filesystem::path&);}
 
 static void check(bool value,const char* message){if(!value)throw std::runtime_error(message);}
@@ -181,6 +182,19 @@ int main(int argc,char** argv) {
         check(http(settings,"POST","/v1/stop",Json::object())["ok"]==true,"Stop route failed");
         auto wrong=settings;wrong.key="wrong";
         check(http(wrong,"GET","/v1/state")["error"]["status"]==401,"Missing auth gate");
+        for(bool cors:{false,true}) {
+            Settings browser=settings;browser.port=0;browser.cors=cors;int dispatched=0;
+            Server fixture(browser,[&](const std::string&,const Json&){++dispatched;return success({{"ready",true}});});
+            httplib::Client client("127.0.0.1",fixture.port());
+            auto options=client.Options("/v1/state",{{"Origin","https://any-site.example"},{"Access-Control-Request-Method","GET"}});
+            check(options&&options->status==(cors?204:401),"CORS preflight status");
+            check((options->get_header_value("Access-Control-Allow-Origin")=="*")==cors,"CORS opt-in ignored");
+            check(!options->has_header("Access-Control-Allow-Credentials")&&dispatched==0,"Preflight executed or enabled cookies");
+            auto unauth=client.Get("/v1/state",{{"Origin","https://any-site.example"}});
+            check(unauth&&unauth->status==401,"CORS bypassed bearer token");
+            auto authenticated=client.Get("/v1/state",{{"Origin","https://any-site.example"},{"Authorization","Bearer "+browser.key}});
+            check(authenticated&&authenticated->status==200&&dispatched==1,"Authenticated browser request failed");
+        }
         auto tokenDir=std::filesystem::temp_directory_path()/("macrohelp-key-test-"+std::to_string(GetCurrentProcessId())+"-"+std::to_string(GetTickCount64()));
         auto tokenPath=tokenDir/"control-key";
         auto token=detail::privateKeyFile(tokenPath);

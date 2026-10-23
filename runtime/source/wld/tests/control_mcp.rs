@@ -44,6 +44,7 @@ fn exercise(executable: &std::ffi::OsStr, native: bool) {
         Settings {
             address: ([127, 0, 0, 1], 0).into(),
             key: key.into(),
+            cors: false,
         },
         dispatch,
     )

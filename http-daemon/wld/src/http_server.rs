@@ -231,16 +231,22 @@ impl App {
         }
         let result = (|| -> Result<Value> {
             let (method, target, headers, mut bytes) = read_headers(&mut stream)?;
+            if method == "OPTIONS" && self.runner.config.cors {
+                let (path,_) = split_target(&target)?;
+                let requested = headers.get("access-control-request-method").map(String::as_str).unwrap_or("");
+                if !ROUTES.iter().any(|(m,p)| *m == requested && *p == path) { return Err(ApiError::new(404,"Not Found")); }
+                return Ok(ok("CORS preflight",json!({})));
+            }
             let key = headers
                 .get("x-tasket-key")
                 .ok_or_else(|| ApiError::new(401, "Missing X-Tasket-Key header"))?;
             if !same_key(key.as_bytes(), self.runner.config.key.as_bytes()) {
                 return Err(ApiError::new(403, "Invalid API key"));
             }
-            if headers
+            if !self.runner.config.cors && (headers
                 .get("sec-fetch-site")
                 .is_some_and(|v| v == "cross-site")
-                || headers.contains_key("origin")
+                || headers.contains_key("origin"))
             {
                 return Err(ApiError::new(
                     403,
@@ -292,10 +298,11 @@ impl App {
             Err(e) => (e.status, failure(&e)),
         };
         let body = body.to_string();
+        let cors = if self.runner.config.cors { "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: X-Tasket-Key, Content-Type\r\nAccess-Control-Allow-Private-Network: true\r\n" } else { "" };
         let _ = stream.set_write_timeout(Some(Duration::from_secs(3)));
         let _ = write!(
             stream,
-            "HTTP/1.1 {status} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n\r\n{body}",
+            "HTTP/1.1 {status} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n{cors}\r\n{body}",
             if status == 200 { "OK" } else { "Error" },
             body.len()
         );

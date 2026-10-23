@@ -12,6 +12,7 @@ pub struct Config {
     pub key: String,
     pub default_delay: u64,
     pub allow_system: bool,
+    pub cors: bool,
     pub env_file: PathBuf,
     pub state_dir: PathBuf,
 }
@@ -126,6 +127,7 @@ impl Config {
             key,
             default_delay,
             allow_system: get("MACROHELP_ALLOW_SYSTEM", "false") == "true",
+            cors: get("MACROHELP_CORS", "false") == "true",
             env_file: path.to_path_buf(),
             state_dir,
         })

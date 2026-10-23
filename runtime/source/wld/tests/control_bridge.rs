@@ -69,6 +69,7 @@ fn session_relays_authenticated_http_and_releases_pending_calls_at_exit() {
     let settings = Settings {
         address,
         key: key.into(),
+        cors: false,
     };
     let client = settings.clone();
     let http = std::thread::spawn(move || {

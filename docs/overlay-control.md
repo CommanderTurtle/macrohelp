@@ -17,7 +17,12 @@ A blank key generates a private `control-key`: Windows uses
 `${XDG_DATA_HOME:-$HOME/.local/share}/macrohelp/control-key` (or
 `MACROHELP_STATE_DIR`). Explicit keys need 24–256 printable, non-space ASCII
 characters. All routes require `Authorization: Bearer KEY`, including health.
-The listener binds only `127.0.0.1`; it does not enable cross-origin browser access.
+The listener binds only `127.0.0.1`. Set `MACROHELP_CORS=true` to opt into browser
+access from any origin with the same bearer token. It enables preflight and
+private-network headers, not cookies or unauthenticated control requests. The
+separate execution daemon uses the same switch with `X-Tasket-Key`; Windows also
+requires `--key` and a loopback `--bind`. Browser local-network permission remains
+separate. CORS is off by default; no origin is hardcoded.
 
 | Method | Route | Result |
 | --- | --- | --- |

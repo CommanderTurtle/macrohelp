@@ -45,6 +45,14 @@ bool HttpServer::start(const QString &host, int port, const QString &tasksDir,
     m_port = port;
     m_tasksDir = tasksDir;
     m_apiKey = apiKey;
+    if(qEnvironmentVariable("MACROHELP_CORS") == "true" && m_apiKey.isEmpty()) {
+        qCritical() << "[HTTP] Browser CORS requires an API key (--key).";
+        return false;
+    }
+    if(qEnvironmentVariable("MACROHELP_CORS") == "true" && host != "127.0.0.1" && host != "localhost" && host != "::1") {
+        qCritical() << "[HTTP] Browser CORS requires a loopback bind (--bind 127.0.0.1).";
+        return false;
+    }
 
     if(!QDir(m_tasksDir).exists())
         QDir().mkpath(m_tasksDir);
@@ -142,6 +150,13 @@ void HttpServer::sendResponse(httplib::Response &res, const ApiResponse &api) co
 void HttpServer::setupRoutes()
 {
     if(!m_server) return;
+    if(qEnvironmentVariable("MACROHELP_CORS") == "true") {
+        m_server->set_default_headers({{"Access-Control-Allow-Origin","*"},
+            {"Access-Control-Allow-Methods","GET, POST, OPTIONS"},
+            {"Access-Control-Allow-Headers","X-Tasket-Key, Content-Type"},
+            {"Access-Control-Allow-Private-Network","true"}});
+        m_server->Options(R"(/.*)", [](const auto&, auto& res){res.status=204;});
+    }
 
     m_server->Get("/",       [this](auto &req, auto &res){ handleRoot(req, res); });
     m_server->Get("/health", [this](auto &req, auto &res){ handleHealth(req, res); });
