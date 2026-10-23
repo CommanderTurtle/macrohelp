@@ -161,10 +161,10 @@ test("dialog wiring preserves baseline rendering and leaves tray controls intact
 // Run the actual QML JS handlers as well as the pure model: this catches wiring
 // mistakes that syntax parsing and model-only tests cannot detect.
 function controller() {
-  const source=read("../qml/Dialogs.qml"),exports=[],queued=[]
+  const source=read("../qml/Dialogs.qml"),exports=[],queued=[],closed=[]
   const service={ready:true,cursor:{...cursor},monitors:[{name:"test",x:0,y:0,width:3840,height:2160,scale:1}],environment:env(),
     appendActions(name,actions,callback){exports.push({name,actions,callback})},later(actions){queued.push(actions)},
-    change(section,key,value){if(section)this.environment[section][key]=value;else this.environment[key]=value},play(){},clearWorkflow(){},stop(){},captureZone(){}}
+    change(section,key,value){if(section)this.environment[section][key]=value;else this.environment[key]=value},dialogClosed(restore,keep){closed.push({restore,keep})},play(){},clearWorkflow(){},stop(){},captureZone(){}}
   const s={service,dialogOpen:false,dialogState:{kind:"",stage:"",text:"",steps:[],capturing:false},revision:0,working:false,
     anchorX:0,anchorY:0,clipboardCallback:null,clipboardWait:{stop(){},restart(){}},focusInput(){},manualKeys:["","", ""],
     DialogState:D,Workflow:{...W,containsPoint:(p,g,w,h)=>p.x>=g.x&&p.x<g.x+w&&p.y>=g.y&&p.y<g.y+h},
@@ -177,7 +177,7 @@ function controller() {
     const end=tail.slice(1).search(/\n    (?:function |TextEdit |Timer )/)
     runInNewContext(tail.slice(0,end<0?undefined:end+1)+"\n",s)
   }
-  return {s,exports,queued}
+  return {s,exports,queued,closed}
 }
 
 test("QML handlers open, edit and submit through the model, retaining the captured origin",()=>{
@@ -207,4 +207,17 @@ test("QML buffer execution restores the original pointer and preserves edited te
   expect(s.dialogOpen).toBe(false);expect(queued[0][0].cursormovsmap[0].slice(2)).toEqual([120,240])
   expect(queued[0].filter(a=>a.type==="paste")[0].content).toBe("hello\nworld")
   expect(queued[0].at(-1).keysmap[0][1]).toEqual(["ENTER"])
+})
+test("Escape and the existing greater-than-60px dismissal request a return, not execution closes",()=>{
+  const {s,closed}=controller();s.openDialog("paste_buffers");s.cancel()
+  expect(closed.at(-1).restore).toBe(true)
+  s.openDialog("paste_buffers");s.graceEnd=0
+  s.service.cursor={x:s.anchorX+60,y:s.anchorY};s.dismissIfMoved();expect(s.dialogOpen).toBe(true)
+  s.service.cursor.x++;s.dismissIfMoved();expect(s.dialogOpen).toBe(false);expect(closed.at(-1).restore).toBe(true)
+  s.openDialog("paste_buffers");s.edit("z");s.edit("hello");s.pasteBuffer(false)
+  expect(closed.at(-1).restore).toBe(false)
+})
+test("menu swaps retain the pre-blink return lease without launching another blink",()=>{
+  const {s,closed}=controller();s.openDialog("registry_hub");s.submit("q")
+  expect(s.dialogKind).toBe("view_toggles");expect(closed.at(-1).keep).toBe(true)
 })

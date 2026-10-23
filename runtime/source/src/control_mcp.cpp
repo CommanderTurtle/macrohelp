@@ -4,7 +4,7 @@
 namespace control {
 int mcp(const Settings& settings) {
     const std::vector<std::string> versions = {"2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"};
-    const std::map<std::string,std::string> routes = {{"macrohelp_control","/v1/control"},{"macrohelp_state","/v1/state"},{"macrohelp_stop","/v1/stop"},{"macrohelp_schema","/v1/schema"},{"macrohelp_health","/v1/health"}};
+    const std::map<std::string,std::string> routes = {{"macrohelp_control","/v1/control"},{"macrohelp_state","/v1/state"},{"macrohelp_stop","/v1/stop"},{"macrohelp_schema","/v1/schema"},{"macrohelp_health","/v1/health"},{"macrohelp_coords","/v1/coords"}};
     std::string line;bool initialized=false;
     // Bounded line reads: never allocate an unlimited JSON-RPC frame.
     while (true) {

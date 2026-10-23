@@ -37,8 +37,8 @@ Item {
         anchorY = service.cursor.y
         graceEnd = Date.now() + 700
     }
-    function openDialog(kind, zone) {
-        closeDialog()
+    function openDialog(kind, zone, keepBlink) {
+        closeDialog(false, !!keepBlink)
         if (!service || !service.ready) return
         dialogState = DialogState.open(kind, service.cursor, zone)
         if (zone) { var next=DialogState.clone(dialogState);next.stage="ZoneCommand";dialogState=next }
@@ -50,13 +50,14 @@ Item {
         reanchor()
         Qt.callLater(function(){dlgRoot.focusInput()})
     }
-    function closeDialog() {
+    function closeDialog(restorePointer, keepBlink) {
         var cancelledRead=clipboardCallback
         revision++
         dialogOpen=false
         working=false
         clipboardCallback=null
         clipboardWait.stop()
+        if(service)service.dialogClosed(!!restorePointer,!!keepBlink)
         if(dialogState.capturing){var next=DialogState.clone(dialogState);next.capturing=false;dialogState=next}
         if(cancelledRead)cancelledRead(null,"Clipboard read cancelled")
     }
@@ -76,8 +77,8 @@ Item {
             var result=DialogState.submit(dialogState,value===undefined?dialogState.text:value,service.environment,service.cursor,Workflow)
             dialogState=result.state
             if(dialogState.capturing&&fromButton){var armed=DialogState.clone(dialogState);armed.captureReady=true;dialogState=armed}
-            if(result.swap){openDialog(result.swap);return}
-            if(result.close)closeDialog()
+            if(result.swap){openDialog(result.swap,undefined,true);return}
+            if(result.close)closeDialog(!result.effects.some(function(e){return ["queue","play","zone","stop"].indexOf(e.kind)>=0}))
             result.effects.forEach(function(effect){dlgRoot.perform(effect)})
             if(dialogOpen)Qt.callLater(function(){dlgRoot.focusInput()})
         } catch(e) { fail(e.message) }
@@ -88,12 +89,12 @@ Item {
         else if(effect.kind==="export") {
             working=true
             var token=revision
-            service.appendActions(effect.name,effect.actions,function(v,e){if(token!==dlgRoot.revision)return;if(e)dlgRoot.fail(e);else dlgRoot.closeDialog()})
+            service.appendActions(effect.name,effect.actions,function(v,e){if(token!==dlgRoot.revision)return;if(e)dlgRoot.fail(e);else dlgRoot.closeDialog(true)})
         } else if(effect.kind==="play")service.play(service.environment.script,effect.origin)
         else if(effect.kind==="clear")service.clearWorkflow()
         else if(effect.kind==="stop")service.stop()
         else if(effect.kind==="zone")service.captureZone(effect.rect,effect.method,effect.target)
-        else if(effect.kind==="zone-router")openDialog("paste_buffers",effect.rect)
+        else if(effect.kind==="zone-router")openDialog("paste_buffers",effect.rect,true)
     }
     function receiveKeys(sample) {
         if(!capturing)return
@@ -112,7 +113,11 @@ Item {
     }
     function cancel() {
         if(view.manual){var next=DialogState.clone(dialogState);next.steps=next.steps.slice(0,next.manualStart);DialogState.field(next,"Command");dialogState=next;focusInput()}
-        else closeDialog()
+        else closeDialog(true)
+    }
+    function dismissIfMoved() {
+        if(!dialogOpen || !service || working || Date.now()<graceEnd || !DialogState.mouseDismiss(dialogState))return
+        if(Math.abs(service.cursor.x-anchorX)>60 || Math.abs(service.cursor.y-anchorY)>60)closeDialog(true)
     }
     function nameAction(command) {
         if(working)return
@@ -133,7 +138,7 @@ Item {
         if(action==="play"){var origin=dialogState.origin.slice();closeDialog();service.play(service.environment.script,origin)}
         else if(action==="clear"){service.clearWorkflow();var next=DialogState.clone(dialogState);next.text=service.environment.script;dialogState=next}
         else if(action==="export")service.exportState()
-        else if(action==="import"){closeDialog();service.importState()}
+        else if(action==="import"){closeDialog(true);service.importState()}
         else if(action==="schedule"){
             var next=DialogState.clone(dialogState);next.stage="ScheduleName";next.text="";dialogState=next
         }
@@ -142,7 +147,7 @@ Item {
         if(dialogState.stage==="Manual"){addManual(true);return}
         if(dialogState.stage==="ScheduleName") {
             if(!dialogState.text.trim()){fail("Enter a schedule name");return}
-            var name=dialogState.text.trim();closeDialog();service.saveSchedule(name);return
+            var name=dialogState.text.trim();closeDialog(true);service.saveSchedule(name);return
         }
         submit()
     }
@@ -193,10 +198,7 @@ Item {
                 interval: 50
                 repeat: true
                 running: window.visible && dlgRoot.dialogOpen
-                onTriggered: {
-                    if(!dlgRoot.service || dlgRoot.working || Date.now()<dlgRoot.graceEnd || !DialogState.mouseDismiss(dlgRoot.dialogState))return
-                    if(Math.abs(dlgRoot.service.cursor.x-dlgRoot.anchorX)>60 || Math.abs(dlgRoot.service.cursor.y-dlgRoot.anchorY)>60)dlgRoot.closeDialog()
-                }
+                onTriggered:dlgRoot.dismissIfMoved()
             }
             Connections {
                 target: dlgRoot

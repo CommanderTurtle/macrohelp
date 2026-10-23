@@ -36,9 +36,10 @@ int main(int argc,char** argv) {
         auto task=Json::parse(ControlPrepareTask(BuildTasketDocumentJson("test",{BuildWaitActionJson(.1)},0)));
         check(task["actions"][0]["cursormovsmap"][0]==Json::array({0,0,100,200}),"Origin not restored before backend input");
         Settings settings;settings.port=0;settings.key="native-control-test-key-0123456789";
-        Server server(settings,[](const std::string& path,const Json& request){if(path=="/v1/control"&&request.value("run","")=="busy")return failure(409,"Busy");return success({{"path",path},{"body",request}});});
+        Server server(settings,[](const std::string& path,const Json& request){if(path=="/v1/control"&&request.value("run","")=="busy")return failure(409,"Busy");if(path=="/v1/coords")return success({{"x",-123},{"y",456}});return success({{"path",path},{"body",request}});});
         settings.port=server.port();
         check(http(settings,"GET","/v1/schema")["result"]==schema(),"HTTP schema mismatch");
+        check(http(settings,"GET","/v1/coords")["result"]==Json({{"x",-123},{"y",456}}),"Coordinate route mismatch");
         auto reply=http(settings,"POST","/v1/control","2,Z,\"hello, world\",P,no-replace");
         check(reply["result"]["body"]["no_replace"]==true,"CSV HTTP lost no-replace");
         check(reply["result"]["body"]["inputs"][1]=="hello, world","CSV HTTP lost comma text");

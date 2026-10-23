@@ -9,11 +9,11 @@ function service(overrides={}) {
   const s={generation:0,busy:false,localBusy:false,pending:null,steps:[],stepIndex:0,controlRun:null,
     hidden:false,currentJob:null,recordingPath:false,error:"",message:"",environment:{},
     clipboardCallback:null,clipboardSerial:0,activePanel:{opened:true},page:"Workflow",settings:{},
-    startDelay:timer(),poll:timer(),clipboardTimeout:timer(),persist:timer(),
+    startDelay:timer(),poll:timer(),clipboardTimeout:timer(),persist:timer(),dialogWarp:timer(),dialogBlink:null,
     save(){},hidePanel(){},showPanel(){},remember(){},change(){},refresh(){},
     emergency:{running:false},runtime:{running:true},dialogs:{closeDialog(){}},...overrides}
   s.root=s
-  for(const name of ["play","cancelWork","stop","queue","runSaved","saveSchedule","refreshContext","readClipboard","finishClipboard","reconnect","panel"]) {
+  for(const name of ["play","cancelWork","stop","queue","runSaved","saveSchedule","refreshContext","readClipboard","finishClipboard","reconnect","panel","blinkDialog","dialogClosed","restoreDialogPointer","finishDialogBlink"]) {
     const at=source.indexOf("  function "+name+"(")
     if(at<0)throw Error("Missing service function "+name)
     const tail=source.slice(at),end=tail.slice(1).search(/\n  (?:function |Timer |Process |Hud |ShellIpc )/)
@@ -109,4 +109,39 @@ test("stopped clients can reconnect without starting a server",()=>{
   const s=service();s.runtime.running=false;s.reconnect()
   expect(s.runtime.running).toBe(true)
   expect(source).toContain("root.cancelWork();persist.stop()")
+})
+function blinkService(){
+  const calls=[],s=service({ready:true,dialogs:{dialogOpen:true,dialogState:{origin:[-120,240]},revision:3,working:false,reanchor(){this.anchored=true}}})
+  s.dialogs.closeDialog=()=>{s.dialogs.dialogOpen=false;s.dialogClosed(false,false)}
+  s.http=(method,path,body,callback)=>calls.push({method,path,body,callback})
+  return {s,calls}
+}
+test("dismissal returns to frozen entry coords via one memory-only native blink task",()=>{
+  const {s,calls}=blinkService();s.blinkDialog("Blink to 1920x2124 (center bottom)")
+  const lease=s.dialogBlink;s.dialogs.dialogState.origin=[1920,2124]
+  calls[0].callback({},null);s.finishDialogBlink(lease)
+  expect(s.dialogs.anchored).toBe(true);expect(s.dialogs.working).toBe(false)
+  s.generation++ // Editing/resetting a workflow does not dismiss this popup.
+  s.dialogClosed(true,false);s.dialogClosed(true,false)
+  expect(calls).toHaveLength(2);expect(calls[1].path).toBe("/temp-task")
+  expect(calls[1].body).toMatchObject({run:true,cleanup:true,delay:0,task:{auto_start:false,allow_system:false,delay_seconds:0,loop_times:1,actions:[{type:"move",x:-120,y:240,duration_ms:20}]}})
+  expect(s.dialogBlink).toBeNull();expect(s.environment).toEqual({})
+})
+test("closing before the entry blink acknowledges waits, while a replaced lease cannot jump back",()=>{
+  const {s,calls}=blinkService();s.blinkDialog("center")
+  const first=s.dialogBlink;s.dialogClosed(true,false)
+  expect(calls).toHaveLength(1)
+  calls[0].callback({},null);s.finishDialogBlink(first)
+  expect(calls).toHaveLength(2)
+  s.blinkDialog("next");const next=s.dialogBlink
+  s.blinkDialog("newest");s.finishDialogBlink(next)
+  expect(calls.filter(c=>c.path==="/temp-task")).toHaveLength(1)
+})
+test("programmatic action closes and Stop never enqueue a stray return; circles have no blink lease",()=>{
+  const {s,calls}=blinkService();s.dialogClosed(true,false);expect(calls).toHaveLength(0)
+  s.blinkDialog("center");const lease=s.dialogBlink
+  s.dialogClosed(false,false);calls[0].callback({},null);s.finishDialogBlink(lease)
+  expect(calls).toHaveLength(1)
+  s.blinkDialog("center");const stopped=s.dialogBlink;s.stop()
+  s.finishDialogBlink(stopped);expect(calls).toHaveLength(2)
 })

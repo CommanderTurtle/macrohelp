@@ -108,3 +108,9 @@ test("delayed tray captures are busy and menu seven is always stop",()=>{
   expect(send(s,{menu:2}).error.status).toBe(409)
   s.busy=true;expect(send(s,{menu:7}).error).toBeUndefined();expect(s.busy).toBe(false)
 })
+test("coordinate reads use the HUD physical snapshot even while busy, without changing state",()=>{
+  const s=service({busy:true,physicalCursor:{x:123.6,y:-45.2}}),before=JSON.stringify(s.environment)
+  expect(send(s,{},"/v1/coords").result).toEqual({x:124,y:-45})
+  expect(JSON.stringify(s.environment)).toBe(before);expect(s.controlRun).toBeNull();expect(s.saves).toHaveLength(0)
+  s.ready=false;expect(send(s,{},"/v1/coords").error.status).toBe(503)
+})

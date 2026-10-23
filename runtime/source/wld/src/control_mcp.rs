@@ -62,6 +62,7 @@ pub fn tools() -> Value {
     json!([
         {"name":"macrohelp_control","description":"Operate Macrohelp's native menus or patch its config. Use no_replace for temporary overrides. A partial menu returns a run ID: pass it to continue. Poll macrohelp_state for asynchronous work; another active run returns busy. This controls the overlay, not a second macro executor.","inputSchema":control_protocol::schema()["request"],"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":false,"openWorldHint":true}},
         {"name":"macrohelp_state","description":"Read current menu, config, busy status and last control-run result. Never returns the live key-display feed.","inputSchema":empty,"annotations":{"readOnlyHint":true,"openWorldHint":false}},
+        {"name":"macrohelp_coords","description":"Read the current x/y coordinates shown by the overlay's coordinate display.","inputSchema":empty,"annotations":{"readOnlyHint":true,"openWorldHint":false}},
         {"name":"macrohelp_stop","description":"Stop all macros through the existing stop-all path and cancel the active overlay control run.","inputSchema":empty,"annotations":{"readOnlyHint":false,"destructiveHint":true,"idempotentHint":true,"openWorldHint":false}},
         {"name":"macrohelp_schema","description":"Read the running overlay's control contract and menu inventory.","inputSchema":empty,"annotations":{"readOnlyHint":true,"openWorldHint":false}},
         {"name":"macrohelp_health","description":"Check the running overlay and its execution-backend connection.","inputSchema":empty,"annotations":{"readOnlyHint":true,"openWorldHint":false}}
@@ -122,6 +123,7 @@ impl Session {
                     Some("macrohelp_stop") => Some(("POST", "/v1/stop")),
                     Some("macrohelp_schema") => Some(("GET", "/v1/schema")),
                     Some("macrohelp_health") => Some(("GET", "/v1/health")),
+                    Some("macrohelp_coords") => Some(("GET", "/v1/coords")),
                     _ => None,
                 };
                 if let Some((method, path)) = route {
@@ -234,7 +236,7 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .len(),
-            5
+            6
         );
         let result=session.dispatch(&json!({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"macrohelp_control","arguments":{"menu":2,"no_replace":true}}}),&call).unwrap();
         assert_eq!(result["result"]["structuredContent"]["run"], "one");

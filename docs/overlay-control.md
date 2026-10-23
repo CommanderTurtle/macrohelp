@@ -24,6 +24,7 @@ The listener binds only `127.0.0.1`; it does not enable cross-origin browser acc
 | GET | `/v1/health` | Overlay readiness and backend connection |
 | GET | `/v1/schema` | Request/config schema and menu inventory |
 | GET | `/v1/state` | Config, native dialog, active/last run, busy/error state |
+| GET | `/v1/coords` | Current displayed cursor coordinates: `{"x":123,"y":456}` |
 | POST | `/v1/control` | Apply supplied fields and operate a menu |
 | POST | `/v1/stop` | Existing stop-all path; available while busy |
 
@@ -95,9 +96,15 @@ must already be running with the same control key/port:
 - Windows: `runtime/source/build-vs2026/bin/Release/macrohelp-mcp.exe --env ABSOLUTE_ENV_PATH`
 - Linux: `~/.local/share/macrohelp/overlay/bin/macrohelpctl mcp --env ABSOLUTE_ENV_PATH`
 
-Tools: `macrohelp_control`, `macrohelp_state`, `macrohelp_stop`,
+Tools: `macrohelp_control`, `macrohelp_state`, `macrohelp_coords`, `macrohelp_stop`,
 `macrohelp_schema`, `macrohelp_health`. They forward to the HTTP API with the
 same arguments and return structured results. Tokens never go to MCP stdout.
+
+Read coordinates with `curl http://127.0.0.1:7778/v1/coords -H "Authorization: Bearer $key"`.
+This uses the overlay's existing displayed coordinate source; it does not move the pointer.
+On Linux, dismissing a blinked quick dialog returns the pointer to its frozen entry
+position using a memory-only `/temp-task` with `cleanup:true`. Escape and the
+existing 60px dismissal use this; running a macro retains its own pointer actions.
 
 ## Checks
 

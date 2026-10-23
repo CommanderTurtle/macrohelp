@@ -61,6 +61,7 @@ Item {
   property var clipboardCallback: null
   property int clipboardSerial: 0
   property double dialogCaptureUntil: 0
+  property var dialogBlink: null
   property string controlAddress: ""
   property var controlRun: null
   property var controlLast: null
@@ -92,6 +93,36 @@ Item {
   }
   function panel(name){if(["Workflow","Pointer","Keys","Buffers","Zones","Tasks","Presets","View","Help"].indexOf(name)<0)return;page=name;activePanel=null;showPanel()}
   function showDialog(kind){dialogs.openDialog(kind)}
+  function blinkDialog(task){
+    var lease={point:dialogs.dialogState.origin.slice(),revision:dialogs.revision,ready:false,restore:false}
+    dialogBlink=lease;dialogs.working=true
+    http("POST","/run",{task:task},function(v,e){
+      if(root.dialogBlink!==lease)return
+      if(e){root.dialogBlink=null;if(lease.revision===dialogs.revision)dialogs.working=false;return}
+      dialogWarp.lease=lease;dialogWarp.restart()
+    })
+  }
+  function dialogClosed(restore,keep){
+    var lease=dialogBlink;if(!lease)return
+    if(keep){lease.revision=dialogs.revision;return}
+    if(!restore){dialogBlink=null;dialogWarp.stop();return}
+    lease.restore=true;if(lease.ready)restoreDialogPointer(lease)
+  }
+  function restoreDialogPointer(lease){
+    if(dialogBlink!==lease)return
+    dialogBlink=null
+    if(!ready)return
+    var p=lease.point,name="Blink to "+p[0]+"x"+p[1]+" (last location)"
+    // Same native move shape as the startup center-bottom blink. cleanup=true
+    // runs it in memory through the daemon, without saving an .omscht file.
+    http("POST","/temp-task",{name:name,run:true,cleanup:true,delay:0,task:{id:name,actions:[{type:"move",x:p[0],y:p[1],duration_ms:20}],allow_system:false,auto_start:false,delay_seconds:0,loop_times:1}},function(){})
+  }
+  function finishDialogBlink(lease){
+    if(dialogBlink!==lease)return
+    lease.ready=true
+    if(lease.restore){restoreDialogPointer(lease);return}
+    if(lease.revision===dialogs.revision&&dialogs.dialogOpen){dialogs.working=false;dialogs.reanchor()}
+  }
   function clearWorkflow(){if(busy||localBusy||pending){error="Stop the current operation first";return}generation++;environment=Workflow.clearState(environment);resolvedScript="";save();message="Workflow cleared; paste buffers and zones retained"}
   function vector(text){var v=Workflow.vector(text,circleOrigin);radius=v.radius;angle=v.angle;unit="radians"}
   function exitOverlay(){cancelWork();hidePanel();if(!disablePlugin.running)disablePlugin.running=true}
@@ -227,6 +258,7 @@ Item {
     try {
       if(event.path==="/v1/health"){answer({api_version:1,service:"macrohelp-overlay",ready:ready,backend:"omarsket",connected:connected});return}
       if(event.path==="/v1/state"){answer(controlSnapshot());return}
+      if(event.path==="/v1/coords"){if(!ready){answer(null,{status:503,message:"Overlay not ready"});return}answer({x:Math.round(physicalCursor.x),y:Math.round(physicalCursor.y)});return}
       if(event.path==="/v1/stop"){stop();answer({stop_requested:true,state:controlSnapshot()});return}
       var request=event.body
       if(request.menu===7){stop();answer(controlSnapshot());return}
@@ -314,7 +346,7 @@ Item {
         // Circle begins at the real pointer, with keyboard focus and no warp.
         if(kind==="circle_placer")return
         var blink=null;for(var i=0;i<root.tasks.length;i++){if(root.tasks[i].name.indexOf("Blink to ")===0&&root.tasks[i].name.indexOf("(center bottom)")>0){blink=root.tasks[i].name;break}}
-        if(blink){var token=dialogs.revision;dialogs.working=true;root.http("POST","/run",{task:blink},function(v,e){if(token!==dialogs.revision)return;dialogWarp.token=token;dialogWarp.restart()})}
+        if(blink)root.blinkDialog(blink)
         return
       }
       var callback=root.callbacks[r.id];delete root.callbacks[r.id]
@@ -326,7 +358,7 @@ Item {
     stderr:SplitParser{onRead:function(line){root.error=line}}
     onExited:function(code){dialogs.closeDialog();root.ready=false;root.connected=false;root.refreshing=false;root.cancelWork();persist.stop();var all=root.callbacks;root.callbacks=({});for(var id in all)all[id](null,"Controller stopped");if(code!==0)root.error="Controller exited ("+code+")"}
   }
-  Timer {id:dialogWarp;interval:200;property int token:0;onTriggered:if(token===dialogs.revision){dialogs.working=false;dialogs.reanchor()}}
+  Timer {id:dialogWarp;interval:200;property var lease:null;onTriggered:root.finishDialogBlink(lease)}
   Hud {service:root}
   Dialogs {id:dialogs;service:root;width:parent.width;height:parent.height}
 }

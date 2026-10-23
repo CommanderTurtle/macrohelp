@@ -167,6 +167,8 @@ Overlay evidence: [Windows implementation](../runtime/source/src/main.cpp),
 | O84 · Overlay control actions | POST `/v1/control`, `/v1/stop`; existing native handlers/compiler | Present: same request schema; existing QML dialog transitions/compiler and separate execution daemon |
 | O85 · Temporary control config | `no_replace`, supplied-only patches, owned run, busy/stop/result state | Present: overrides retained through asynchronous completion, then restored without persistence |
 | O86 · MCP control | Native C++ `macrohelp-mcp` stdio client | Present: `macrohelpctl mcp`; both forward to the same overlay HTTP contract |
+| O87 · Cursor query | GET `/v1/coords`; `macrohelp_coords` | Present: same route/tool returns the existing displayed x/y values without modifying state |
+| O88 · Dismissed dialog pointer return | No center-bottom blink in Windows | Present: Escape/60px dismissal returns a blinked dialog's frozen entry point via the existing memory-only temp-task path |
 
 </details>
 

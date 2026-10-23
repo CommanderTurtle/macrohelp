@@ -26,7 +26,11 @@ fn exercise(executable: &std::ffi::OsStr, native: bool) {
         seen.lock()
             .unwrap()
             .push((method.to_owned(), path.to_owned(), body.clone()));
-        Ok(json!({"path":path,"no_replace":body["no_replace"]}))
+        if path == "/v1/coords" {
+            Ok(json!({"x":-123,"y":456}))
+        } else {
+            Ok(json!({"path":path,"no_replace":body["no_replace"]}))
+        }
     });
     let key = "mcp-control-integration-key-0123456789";
     let server = Server::bind(
@@ -59,6 +63,7 @@ fn exercise(executable: &std::ffi::OsStr, native: bool) {
         json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"macrohelp_control","arguments":{"menu":2,"inputs":["Z","{type a,b}","P"],"no_replace":true}}}),
         json!({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"macrohelp_state"}}),
         json!({"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"macrohelp_stop"}}),
+        json!({"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"macrohelp_coords"}}),
     ];
     let mut input = process.stdin.take().unwrap();
     for request in requests {
@@ -77,8 +82,15 @@ fn exercise(executable: &std::ffi::OsStr, native: bool) {
         .lines()
         .map(|line| serde_json::from_str::<Value>(line).unwrap())
         .collect::<Vec<_>>();
-    assert_eq!(responses.len(), 5);
-    assert_eq!(responses[1]["result"]["tools"].as_array().unwrap().len(), 5);
+    assert_eq!(responses.len(), 6);
+    assert_eq!(responses[1]["result"]["tools"].as_array().unwrap().len(), 6);
+    let coords = responses[1]["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "macrohelp_coords")
+        .unwrap();
+    assert_eq!(coords["annotations"]["readOnlyHint"], true);
     assert_eq!(
         responses[2]["result"]["structuredContent"]["no_replace"],
         true
@@ -88,6 +100,12 @@ fn exercise(executable: &std::ffi::OsStr, native: bool) {
         "/v1/stop"
     );
     let calls = calls.lock().unwrap();
-    assert_eq!(calls.len(), 3);
+    assert_eq!(
+        responses[5]["result"]["structuredContent"],
+        json!({"x":-123,"y":456})
+    );
+    assert_eq!(calls.len(), 4);
+    assert_eq!(calls[3].0, "GET");
+    assert_eq!(calls[3].1, "/v1/coords");
     assert_eq!(calls[0].2["inputs"], json!(["Z", "{type a,b}", "P"]));
 }

@@ -305,6 +305,10 @@ pub fn validate_patch(value: &Value) -> Result<()> {
 }
 pub fn schema() -> Value {
     let mut schema = json!({"version":1,"service":"macrohelp-overlay","menus":MENUS,"routes":["GET /v1/health","GET /v1/schema","GET /v1/state","POST /v1/control","POST /v1/stop"],"input_semantics":"Each string submits one dialog input, including its Enter. Action objects address buttons. CSV starts with a menu; quote fields containing commas. Partial menus return a run ID; include run to continue that menu.","no_replace":"Temporary config overrides for this run; otherwise save supplied fields. Omitted fields are retained. A continued run inherits no_replace.","request":{"type":"object","properties":{"menu":{"oneOf":[{"type":"integer","minimum":0,"maximum":9},{"type":"string","enum":MENUS}]},"inputs":{"type":"array","maxItems":INPUT_LIMIT,"items":{"oneOf":[{"type":"string"},{"type":"object","properties":{"action":{"type":"string","enum":["submit","accept","cancel","play","clear","export","import","save_schedule","paste","paste_enter","add_point","save_click","add_step","capture","manual","add_paste","replay"]},"value":{"type":"string"},"keys":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":16},"delay":{"type":"integer","minimum":10,"maximum":600000}},"required":["action"],"additionalProperties":false}]}},"config":{"type":"object"},"no_replace":{"type":"boolean","description":"Defaults false for new runs; omitted continuation values inherit the active run."},"origin":{"type":"array","items":{"type":"integer","minimum":-100000,"maximum":100000},"minItems":2,"maxItems":2},"run":{"type":"string","description":"The active run ID returned by a partial menu operation."}},"additionalProperties":false}});
+    schema["routes"]
+        .as_array_mut()
+        .unwrap()
+        .insert(3, json!("GET /v1/coords"));
     let mut sections = json!({"script":{"type":"string"},"registry":{"type":"string"}});
     for (section, keys) in [
         ("vars", vec!["A", "S", "D", "F"]),

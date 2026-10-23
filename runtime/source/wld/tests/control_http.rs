@@ -68,6 +68,7 @@ fn authenticated_http_normalizes_inputs_before_the_ui_boundary() {
     );
     assert_eq!(normalized["no_replace"], true);
     drop(records);
+    assert_eq!(call(&server, "GET", "/v1/coords", "", &auth).0, 200);
     assert_eq!(call(&server, "POST", "/v1/control", "{bad", &auth).0, 400);
     assert_eq!(
         call(&server, "POST", "/v1/control", r#"{"menu":99}"#, &auth).0,
@@ -85,7 +86,7 @@ fn authenticated_http_normalizes_inputs_before_the_ui_boundary() {
         415
     );
     assert_eq!(call(&server, "GET", "/other", "", &auth).0, 404);
-    assert_eq!(seen.lock().unwrap().len(), 2);
+    assert_eq!(seen.lock().unwrap().len(), 3);
 }
 #[test]
 fn busy_is_explicit_and_stop_uses_the_same_authenticated_route() {
