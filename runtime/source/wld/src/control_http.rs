@@ -215,7 +215,7 @@ fn request(stream: &mut TcpStream, settings: &Settings, dispatch: &Dispatch) -> 
     }
     if method == "OPTIONS" && settings.cors {
         let requested = headers.get("access-control-request-method").map(String::as_str).unwrap_or("");
-        let allowed = (requested == "GET" && ["/v1/health","/v1/schema","/v1/state","/v1/coords","/v1/help"].contains(&path.as_str()))
+        let allowed = (requested == "GET" && ["/v1/health","/v1/schema","/v1/state","/v1/coords","/v1/board","/v1/help"].contains(&path.as_str()))
             || (requested == "POST" && ["/v1/control","/v1/stop"].contains(&path.as_str()));
         if !allowed { return Err(ApiError::new(404,"Unknown overlay control route")); }
         return Ok(json!({"cors":true}));
@@ -228,7 +228,7 @@ fn request(stream: &mut TcpStream, settings: &Settings, dispatch: &Dispatch) -> 
         (method.as_str(), path.as_str()),
         (
             "GET",
-            "/v1/health" | "/v1/schema" | "/v1/state" | "/v1/coords" | "/v1/help"
+            "/v1/health" | "/v1/schema" | "/v1/state" | "/v1/coords" | "/v1/board" | "/v1/help"
         ) | ("POST", "/v1/control" | "/v1/stop")
     ) {
         return Err(ApiError::new(404, "Unknown overlay control route"));

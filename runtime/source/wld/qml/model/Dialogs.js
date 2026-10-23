@@ -62,7 +62,7 @@ function description(s, env) {
     else if(s.kind==="paste_buffers")hints.Command="Z / X / C / V · edit   B · paste   N · zones"
     else if(s.kind==="registry_hub")hints.Command="Z · script   P · play   L · clear   Q · display   H · help\nA/S/D/F · vars   1–16 · points   N · zones\nX/C/G · shells   R · registry   E/I · export/import path"
     else if(s.kind==="record_keys")hints.Command="Z · capture   X · manual   C · paste   Enter · write"
-    else if(s.kind==="view_toggles")hints.Command="Z · crosshair   X · grid   C · coords only   K · keys"
+    else if(s.kind==="view_toggles")hints.Command="Z · crosshair   X · grid   C · coords only   K · keys   V · bigger crosshair"
     else if(s.kind==="stop_all")hints.Command="Enter · stop all workflows"
     else hints.Command="Z · click in 1s   X · hold ms   C · write JSON"
   }
@@ -76,7 +76,7 @@ function description(s, env) {
     else if(s.stage==="ZoneCaptureFlow")buttons(["x","c","v"])
     else if(s.stage==="Command"&&s.kind==="save_cursor")buttons(["z","x","c"],["Save","Add point","Save + click"])
     else if(s.stage==="Command"&&s.kind==="record_keys")buttons(["z","x","c"],["Capture","Manual","Paste"])
-    else if(s.stage==="Command"&&s.kind==="view_toggles")buttons(["z","x","c","k"],["Crosshair","Grid","Coords only","Keys"])
+    else if(s.stage==="Command"&&s.kind==="view_toggles")buttons(["z","x","c","k","v"],["Crosshair","Grid","Coords only","Keys","Bigger crosshair"])
     else if(s.stage==="Command"&&/^click_/.test(s.kind))buttons(["z","x","c"],["Click","Hold ms","Write JSON"])
     else if(s.stage==="Command"&&s.kind==="registry_hub")buttons(["z","p","q","h"],["Script","Play","Display","Help"])
     else if(s.kind==="paste_buffers"||s.stage==="ZoneSelect") {buttons(["z","x","c","v"]);if(s.stage==="Command"||s.stage==="PasteSelect"||s.stage==="ZoneCommand"||s.stage==="ZonePlaySelect")shortcuts.push({key:"b",label:s.stage==="Command"?"Paste":s.stage==="PasteSelect"?"Sequence":s.stage==="ZoneCommand"?"Play":"Capture"});if(s.stage==="Command")shortcuts.push({key:"n",label:"Zones"})}
@@ -109,10 +109,9 @@ function submit(original, text, env, cursor, W) {
     else throw Error("Use Z, X or C")
   } else if(s.kind==="stop_all") {effects.push({kind:"stop"});close=true}
   else if(s.kind==="view_toggles") {
-    var toggles={z:"crosshair",crosshair:"crosshair",x:"grid",grid:"grid",c:"coordinates_only",coords:"coordinates_only",k:"keys",keys:"keys"}
-    if(cmd==="v")close=true
-    else if(toggles[cmd]){change("view",toggles[cmd],!env.view[toggles[cmd]]);close=true}
-    else throw Error("Use Z, X, C or K")
+    var toggles={z:"crosshair",crosshair:"crosshair",x:"grid",grid:"grid",c:"coordinates_only",coords:"coordinates_only",k:"keys",keys:"keys",v:"big_crosshair",big_crosshair:"big_crosshair"}
+    if(toggles[cmd]){var key=toggles[cmd],patch={};patch[key]=!env.view[key];var view=W.viewPatch(env.view,patch);Object.keys(view).forEach(function(k){if(view[k]!==env.view[k])change("view",k,view[k])});close=true}
+    else throw Error("Use Z, X, C, K or V")
   } else if(s.kind==="circle_placer") {
     if(s.stage==="Distance"||s.stage==="Angle") {
       s.text=raw;s=preview(s,W)

@@ -25,6 +25,7 @@ Item {
   property var environment: ({})
   property var cursor: ({x:0,y:0})
   property var physicalCursor: ({x:0,y:0})
+  readonly property var board: Workflow.board(physicalCursor)
   property var monitors: []
   readonly property real coordinateScale: Workflow.monitorScale(monitors)
   property var tasks: []
@@ -86,7 +87,7 @@ Item {
   }
   function http(verb,path,body,callback){call({method:"http",verb:verb,path:path,body:body||{}},callback)}
   function remember(text){history=history.concat([text]).slice(-6)}
-  function change(section,key,value){var next=Workflow.copy(environment);if(section){if(!next[section])next[section]={};next[section][key]=value}else next[key]=value;environment=next;persist.restart()}
+  function change(section,key,value){var next=Workflow.copy(environment);if(section==="view"){var patch={};patch[key]=value;next.view=Workflow.viewPatch(next.view,patch)}else if(section){if(!next[section])next[section]={};next[section][key]=value}else next[key]=value;environment=next;persist.restart()}
   function save(){if(ready&&!(controlRun&&controlRun.noReplace))call({method:"save-state",state:environment})}
   function refresh(){
     if(refreshing)return
@@ -297,6 +298,7 @@ Item {
       if(event.path==="/v1/state"){answer(controlSnapshot());return}
       if(event.path==="/v1/help"){answer({platform:"wayland",topic:"registry_hub",text:DialogState.help()});return}
       if(event.path==="/v1/coords"){if(!ready){answer(null,{status:503,message:"Overlay not ready"});return}answer({x:Math.round(physicalCursor.x),y:Math.round(physicalCursor.y)});return}
+      if(event.path==="/v1/board"){if(!ready){answer(null,{status:503,message:"Overlay not ready"});return}answer(board);return}
       if(event.path==="/v1/stop"){stop();answer({stop_requested:true,state:controlSnapshot()});return}
       var request=event.body
       if(request.menu===7){stop();answer(controlSnapshot());return}

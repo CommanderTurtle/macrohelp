@@ -2,7 +2,7 @@ import {test,expect} from "bun:test"
 import {readFileSync} from "node:fs"
 import {runInNewContext} from "node:vm"
 const read=path=>readFileSync(new URL(path,import.meta.url),"utf8")
-const W=runInNewContext(read("../qml/model/Workflow.js")+"\n({keys,keyName,wait,move,paste,expression,vector,numeric,pointValue,zoneValue,pasteSequence,clearState})")
+const W=runInNewContext(read("../qml/model/Workflow.js")+"\n({keys,keyName,wait,move,paste,expression,vector,numeric,pointValue,zoneValue,pasteSequence,clearState,viewPatch})")
 const D=runInNewContext(read("../qml/model/Dialogs.js")+"\n({open,clone,field,point,submit,preview,recorded,addStep,description,mouseDismiss,categories})")
 const env=()=>({script:"{paste Z}",registry:"/tmp/data",paths:{import:"",export:""},shells:{X:"bash",C:"sh",G:"python",P:"pwsh",T:""},vars:{A:"",S:"",D:"",F:""},buffers:{Z:"first",X:"second",C:"",V:"fourth"},zones:{Z:[1,2,40,50],X:null,C:null,V:null},points:[[20,30],[-10,40],...Array(14).fill(null)],view:{crosshair:true,keys:true,grid:false,coordinates_only:false},last_task:{task_number:1}})
 const cursor={x:120,y:240}
@@ -35,12 +35,16 @@ for(const [kind,button] of [["click_left","LEFT_MOUSE"],["click_right","RIGHT_MO
   expect(dialog(kind).submit("c").effects[0].kind).toBe("export")
 })
 
-test("Display uses actual C++ commands, including K and V cancellation",()=>{
-  for(const [key,name] of [["z","crosshair"],["x","grid"],["c","coordinates_only"],["k","keys"]]){
+test("Display retains existing commands and adds V for the large crosshair",()=>{
+  for(const [key,name] of [["z","crosshair"],["x","grid"],["c","coordinates_only"],["k","keys"],["v","big_crosshair"]]){
     const d=dialog("view_toggles"),before=d.environment.view[name]
     expect(d.submit(key).close).toBe(true);expect(d.environment.view[name]).toBe(!before)
   }
-  expect(dialog("view_toggles").submit("v").effects).toEqual([])
+  const d=dialog("view_toggles");d.submit("x");expect(d.environment.view.grid).toBe(true)
+  d.submit("v");expect(d.environment.view.big_crosshair).toBe(true);expect(d.environment.view.grid).toBe(false)
+  d.submit("v");expect(d.environment.view.big_crosshair).toBe(false);expect(d.environment.view.grid).toBe(false)
+  d.submit("v");d.submit("x");expect(d.environment.view.grid).toBe(true);expect(d.environment.view.big_crosshair).toBe(false)
+  d.submit("x");expect(d.environment.view.grid).toBe(false);expect(d.environment.view.big_crosshair).toBe(false)
   expect(dialog("stop_all").submit("").effects).toEqual([{kind:"stop"}])
 })
 

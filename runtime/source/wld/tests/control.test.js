@@ -2,7 +2,7 @@ import {test,expect} from "bun:test"
 import {readFileSync} from "node:fs"
 import {runInNewContext} from "node:vm"
 const read=name=>readFileSync(new URL(name,import.meta.url),"utf8")
-const W=runInNewContext(read("../qml/model/Workflow.js")+"\n({copy,keys,keyName,wait,move,paste,expression,vector,numeric,pointValue,zoneValue,pasteSequence,clearState})")
+const W=runInNewContext(read("../qml/model/Workflow.js")+"\n({copy,keys,keyName,wait,move,paste,expression,vector,numeric,pointValue,zoneValue,pasteSequence,clearState,viewPatch})")
 const D=runInNewContext(read("../qml/model/Dialogs.js")+"\n({open,clone,field,point,submit,preview,recorded,addStep,description,mouseDismiss,categories,help})")
 const C=runInNewContext(read("../qml/model/Control.js")+"\n({merge,prepare})")
 const env=()=>({version:1,script:"",registry:"/tmp/data",shells:{X:"bash",C:"sh",G:"python",P:"pwsh",T:""},paths:{export:"/tmp/export.json",import:"/tmp/import.json"},vars:{A:"original",S:"kept",D:"",F:""},buffers:{Z:"hello",X:"world",C:"",V:""},zones:{Z:[0,0,50,50],X:null,C:null,V:null},points:Array(16).fill(null),view:{crosshair:true,grid:false,coordinates:true,keys:true,coordinates_only:false},last_task:null})

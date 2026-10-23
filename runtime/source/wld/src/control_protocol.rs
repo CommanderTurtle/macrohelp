@@ -225,11 +225,24 @@ pub fn normalize(value: &Value) -> Result<Value> {
     Ok(request)
 }
 
+fn valid_coordinate(value: &Value) -> bool {
+    if let Some(n) = value.as_i64() { return (-100000..=100000).contains(&n); }
+    let Some(text) = value.as_str() else { return false; };
+    let Some(code) = text.strip_prefix('-').unwrap_or(text).strip_prefix('_') else { return false; };
+    if code.is_empty() { return false; }
+    let mut cell = 0u32;
+    for b in code.bytes() {
+        if !b.is_ascii_alphabetic() { return false; }
+        cell = cell * 26 + u32::from(b.to_ascii_lowercase() - b'a' + 1);
+        if cell > 2000 { return false; }
+    }
+    true
+}
 fn coordinates(v: &Value, count: usize) -> Result<()> {
     if v.as_array().is_none_or(|a| {
         a.len() != count
             || a.iter()
-                .any(|n| n.as_i64().is_none_or(|n| !(-100000..=100000).contains(&n)))
+                .any(|n| !valid_coordinate(n))
     }) {
         return Err(invalid("Invalid integer coordinates"));
     }
@@ -274,6 +287,7 @@ pub fn validate_patch(value: &Value) -> Result<()> {
                     "paths" => &["import", "export"],
                     _ => &[
                         "crosshair",
+                        "big_crosshair",
                         "grid",
                         "coordinates",
                         "panel",
@@ -313,6 +327,8 @@ pub fn schema() -> Value {
         .as_array_mut()
         .unwrap()
         .insert(4, json!("GET /v1/help"));
+    schema["routes"].as_array_mut().unwrap().push(json!("GET /v1/board"));
+    schema["request"]["properties"]["origin"]["items"] = coordinate_item_schema();
     let mut sections = json!({"script":{"type":"string"},"registry":{"type":"string"}});
     for (section, keys) in [
         ("vars", vec!["A", "S", "D", "F"]),
@@ -324,6 +340,7 @@ pub fn schema() -> Value {
             "view",
             vec![
                 "crosshair",
+                "big_crosshair",
                 "grid",
                 "coordinates",
                 "panel",
@@ -355,7 +372,10 @@ pub fn schema() -> Value {
     schema
 }
 fn coordinate_schema(count: usize) -> Value {
-    json!({"oneOf":[{"type":"null"},{"type":"array","minItems":count,"maxItems":count,"items":{"type":"integer","minimum":-100000,"maximum":100000}}]})
+    json!({"oneOf":[{"type":"null"},{"type":"array","minItems":count,"maxItems":count,"items":coordinate_item_schema()}]})
+}
+fn coordinate_item_schema() -> Value {
+    json!({"oneOf":[{"type":"integer","minimum":-100000,"maximum":100000},{"type":"string","pattern":"^-?_[A-Za-z]+$","description":"50-physical-pixel board cell center; _a=25, _aj=1775. Must resolve within coordinate bounds.","maxLength":5}]})
 }
 
 #[cfg(test)]
@@ -388,5 +408,13 @@ mod tests {
             assert!(normalize(&value).is_err(), "{value}");
         }
         assert!(normalize(&json!({"menu":"registry_hub","config":{"vars":{"A":"a,b"},"points":{"16":[-1,20]},"zones":{"C":null}},"no_replace":true})).is_ok());
+    }
+    #[test]
+    fn board_coordinates_and_large_crosshair_are_validated() {
+        assert!(normalize(&json!({"origin":["_aj","-_h"],"config":{"points":{"1":["_a","_h"]},"view":{"big_crosshair":true}}})).is_ok());
+        for value in ["_", "_0", "_zzzz", "_a;exit", "_a b"] {
+            assert!(normalize(&json!({"origin":[value,0]})).is_err());
+        }
+        assert!(schema()["routes"].as_array().unwrap().contains(&json!("GET /v1/board")));
     }
 }

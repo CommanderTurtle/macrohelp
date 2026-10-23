@@ -60,7 +60,26 @@ Item {
           var scale=root.service.coordinateScale
           function project(point){return Workflow.displayPoint(point,g,scale)}
           c.lineWidth=1;c.strokeStyle=Qt.rgba(Commons.Color.accent.r,Commons.Color.accent.g,Commons.Color.accent.b,0.5)
-          if(v.grid&&!v.coordinates_only){c.beginPath();for(var x=50;x<width;x+=50){c.moveTo(x,0);c.lineTo(x,height)}for(var y=50;y<height;y+=50){c.moveTo(0,y);c.lineTo(width,y)}c.stroke();var fs=Style.font.caption;c.font=fs+"px "+Style.font.family;c.textAlign="center";var px2=Style.spacing.controlPaddingX,py2=Style.spacing.controlPaddingY,bgC=Qt.rgba(Commons.Color.background.r,Commons.Color.background.g,Commons.Color.background.b,1),fgC=Qt.rgba(Commons.Color.foreground.r,Commons.Color.foreground.g,Commons.Color.foreground.b,1),rowY=50;c.textBaseline="bottom";for(var col=0;col*50<width;col++){var cx=col*50+25,lbl="",n=col;do{lbl=String.fromCharCode(97+n%26)+lbl;n=Math.floor(n/26)-1}while(n>=0);var tw=c.measureText(lbl).width,bw=tw+px2*2,bh=fs+py2*2;c.fillStyle=bgC;c.fillRect(cx-bw/2,rowY-bh,bw,bh);c.fillStyle=fgC;c.fillText(lbl,cx,rowY-py2)}c.textBaseline="top";for(var col=0;col*50<width;col++){var cx=col*50+25,coord=String(col*50+25);var tw=c.measureText(coord).width,bw=tw+px2*2,bh=fs+py2*2;c.fillStyle=bgC;c.fillRect(cx-bw/2,rowY,bw,bh);c.fillStyle=fgC;c.fillText(coord,cx,rowY+py2)}c.textBaseline="middle";for(var row=0;row*50<height;row++){var cy=row*50+25,lbl="",n=row;do{lbl=String.fromCharCode(97+n%26)+lbl;n=Math.floor(n/26)-1}while(n>=0);var tw=c.measureText(lbl).width,bw=tw+px2*2,bh=fs+py2*2;c.fillStyle=bgC;c.fillRect(50-bw/2,cy-bh/2,bw,bh);c.fillStyle=fgC;c.fillText(lbl,50,cy)}}
+          var ox=g.x*scale,oy=g.y*scale
+          if(v.grid&&!v.coordinates_only){
+            c.beginPath()
+            for(var col=Math.floor(ox/50)+1;(col*50-ox)/scale<width;col++){var x=(col*50-ox)/scale;c.moveTo(x,0);c.lineTo(x,height)}
+            for(var row=Math.floor(oy/50)+1;(row*50-oy)/scale<height;row++){var y=(row*50-oy)/scale;c.moveTo(0,y);c.lineTo(width,y)}
+            c.stroke()
+          }
+          if((v.grid||v.big_crosshair)&&!v.coordinates_only){
+            var fs=Style.font.caption,px2=Style.spacing.controlPaddingX,py2=Style.spacing.controlPaddingY,rowY=50
+            c.font=fs+"px "+Style.font.family;c.textAlign="center";c.textBaseline="middle"
+            function box(text,x,y){var bw=c.measureText(text).width+px2*2,bh=fs+py2*2;c.fillStyle=Commons.Color.background;c.fillRect(x-bw/2,y-bh/2,bw,bh);c.fillStyle=Commons.Color.foreground;c.fillText(text,x,y)}
+            for(var col=Math.floor(ox/50);(col*50+25-ox)/scale<width;col++){
+              var value=col*50+25,cx=(value-ox)/scale;if(cx<0)continue
+              box(Workflow.boardCode(value).replace("_",""),cx,rowY-(fs+py2*2)/2)
+              box(String(value),cx,rowY+(fs+py2*2)/2)
+            }
+            for(var row=Math.floor(oy/50);(row*50+25-oy)/scale<height;row++){
+              var value=row*50+25,cy=(value-oy)/scale;if(cy>=0)box(Workflow.boardCode(value).replace("_",""),50,cy)
+            }
+          }
           if(v.crosshair&&!v.coordinates_only&&window.containsPointer){c.beginPath();if(v.big_crosshair){c.moveTo(0,window.pointerY);c.lineTo(width,window.pointerY);c.moveTo(window.pointerX,0);c.lineTo(window.pointerX,height)}else{c.moveTo(window.pointerX-14,window.pointerY);c.lineTo(window.pointerX+14,window.pointerY);c.moveTo(window.pointerX,window.pointerY-14);c.lineTo(window.pointerX,window.pointerY+14)}c.stroke()}
           if(!v.coordinates_only){
             var points=root.service.environment.points||[];c.fillStyle=Commons.Color.accent;c.font=labelFont
@@ -76,11 +95,22 @@ Item {
           }
         }
       }
-      Rectangle {
+      Item {
         visible:window.view.coordinates&&window.containsPointer
         x:Math.min(Math.max(0,window.pointerX+Style.space(18)),Math.max(0,window.width-width));y:Math.min(Math.max(0,window.pointerY+Style.space(18)),Math.max(0,window.height-height))
-        width:tag.implicitWidth+Style.spacing.controlPaddingX*2;height:tag.implicitHeight+Style.spacing.controlPaddingY*2;radius:Style.cornerRadius;color:Commons.Color.background
-        Text {id:tag;anchors.centerIn:parent;textFormat:Text.PlainText;text:Math.round(root.service.physicalCursor.x)+", "+Math.round(root.service.physicalCursor.y);color:Commons.Color.foreground;font.family:Style.font.family;font.pixelSize:Style.font.caption}
+        width:coordinatesTag.width;height:coordinatesTag.height+(boardTag.visible?boardTag.height:0)
+        Rectangle {
+          id:coordinatesTag
+          width:tag.implicitWidth+Style.spacing.controlPaddingX*2;height:tag.implicitHeight+Style.spacing.controlPaddingY*2;radius:Style.cornerRadius;color:Commons.Color.background
+          Text {id:tag;anchors.centerIn:parent;textFormat:Text.PlainText;text:Math.round(root.service.physicalCursor.x)+", "+Math.round(root.service.physicalCursor.y);color:Commons.Color.foreground;font.family:Style.font.family;font.pixelSize:Style.font.caption}
+        }
+        Rectangle {
+          id:boardTag;visible:window.view.big_crosshair&&!window.view.coordinates_only
+          anchors.top:coordinatesTag.bottom;anchors.horizontalCenter:coordinatesTag.horizontalCenter
+          width:Math.max(1,Math.min(coordinatesTag.width-Style.space(4),boardText.implicitWidth+Style.spacing.controlPaddingX*2));height:boardText.implicitHeight+Style.spacing.controlPaddingY*2
+          radius:Style.cornerRadius;color:Commons.Color.background
+          Text {id:boardText;anchors.centerIn:parent;width:parent.width-Style.spacing.controlPaddingX*2;text:root.service.board.text;textFormat:Text.PlainText;horizontalAlignment:Text.AlignHCenter;fontSizeMode:Text.HorizontalFit;minimumPixelSize:7;color:Commons.Color.foreground;font.family:Style.font.family;font.pixelSize:Math.max(8,Style.font.caption*0.85)}
+        }
       }
       Rectangle {
         visible:root.service.keysEnabled&&root.service.keyRows.length>0&&window.containsPointer

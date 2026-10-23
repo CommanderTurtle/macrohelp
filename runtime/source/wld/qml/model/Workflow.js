@@ -3,7 +3,12 @@ function copy(v) { return JSON.parse(JSON.stringify(v)) }
 function monitorScale(monitors) { var scale=Number(((monitors||[])[0]||{}).scale);return isFinite(scale)&&scale>0?scale:1 }
 function displayPoint(point,origin,scale) { return [point[0]/scale-origin.x,point[1]/scale-origin.y] }
 function containsPoint(point,origin,width,height) { return !!point&&!!origin&&point.x>=origin.x&&point.y>=origin.y&&point.x<origin.x+width&&point.y<origin.y+height }
-function numeric(v,min,max,label) { var n=Number(v);if(!isFinite(n)||n<min||n>max)throw Error(label+" must be "+min+"…"+max);return n }
+function boardCode(value) { var cell=Math.floor(Number(value)/50);if(!isFinite(cell))throw Error("Invalid board coordinate");var negative=cell<0,n=negative?-cell-1:cell,label="";do{label=String.fromCharCode(97+n%26)+label;n=Math.floor(n/26)-1}while(n>=0);return (negative?"-":"")+"_"+label }
+function boardCoordinate(value) { var m=String(value).match(/^(-?)_([a-z]+)$/i);if(!m)throw Error("Invalid board coordinate");var n=0;for(var i=0;i<m[2].length;i++){n=n*26+m[2].toLowerCase().charCodeAt(i)-96;if(n>2000)throw Error("Board coordinate out of range")}return (m[1]?-1:1)*((n-1)*50+25) }
+function board(cursor) { var x=boardCode(Math.round(cursor.x)),y=boardCode(Math.round(cursor.y));return {x:x,y:y,text:x+", "+y,center:{x:boardCoordinate(x),y:boardCoordinate(y)},cell_size:50} }
+function viewPatch(original,patch) { var view=copy(original||{});Object.keys(patch||{}).forEach(function(k){view[k]=patch[k]});if(patch&&patch.crosshair===false)view.big_crosshair=false;if(patch&&patch.grid===true)view.big_crosshair=false;if(patch&&patch.big_crosshair===true){view.big_crosshair=true;view.crosshair=true;view.grid=false}else if(view.big_crosshair)view.grid=false;return view }
+function pointSlot(value) { var v=String(value);return /^[a-p]$/i.test(v)?v.toLowerCase().charCodeAt(0)-97:numeric(v,1,16,"Point")-1 }
+function numeric(v,min,max,label) { var n=/^-?_[a-z]+$/i.test(String(v))?boardCoordinate(v):Number(v);if(!isFinite(n)||n<min||n>max)throw Error(label+" must be "+min+"…"+max);return n }
 function wait(ms) { return {type:"wait",duration:numeric(ms,0,86400000,"Wait")/1000} }
 function paste(text) { return {type:"paste",content:String(text),contentId:"",loop:1} }
 function keyName(raw) {
@@ -81,7 +86,7 @@ function vector(text,origin) {
   dx=dx/length*radius;dy=dy/length*radius
   return {radius:radius,angle:Math.atan2(dy,dx),target:[Math.round(origin[0]+dx),Math.round(origin[1]-dy)]}
 }
-function pointValue(text,state){var raw=String(text).trim().replace(/^\$/,""),p=/^(?:point|pt)?\s*(\d+)$/i.exec(raw);if(p){var saved=state.points[numeric(p[1],1,16,"Point")-1];if(!saved)throw Error("Save point first");return copy(saved)}var a=raw.split(/[,\s]+/).filter(Boolean);if(a.length!==2)throw Error("Use x,y or a point number");return a.map(function(n){return Math.round(numeric(n,-100000,100000,"Coordinate"))})}
+function pointValue(text,state){var raw=String(text).trim().replace(/^\$/,""),p=/^(?:point|pt)?\s*(\d+|[a-p])$/i.exec(raw);if(p){var saved=state.points[pointSlot(p[1])];if(!saved)throw Error("Save point first");return copy(saved)}var a=raw.split(/[,\s]+/).filter(Boolean);if(a.length!==2)throw Error("Use x,y or a point number");return a.map(function(n){return Math.round(numeric(n,-100000,100000,"Coordinate"))})}
 function zoneValue(text,state){var raw=String(text).trim(),slot=raw.toUpperCase().replace(/^ZONE[\s_-]*/,"");if(/^[ZXCV]$/.test(slot)){if(!state.zones[slot])throw Error("Save zone first");return copy(state.zones[slot])}var a=raw.split(/[,\s]+/).filter(Boolean);if(a.length===2)return pointValue(a[0],state).concat(pointValue(a[1],state));if(a.length!==4)throw Error("Use rectangle, two point numbers or zone slot");return a.map(function(n){return Math.round(numeric(n,-100000,100000,"Coordinate"))})}
 function clearState(original){var state=copy(original);state.script="";state.registry="";state.shells={X:"",C:"sh",G:"",P:"pwsh",T:""};state.vars={A:"",S:"",D:"",F:""};state.points=Array(16).fill(null);state.paths={import:"",export:""};return state}
 function pasteSequence(slots,state){if(!slots.length||slots.length>1000)throw Error("Choose 1–1000 buffers");slots.forEach(function(k){if(!/^[ZXCV]$/.test(k))throw Error("Unknown buffer")});slots.forEach(function(k){if(!state.buffers[k])throw Error("Buffer "+k+" is empty")});var chosen=slots;var actions=[wait(100),keys("LEFT_MOUSE"),wait(80)];chosen.forEach(function(k,i){if(i)actions.push(wait(80));actions.push(paste(state.buffers[k]))});actions.push(wait(100));return actions}
@@ -286,12 +291,12 @@ function compile(source,original,context,resume) {
       else if(k==="REGISTRY")state.registry=v
       else if(kind==="point"||kind==="zone"){
         var a=v.split(/[,\s]+/).filter(Boolean).map(function(n){return Math.round(numeric(n,-100000,100000,"Coordinate"))})
-        if(kind==="point"&&/^([1-9]|1[0-6])$/.test(k)&&a.length===2)state.points[Number(k)-1]=a
+        if(kind==="point"&&/^([1-9]|1[0-6]|[A-P])$/.test(k)&&a.length===2)state.points[pointSlot(k)]=a
         else if(kind==="zone"&&/^[ZXCV]$/.test(k)&&a.length===4)state.zones[k]=a
         else throw Error("Invalid point or zone")
       } else throw Error("Unknown set target")
     }else if(op==="wait")emit(wait(arg))
-    else if(op==="point"||op==="pt")emit(move(state.points[numeric(arg,1,16,"Point")-1],100))
+    else if(op==="point"||op==="pt")emit(move(pointValue(arg,state),100))
     else if(op==="type"){var typed=paste(arg),textParts=formatParts(rawArg,state,live);if(textParts.some(function(p){return typeof p!=="string"}))typed.macrohelp_parts=textParts;emit(typed)}
     else if(op==="press")emit(press(arg))
     else if(op==="paste"||op==="buf"||op==="enter"){
