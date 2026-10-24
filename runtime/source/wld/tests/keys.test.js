@@ -17,6 +17,18 @@ test("fast taps between samples and held-modifier chords all reach the HUD",()=>
   expect(Object.keys(state.held)).toHaveLength(0)
   expect(K.create().entries).toHaveLength(0)
 })
+
+test("left, right and middle clicks use their existing glyphs and modifier chords",()=>{
+  let state=K.create()
+  for(const [code,key,glyph] of [[272,"LEFT_MOUSE","\u278b"],[273,"RIGHT_MOUSE","\u278a"],[274,"MIDDLE_MOUSE","\u278c"]]) {
+    state=K.accept(state,[[code,1],[code,0]],[],100)
+    expect(state.entries.at(-1).keys).toEqual([key])
+    expect(K.glyph(key)).toBe(glyph)
+  }
+  state=K.accept(state,[[29,1],[272,1],[272,0],[29,0]],[],200)
+  expect(state.entries.at(-1).keys).toEqual(["CONTROL_LEFT","LEFT_MOUSE"])
+  expect(Object.keys(state.held)).toHaveLength(0)
+})
 test("standalone modifiers appear, repeats do not flood, state recovers after overflow",()=>{
   let state=K.accept(K.create(),[[42,1],[42,0],[30,1],[30,1]],[30],100)
   expect(K.rows(state,100).map(r=>r.keys)).toEqual([["SHIFT_LEFT"],["A"]])
@@ -39,6 +51,14 @@ test("native hook is ephemeral, has a consumer lease, and does not touch files o
   expect(lua).toContain("if state ~= 0 and state ~= 1 then return end")
   expect(lua).toContain("code = code - 8")
   expect(lua).toContain("feed.subscription:remove()")
+  expect(lua).toContain("pcall(hl.bind, 'mouse:' .. button")
+  expect(lua).toContain("non_consuming = true, transparent = true, ignore_mods = true")
+  expect(lua).toContain("submap_universal = true, release = edge == 0")
+  expect(lua).toContain("binding:remove()")
+  expect(lua).toContain("if keyboard and down and feed.heatmap")
+  expect(lua).not.toContain("hl.unbind")
+  expect(lua).toContain("if _G.__macrohelp_input then _G.__macrohelp_input.stop() end")
+  expect(readFileSync(new URL("src/overlay.rs",base),"utf8")).toContain("_G.__macrohelp_input.version == 2")
   expect(lua).toContain("if feed.idle >= 2 then feed.stop() end")
   expect(lua).not.toMatch(/io\.|os\.|print\(|exec|\.json|\.log/)
   const hud=readFileSync(new URL("qml/Hud.qml",base),"utf8")

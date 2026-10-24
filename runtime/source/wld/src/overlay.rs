@@ -124,7 +124,7 @@ fn io_error(e: std::io::Error) -> ApiError {
 fn input_sample(display: bool, heatmap: bool) -> Result<Value> {
     let unlocked = (!display && !heatmap) || hypr("locked")?["locked"] == false;
     let code = format!(
-        "repl return _G.__macrohelp_input and _G.__macrohelp_input.sample({},{}) or '{{\"initialize\":true}}'",
+        "repl return _G.__macrohelp_input and _G.__macrohelp_input.version == 2 and _G.__macrohelp_input.sample({},{}) or '{{\"initialize\":true}}'",
         display && unlocked,
         heatmap && unlocked
     );
