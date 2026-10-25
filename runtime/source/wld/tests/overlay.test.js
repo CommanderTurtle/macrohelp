@@ -3,11 +3,34 @@ import { readFileSync } from "node:fs"
 import { runInNewContext } from "node:vm"
 import {spawnSync} from "node:child_process"
 const model = new URL("../qml/model/Workflow.js", import.meta.url)
-const W = runInNewContext(readFileSync(model,"utf8")+"\n({compile,keys,circle,move,drag,resolve,desktopShortcuts,zone,containsPoint,monitorScale,displayPoint})")
+const W = runInNewContext(readFileSync(model,"utf8")+"\n({compile,keys,circle,move,drag,resolve,desktopShortcuts,shortcutRows,zone,containsPoint,monitorScale,displayPoint})")
 const state=()=>({version:1,script:"",registry:"/tmp/data.md",shells:{X:"bash",C:"sh",G:"uv run python",P:"pwsh"},vars:{A:"hello",S:"",D:"",F:""},buffers:{Z:"world",X:"",C:"",V:""},zones:{Z:[1,2,30,40],X:[1,2,30,40],C:null,V:[1,2,30,40]},points:[[10,20],...Array(15).fill(null)],last_task:{task_number:1}})
 const bindings=[{modmask:68,key:"Print",description:"Extract text (OCR)",dispatcher:"__lua"},{modmask:0,key:"Print",description:"Screenshot"},{modmask:64,key:"Return",description:"Terminal"},{modmask:64,key:"C",description:"Universal copy"}]
 const context={tasks:[{name:"Saved"}],status:{scheduled:[],running:[],finished:[{task_number:1,state:"finished"}]},shortcuts:W.desktopShortcuts(bindings)}
 const compile=s=>W.compile(s,state(),context)
+
+test("desktop shortcut rows use the same live contracts as workflow compilation",()=>{
+  const rows=W.shortcutRows(bindings)
+  expect(rows.find(r=>r.name==="Screenshot").chord).toBe("PRINT_SCREEN")
+  expect(rows.find(r=>r.name==="Single-line OCR").fallback).toBe(true)
+  expect(W.shortcutRows([]).every(r=>r.chord==="Not configured")).toBe(true)
+  expect(W.shortcutRows(bindings,{screenshot:"ALT+F12"})[0].chord).toBe("ALT_LEFT + F12")
+})
+
+test("shortcut refreshes coalesce, preserve known contracts on failure and ignore stale runtimes",()=>{
+  const source=readFileSync(new URL("../qml/Service.qml",import.meta.url),"utf8")
+  const code=source.slice(source.indexOf("  function refreshBindings()"),source.indexOf("  Timer {id:bindingsDelay"))
+  const requests=[],delay={count:0,restart(){this.count++}}
+  const s={ready:true,bindingsRefreshing:false,bindingsPending:false,bindingsEpoch:0,bindingsError:"",desktopBindings:[],shortcutRows:[],settings:{},call(r,cb){requests.push(cb)}}
+  Object.assign(s,new Function("root","Workflow","bindingsDelay",`with(root){${code};return {refreshBindings,bindingEvent}}`)(s,W,delay))
+  s.refreshBindings();s.refreshBindings();expect(requests).toHaveLength(1)
+  requests[0]([]);expect(requests).toHaveLength(2);expect(s.shortcutRows).toHaveLength(0)
+  requests[1](bindings);expect(s.shortcutRows[0].chord).toBe("PRINT_SCREEN")
+  s.refreshBindings();requests[2](null,"offline");expect(s.shortcutRows[0].chord).toBe("PRINT_SCREEN");expect(s.bindingsError).toBe("offline")
+  s.refreshBindings();s.bindingsEpoch++;requests[3]([]);expect(s.shortcutRows[0].chord).toBe("PRINT_SCREEN")
+  for(const name of ["configreloaded","activelayout","activewindow","mousemove"])s.bindingEvent(name)
+  expect(delay.count).toBe(2)
+})
 
 test("capture schedules preserve C++ actions and deliberate delays; screen only opens the picker",()=>{
   const rect=state().zones.Z

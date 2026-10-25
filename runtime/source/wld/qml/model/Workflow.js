@@ -62,6 +62,13 @@ function screen(shortcuts) {
   if(!shortcuts||!shortcuts.Z)throw Error("Choose a desktop screenshot shortcut in the plugin's shortcuts setting")
   return [copy(shortcuts.Z),wait(shortcuts.waitMs===undefined?2000:shortcuts.waitMs)]
 }
+function shortcutRows(bindings,options) {
+  var active=desktopShortcuts(bindings,options)
+  return [["Screenshot","Z"],["OCR","X"],["Single-line OCR","C"],["Copy","copy"],["Terminal","terminal"]].map(function(entry){
+    var action=active[entry[1]],keys=action&&action.keysmap["0"][1]
+    return {name:entry[0],chord:keys?keys.join(" + "):"Not configured",fallback:entry[1]==="C"&&!!action&&!active.nativeSingleLine}
+  })
+}
 function shellCommand(value) {
   var command=String(value||"")
   if(/[\r\n\x00-\x1f\x7f]/.test(command))throw Error("Shell command must be a single line")

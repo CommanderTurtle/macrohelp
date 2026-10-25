@@ -539,7 +539,7 @@ fn handle(config: &Config, r: &Value) -> Result<Value> {
         "export-actions" => crate::artifacts::actions(r),
         "append-actions" => crate::artifacts::append_session(r),
         "import" => read_state(Path::new(string(r, "path")?)),
-        "bindings" => Ok(hypr("binds").unwrap_or(json!([]))),
+        "bindings" => hypr("binds"),
         "profile-list" => crate::profiles::list(&config.state_dir.join("profiles")),
         "profile-save" => crate::profiles::save(&config.state_dir.join("profiles"), r),
         "profile-import" => {

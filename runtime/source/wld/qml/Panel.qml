@@ -28,6 +28,7 @@ Ui.Panel {
   property var captureAction:null
   property string captureMessage:""
   property string localError:""
+  Connections {target:root.app;function onPageChanged(){Qt.callLater(function(){if(scroll.contentItem)scroll.contentItem.contentY=0})}}
   implicitWidth:button.implicitWidth
   implicitHeight:button.implicitHeight
   function attempt(f){try{localError="";f()}catch(e){localError=e.message}}
@@ -70,6 +71,7 @@ Ui.Panel {
         Column {
           width:scroll.availableWidth;spacing:Style.space(10)
           enabled:root.app&&root.app.ready
+          Loader {width:parent.width;active:!!root.app&&["Keys","Zones"].indexOf(root.app.page)>=0;sourceComponent:Component {ShortcutStatus {width:parent.width;service:root.app}}}
           Column {
             width:parent.width;spacing:Style.space(8);visible:root.app&&root.app.page==="Workflow"
             Ui.TextField {id:taskName;width:parent.width;text:root.scheduleName;placeholderText:"Schedule name";onTextEdited:root.scheduleName=text}

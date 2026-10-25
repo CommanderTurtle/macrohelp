@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import Quickshell.Hyprland
 import qs.Commons
 import "model/Workflow.js" as Workflow
 import "model/KeyDisplay.js" as KeyDisplay
@@ -30,6 +31,34 @@ Item {
   readonly property real coordinateScale: Workflow.monitorScale(monitors)
   property var tasks: []
   property var status: ({})
+  property var desktopBindings: []
+  property var shortcutRows: []
+  property bool bindingsRefreshing: false
+  property bool bindingsPending: false
+  property int bindingsEpoch: 0
+  property string bindingsError: ""
+  function refreshBindings(){
+    if(!ready)return
+    if(bindingsRefreshing){bindingsPending=true;return}
+    bindingsRefreshing=true;bindingsPending=false
+    var token=bindingsEpoch
+    call({method:"bindings"},function(v,e){
+      if(token!==root.bindingsEpoch)return
+      root.bindingsRefreshing=false
+      if(root.bindingsPending){root.refreshBindings();return}
+      try {
+        if(e)throw Error(e)
+        if(!Array.isArray(v))throw Error("Native bindings unavailable")
+        var rows=Workflow.shortcutRows(v,root.settings.shortcuts)
+        root.desktopBindings=v;root.shortcutRows=rows;root.bindingsError=""
+      }catch(failure){root.bindingsError=failure.message}
+    })
+  }
+  function bindingEvent(name){if(name==="configreloaded"||name==="activelayout")bindingsDelay.restart()}
+  Timer {id:bindingsDelay;interval:150;onTriggered:root.refreshBindings()}
+  Connections {target:Hyprland;function onRawEvent(event){root.bindingEvent(event.name)}}
+  onSettingsChanged:if(ready)refreshBindings()
+  onReadyChanged:{if(ready)refreshBindings();else{bindingsEpoch++;bindingsRefreshing=false;bindingsPending=false;bindingsDelay.stop();bindingsError="Controller stopped; shortcut map is stale"}}
   property var history: []
   property var keyDisplay: KeyDisplay.create()
   property bool keyFeedAvailable: false

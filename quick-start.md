@@ -4,6 +4,25 @@ See the [HTTP daemon and overlay parity tables](docs/feature-parity.md) for exac
 Windows/Wayland counterparts and outstanding menu differences.
 Overlay-owned HTTP/MCP controls: [Control API](docs/overlay-control.md).
 
+### Desktop shortcut refresh (Wayland)
+
+Keys and Zones show the active screenshot, OCR, single-line OCR, copy and terminal
+chords, including explicit plugin overrides and the existing clipboard fallback.
+They are derived by the same resolver used by workflow compilation. Missing
+contracts say **Not configured**; a failed compositor read is shown as an error,
+not an empty binding list.
+
+The display refreshes at controller startup, after config reload/layout events,
+on plugin-setting changes, or with **Refresh hotkeys**. Refresh is read-only: no
+key injection, binding registration, compositor reload, or draft/environment
+changes. Event bursts are debounced and overlapping reads are coalesced. The
+existing execution path still reads fresh bindings when preparing a workflow.
+Switching tray pages resets their scroll position.
+
+This uses [Quickshell's existing event stream](https://quickshell.org/docs/v0.1.0/types/Quickshell.Hyprland/Hyprland/)
+and [Hyprland's config/layout notifications](https://wiki.hypr.land/IPC/), not a
+new in-compositor input observer. Config-owned HUD hooks are unchanged.
+
 This package intentionally has two runtime folders:
 
 - `runtime` - Macrohelp / CursorOverlay source
