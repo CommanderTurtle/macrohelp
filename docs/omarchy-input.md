@@ -3,7 +3,7 @@
 The menu-by-menu and endpoint-by-endpoint [feature parity tables](feature-parity.md)
 track Windows counterparts and remaining gaps separately from this input audit.
 
-Source review: 2026-10-18. This describes the Wayland overlay's integration
+Source review: 2026-10-18; input-feed lifecycle revised 2026-10-25. This describes the Wayland overlay's integration
 boundaries, not a replacement desktop input stack. Windows behavior is unchanged.
 
 ## Ownership
@@ -134,9 +134,26 @@ zone coordinates use compositor logical coordinates, including negative monitor
 origins. Do not convert them using a guessed DPI or force a display refresh rate.
 The editor can take focus; the HUD cannot.
 
+Load [`input.lua`](../runtime/source/wld/input.lua) from the user's Hyprland config
+as described in [Quick start](../quick-start.md#native-input-hud-and-heatmap).
+The build prints a missing-file-guarded include for its actual checkout; it does
+not edit or reload compositor configuration. Registering on config load, rather
+than a one-shot `hyprland.start` callback, also handles loading normal config
+after safe-mode recovery.
+
 [`overlay.rs`](../runtime/source/wld/src/overlay.rs) gates key display on the UI
-preference, checks session lock, and stops the hook on clean exit. The compositor-
-side lease also expires after a consumer disappears. HUD events stay transient;
+preference and checks session lock. IPC only samples an existing versioned feed:
+it never uploads Lua to create observers, and never re-registers them after a
+missing feed, failed request, or compositor restart. Missing setup is reported in
+the View tab. It does not adopt another instance if its inherited socket dies.
+
+Keyboard subscription and the six non-consuming mouse press/release observers
+belong to the config's Lua lifetime. Stop, lock and lease expiry clear collection
+state without removing bindings. This matters on 0.56.2: `Keybind:remove()` removes
+all matching chords, not just that handle. Partial setup failure disables only
+the feed's owned handles; it never unbinds another user's mouse action.
+
+The compositor-side data lease expires after a consumer disappears. HUD events stay transient;
 saved macro settings are separate from key history. Heatmap collection must be
 independently switchable, persisting aggregate session data rather than an ordered
 keystroke log.
@@ -148,6 +165,9 @@ sampling when disabled, and backs off if the native interface is unavailable.
 Aggregate-only samples use a 500 ms cadence, with a flush before timer phase
 changes; the key HUD retains its faster cadence. Slow HTTP
 work must not block key/pointer updates or execute in a compositor callback.
+
+The [input-feed safety audit](input-feed-safety.md) separates these verified
+lifecycle fixes from the unproven attribution of a reported compositor crash.
 
 Virtual keyboard teardown is another separate concern. Hyprland exposes
 `input.virtualkeyboard.release_pressed_on_close`; automatic release on an abrupt
