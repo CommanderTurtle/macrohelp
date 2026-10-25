@@ -122,20 +122,22 @@ fn io_error(e: std::io::Error) -> ApiError {
     ApiError::new(500, e.to_string())
 }
 fn input_sample(display: bool, heatmap: bool) -> Result<Value> {
-    let unlocked = (!display && !heatmap) || hypr("locked")?["locked"] == false;
+    input_sample_with(display, heatmap, hypr)
+}
+fn input_sample_with(
+    display: bool,
+    heatmap: bool,
+    mut query: impl FnMut(&str) -> Result<Value>,
+) -> Result<Value> {
+    let unlocked = (!display && !heatmap) || query("locked")?["locked"] == false;
     let code = format!(
-        "repl return _G.__macrohelp_input and _G.__macrohelp_input.version == 2 and _G.__macrohelp_input.sample({},{}) or '{{\"initialize\":true}}'",
+        "repl return _G.__macrohelp_input and _G.__macrohelp_input.version == 3 and _G.__macrohelp_input.sample({},{}) or '{{\"available\":false,\"events\":[],\"held\":[],\"counts\":{{}},\"error\":\"Load runtime/source/wld/input.lua from Hyprland config, then reload config. See Macrohelp quick-start.\"}}'",
         display && unlocked,
         heatmap && unlocked
     );
-    let mut value = hypr(&code)?;
-    if value["initialize"] == true {
-        let boot = hypr(&format!("repl {}", include_str!("../input.lua")))?;
-        if boot["ready"] != true {
-            return Err(ApiError::new(503, "Native key events unavailable"));
-        }
-        value = hypr(&code)?;
-    }
+    // Never bootstrap code, register bindings, or remove observers over IPC.
+    // In safe mode/missing config, fail closed until the config owner loads it.
+    let mut value = query(&code)?;
     value["locked"] = json!(!unlocked);
     Ok(value)
 }
@@ -868,6 +870,65 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn missing_input_feed_never_bootstraps_compositor_code() {
+        let mut commands = Vec::new();
+        let sample = input_sample_with(true, false, |command| {
+            commands.push(command.to_string());
+            Ok(if command == "locked" {
+                json!({"locked":false})
+            } else {
+                json!({"available":false})
+            })
+        })
+        .unwrap();
+        assert_eq!(sample["available"], false);
+        assert_eq!(commands.len(), 2);
+        assert!(commands[1].contains("sample(true,false)"));
+        assert!(commands[1].contains("Load runtime/source/wld/input.lua"));
+        for command in commands {
+            assert!(!command.contains("hl.bind"));
+            assert!(!command.contains("hl.on"));
+            assert!(!command.contains("dofile"));
+            assert!(!command.contains("initialize"));
+        }
+    }
+    #[test]
+    fn lock_and_unavailable_lock_state_stop_both_input_consumers() {
+        for lock in [json!({"locked":true}), json!({})] {
+            let mut commands = Vec::new();
+            let sample = input_sample_with(true, true, |command| {
+                commands.push(command.to_string());
+                Ok(if command == "locked" {
+                    lock.clone()
+                } else {
+                    json!({"available":true,"events":[]})
+                })
+            })
+            .unwrap();
+            assert_eq!(sample["locked"], true);
+            assert!(commands[1].contains("sample(false,false)"));
+        }
+        let mut calls = 0;
+        let error = input_sample_with(true, false, |_| {
+            calls += 1;
+            Err(ApiError::new(503, "stale compositor instance"))
+        })
+        .unwrap_err();
+        assert_eq!(calls, 1);
+        assert_eq!(error.status, 503);
+    }
+    #[test]
+    fn stopping_input_does_not_require_a_lock_query_or_reinitialize_a_feed() {
+        let mut commands = Vec::new();
+        input_sample_with(false, false, |command| {
+            commands.push(command.to_string());
+            Ok(json!({"available":false}))
+        })
+        .unwrap();
+        assert_eq!(commands.len(), 1);
+        assert!(commands[0].contains("sample(false,false)"));
+    }
     #[test]
     fn physical_cursor_changes_with_scale_without_changing_logical_placement() {
         let cursor = json!({"x":868,"y":573});

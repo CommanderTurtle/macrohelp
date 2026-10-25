@@ -11,5 +11,12 @@ umask 077
 mkdir -p "$BIN"
 cargo build --locked --release --manifest-path "$SOURCE/Cargo.toml" --target-dir "$TARGET"
 install -m 700 "$TARGET/release/macrohelpctl" "$BIN/macrohelpctl"
+# Print a Lua long-bracket literal, not a shell-escaped path. Do not edit or
+# reload the user's compositor configuration as a side effect of a build.
+DELIMITER="="
+while [[ "$SOURCE/input.lua" == *"]$DELIMITER]"* ]]; do DELIMITER+="="; done
+printf 'Input HUD/heatmap: add this line once to ~/.config/hypr/autostart.lua, then reload Hyprland config:\n'
+printf 'do local p = [%s[%s/input.lua]%s]; local f = io.open(p, "r"); if f then f:close(); dofile(p) end end\n' "$DELIMITER" "$SOURCE" "$DELIMITER"
 printf 'Overlay client built. Enable io.github.commanderturtle.macrohelp, or run omarchy-restart-shell if already loaded.\n'
+printf 'When migrating from the old feed, restart the client before the final hyprctl reload.\n'
 printf 'The execution daemon remains a separate build and manually started process.\n'

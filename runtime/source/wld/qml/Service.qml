@@ -33,6 +33,7 @@ Item {
   property var history: []
   property var keyDisplay: KeyDisplay.create()
   property bool keyFeedAvailable: false
+  property string keyFeedError: "Native key events unavailable"
   property var heatmapState: ({version:1,active:null,sessions:[]})
   property string heatmapError: ""
   property var profileLibrary: ({presets:{},directory:""})
@@ -388,6 +389,7 @@ Item {
       if(r.event==="keys"){
         if(dialogs.capturing){root.dialogCaptureUntil=Date.now()+200;dialogs.receiveKeys(r.sample)}
         root.keyFeedAvailable=!!r.sample.available
+        root.keyFeedError=String(r.sample.error||"Native key events unavailable")
         root.keyClock=Date.now()
         if(!root.keysEnabled||r.sample.locked||!root.keyFeedAvailable)root.keyDisplay=KeyDisplay.create()
         else root.keyDisplay=KeyDisplay.accept(root.keyDisplay,r.sample.events||[],r.sample.held||[],root.keyClock)

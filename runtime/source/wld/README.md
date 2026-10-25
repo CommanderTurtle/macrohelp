@@ -9,6 +9,11 @@ Configuration and server startup: [Quick start](../../../quick-start.md).
 Input integration and source review: [Omarchy input](../../../docs/omarchy-input.md).
 HTTP/MCP control: [Overlay control](../../../docs/overlay-control.md).
 
+For the key/click HUD, heatmap and dialog shortcuts, load `input.lua` from your
+Hyprland config once. The build prints the exact include; follow the
+[input setup/migration](../../../quick-start.md#native-input-hud-and-heatmap).
+The runtime never bootstraps this observer over IPC.
+
 Left-click the bar widget to open its panel; right-click stops macros. The workflow
 editor is inside the popup, not a permanent bottom-screen textbox. Omarchy owns bar
 placement, popup geometry, theme, fonts and scaling. UI QML reloads on save; the
@@ -18,4 +23,5 @@ shell restart. This is not a separate Quickshell window or a system-tray process
 ```sh
 cargo test --locked --manifest-path runtime/source/wld/Cargo.toml
 bun test runtime/source/wld/tests
+lua runtime/source/wld/tests/input-feed.test.lua
 ```

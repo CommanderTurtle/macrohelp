@@ -199,6 +199,36 @@ The two binaries live under `$XDG_DATA_HOME/macrohelp/http-daemon/bin` and
 `$XDG_DATA_HOME/macrohelp/overlay.json`. Rebuild each component after its updates;
 restart the Omarchy shell after changing a kept-loaded overlay service.
 
+### Native input HUD and heatmap
+
+The input observer must be loaded by **Hyprland configuration**, not by the
+overlay over IPC. After building, add the exact Lua line printed by
+`runtime/source/wld/build.sh` once to your personal `~/.config/hypr/autostart.lua`
+(or the corresponding file under `$XDG_CONFIG_HOME`). It points to this checkout's
+`runtime/source/wld/input.lua`; it does not replace your personal `hypr/input.lua`.
+Then run `hyprctl reload` in that session. This is ordinary config-load code, not
+an `hl.on("hyprland.start", ...)` or exec-once callback: it also loads after leaving
+safe mode and on subsequent config reloads.
+
+This is a one-time migration for installations that previously bootstrapped the
+feed automatically. Rebuild the client too, and restart the Omarchy shell/client
+**before the final `hyprctl reload`**, so an old still-running client cannot
+reinject its embedded v2 feed over the new observer. Without the include, the View tab
+shows the setup requirement; Macrohelp deliberately does not inject a replacement
+feed. Keyboard HUD, click HUD, dialog shortcuts and heatmap need the observer;
+the other tools and execution backend remain independent.
+
+Observers register once per config lifetime. Sampling, hiding the HUD, locking,
+stopping the client, or lease expiry only clear/disable transient collection;
+none registers or removes mouse bindings. All three mouse buttons retain both
+edges and compositor-interpreted touchpad clicks. No evdev access, elevated input
+permissions, compositor plugin, or automatic config editing is required.
+
+The printed include skips a missing checkout. Remove it when uninstalling, then
+reload config to discard the observers. If the compositor itself restarts, restart
+the Omarchy shell/client in the new session as well; Macrohelp never guesses a
+different instance from another login or nested compositor.
+
 Remove using `omarchy plugin remove io.github.commanderturtle.macrohelp`, stop the
 foreground HTTP process separately and remove any sourced bindings. State/binaries
 and build caches remain under the paths above for optional manual removal.
