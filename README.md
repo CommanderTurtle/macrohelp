@@ -1,6 +1,6 @@
 # Macrohelp — a developer's best friend
 
-### A lightweight overlay runtime. (~300kb harness) for [Tasket++](https://github.com/AmirHammouteneEI/ScheduledPasteAndKeys)
+### A lightweight overlay runtime. (~300kb harness) for [Tasket++](https://github.com/AmirHammouteneEI/ScheduledPasteAndKeys) or [Omarsket](https://github.com/CommanderTurtle/omarsket)
 
 Circles! Shipped with computer-use Skill MCP for local models.
 

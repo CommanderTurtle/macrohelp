@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.commanderturtle.macrohelp",
   "name": "Macrohelp",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "author": "CommanderTurtle",
   "license": "AGPL-3.0-only",
   "description": "Floating Coordinates & Keymap visualizer for Omarsket macros. Macrohelp is an overlay and hook service for Omarsket macros in wayland; it provides pointer tools and an overlay client for the separately run controller. Press Alt+2 to get started. Control the mouse entirely with the keyboard, zero mouse needed. Build macros on the static web environment (no telemetry) at app.shel.sh/macro -- Complete with MCP & LLM Agent Skill Pack, so you're not the only one who can drive the mouse.",
