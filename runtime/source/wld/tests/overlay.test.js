@@ -24,11 +24,16 @@ test("shortcut refreshes coalesce, preserve known contracts on failure and ignor
   const s={ready:true,bindingsRefreshing:false,bindingsPending:false,bindingsEpoch:0,bindingsError:"",desktopBindings:[],shortcutRows:[],settings:{},call(r,cb){requests.push(cb)}}
   Object.assign(s,new Function("root","Workflow","bindingsDelay",`with(root){${code};return {refreshBindings,bindingEvent}}`)(s,W,delay))
   s.refreshBindings();s.refreshBindings();expect(requests).toHaveLength(1)
-  requests[0]([]);expect(requests).toHaveLength(2);expect(s.shortcutRows).toHaveLength(0)
+  requests[0]([]);expect(requests).toHaveLength(1);expect(delay.count).toBe(1)
+  s.refreshBindings()
   requests[1](bindings);expect(s.shortcutRows[0].chord).toBe("PRINT_SCREEN")
-  s.refreshBindings();requests[2](null,"offline");expect(s.shortcutRows[0].chord).toBe("PRINT_SCREEN");expect(s.bindingsError).toBe("offline")
-  s.refreshBindings();s.bindingsEpoch++;requests[3]([]);expect(s.shortcutRows[0].chord).toBe("PRINT_SCREEN")
+  var rows=s.shortcutRows,live=s.desktopBindings
+  s.refreshBindings();requests[2](bindings);expect(s.shortcutRows).toBe(rows);expect(s.desktopBindings).toBe(live)
+  s.refreshBindings();requests[3](null,"offline");expect(s.shortcutRows[0].chord).toBe("PRINT_SCREEN");expect(s.bindingsError).toBe("offline")
+  s.refreshBindings();s.bindingsEpoch++;requests[4]([]);expect(s.shortcutRows[0].chord).toBe("PRINT_SCREEN")
   for(const name of ["configreloaded","activelayout","activewindow","mousemove"])s.bindingEvent(name)
+  expect(delay.count).toBe(2)
+  for(var i=0;i<10000;i++){s.bindingEvent("activelayout");s.bindingEvent("activewindow");s.bindingEvent("focusedmon")}
   expect(delay.count).toBe(2)
 })
 

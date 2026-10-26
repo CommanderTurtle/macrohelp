@@ -12,15 +12,18 @@ They are derived by the same resolver used by workflow compilation. Missing
 contracts say **Not configured**; a failed compositor read is shown as an error,
 not an empty binding list.
 
-The display refreshes at controller startup, after config reload/layout events,
+The display refreshes at controller startup, after completed config reloads,
 on plugin-setting changes, or with **Refresh hotkeys**. Refresh is read-only: no
 key injection, binding registration, compositor reload, or draft/environment
-changes. Event bursts are debounced and overlapping reads are coalesced. The
+changes. Focus/layout notifications do not reread binding definitions. Unchanged
+snapshots retain their existing UI models, and slow binding reads use the bounded
+worker pool rather than the pointer/HUD sampling loop. Event bursts are debounced
+and overlapping reads are coalesced. The
 existing execution path still reads fresh bindings when preparing a workflow.
 Switching tray pages resets their scroll position.
 
 This uses [Quickshell's existing event stream](https://quickshell.org/docs/v0.1.0/types/Quickshell.Hyprland/Hyprland/)
-and [Hyprland's config/layout notifications](https://wiki.hypr.land/IPC/), not a
+and [Hyprland's config notifications](https://wiki.hypr.land/IPC/), not a
 new in-compositor input observer. Config-owned HUD hooks are unchanged.
 
 This package intentionally has two runtime folders:

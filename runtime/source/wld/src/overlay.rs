@@ -141,6 +141,13 @@ fn input_sample_with(
     value["locked"] = json!(!unlocked);
     Ok(value)
 }
+fn background_request(method: Option<&str>) -> bool {
+    matches!(
+        method,
+        Some("http" | "stop" | "regedited" | "rgd-read" | "rgd-strings" | "bindings")
+    )
+}
+
 pub fn hypr(command: &str) -> Result<Value> {
     #[cfg(unix)]
     {
@@ -677,9 +684,7 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
         match receiver.recv_timeout(Duration::from_millis(if tracking { 16 } else { 100 })) {
             Ok(line) => {
                 let response = match serde_json::from_str::<Value>(&line) {
-                    Ok(mut r)
-                        if matches!(r["method"].as_str(), Some("http" | "stop" | "regedited" | "rgd-read" | "rgd-strings")) =>
-                    {
+                    Ok(mut r) if background_request(r["method"].as_str()) => {
                         // Slow controller/tools I/O must not stall the pointer/key HUD.
                         requests.retain(|worker| !worker.is_finished());
                         if requests.len() >= 8 {
@@ -870,6 +875,20 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn shortcut_reads_use_bounded_workers_instead_of_stalling_the_hud_loop() {
+        assert!(background_request(Some("bindings")));
+        assert!(background_request(Some("http")));
+        for method in [
+            None,
+            Some("hello"),
+            Some("keys"),
+            Some("tracking"),
+            Some("control-reply"),
+        ] {
+            assert!(!background_request(method));
+        }
+    }
     #[test]
     fn missing_input_feed_never_bootstraps_compositor_code() {
         let mut commands = Vec::new();

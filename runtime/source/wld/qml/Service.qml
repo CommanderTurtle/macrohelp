@@ -45,16 +45,20 @@ Item {
     call({method:"bindings"},function(v,e){
       if(token!==root.bindingsEpoch)return
       root.bindingsRefreshing=false
-      if(root.bindingsPending){root.refreshBindings();return}
+      var again=root.bindingsPending;root.bindingsPending=false
       try {
         if(e)throw Error(e)
         if(!Array.isArray(v))throw Error("Native bindings unavailable")
         var rows=Workflow.shortcutRows(v,root.settings.shortcuts)
-        root.desktopBindings=v;root.shortcutRows=rows;root.bindingsError=""
+        if(JSON.stringify(root.desktopBindings)!==JSON.stringify(v))root.desktopBindings=v
+        if(JSON.stringify(root.shortcutRows)!==JSON.stringify(rows))root.shortcutRows=rows
+        root.bindingsError=""
       }catch(failure){root.bindingsError=failure.message}
+      if(again)bindingsDelay.restart()
     })
   }
-  function bindingEvent(name){if(name==="configreloaded"||name==="activelayout")bindingsDelay.restart()}
+  // Native bind definitions do not change when focus or the active layout does.
+  function bindingEvent(name){if(name==="configreloaded")bindingsDelay.restart()}
   Timer {id:bindingsDelay;interval:150;onTriggered:root.refreshBindings()}
   Connections {target:Hyprland;function onRawEvent(event){root.bindingEvent(event.name)}}
   onSettingsChanged:if(ready)refreshBindings()
