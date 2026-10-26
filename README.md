@@ -2,11 +2,25 @@
 
 ### A lightweight overlay runtime. (~300kb harness) for [Tasket++](https://github.com/AmirHammouteneEI/ScheduledPasteAndKeys)
 
+Circles! Shipped with computer-use Skill MCP for local models.
+
+Built with them in mind, and what they can use - zone math:
+
+https://github.com/user-attachments/assets/e3f4da20-7689-4dae-992d-30daf80da2ab
+
 Focused on QoL, coordinate capture, buffers, zone math, and translating intent into native Tasket `.scht` work through `tasket-httpd` daemon.
+
+On Hyprland in Linux, we maintain the python package, [wayland-automation](https://github.com/CommanderTurtle/Wayland-automation) for this. As well, packaging our own [Omarsket](https://github.com/CommanderTurtle/omarsket) - a linux fork of Tasket.
+
+Wayland packages remain separate from the source code for Windows. For Windows QT builds and development, all information is contained within the Quick Start, just as it is for linux. No binaries are shipped purposefully.
 
 The daemon is a natively built sidecar for a running Tasket instance, with full GET support for schedules and availability of a local tasket session.
 
+https://github.com/user-attachments/assets/68dd4d90-b1f2-44f1-94a8-9648ee998eca
+
 Macrohelp bundles machine code into readable instances that any automation friend would like to have on their machine.
+
+<img width="600" height="auto" alt="screenshot-2026-10-26_04-32-15" src="https://github.com/user-attachments/assets/f4dd4812-3de0-4780-a3b8-f083789e704f" />
 
 Not only is the harness capable of spawning macros and workflow stacks chained with if-then sequencing, but macrohelp natively visualizes the unit circle, and performs dot product translations and Unit-Circle visuals for moving the mouse off relative location. The final feature is a Dance-Dance revolution style keyboard history stylized with open-source [prompt-font](https://shinmera.com/docs/promptfont/)
 
