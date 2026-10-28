@@ -9,6 +9,23 @@ const bindings=[{modmask:68,key:"Print",description:"Extract text (OCR)",dispatc
 const context={tasks:[{name:"Saved"}],status:{scheduled:[],running:[],finished:[{task_number:1,state:"finished"}]},shortcuts:W.desktopShortcuts(bindings)}
 const compile=s=>W.compile(s,state(),context)
 
+test("display geometry is queried once at startup, never from the overlay loop",()=>{
+  const native=readFileSync(new URL("../src/overlay.rs",import.meta.url),"utf8")
+  const session=native.slice(native.indexOf("pub fn run()"),native.indexOf("#[cfg(test)]"))
+  const loop=session.indexOf("while !STOP.load")
+  expect(loop).toBeGreaterThan(0)
+  expect(session.match(/hypr\("monitors"\)/g)).toHaveLength(1)
+  expect(session.slice(0,loop)).toContain('let monitors = hypr("monitors")')
+  expect(session.slice(0,loop)).toContain("let scale = monitor_scale(&monitors);")
+  expect(session.slice(loop)).not.toContain('hypr("monitors")')
+  expect(session.slice(loop)).toContain("hello(&config, &monitors)")
+  expect(session.slice(loop)).toContain("cursor_event(cursor, scale)")
+  expect(native).not.toContain("last_monitors")
+  const service=readFileSync(new URL("../qml/Service.qml",import.meta.url),"utf8")
+  expect(service).toContain("root.monitors=value.monitors")
+  expect(service).not.toContain('r.event==="monitors"')
+})
+
 test("desktop shortcut rows use the same live contracts as workflow compilation",()=>{
   const rows=W.shortcutRows(bindings)
   expect(rows.find(r=>r.name==="Screenshot").chord).toBe("PRINT_SCREEN")

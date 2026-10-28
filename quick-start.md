@@ -178,7 +178,10 @@ saved `.env` path when necessary. The key remains in the native client, not QML.
 
 The bar panel provides workflows, 16 points, pointer paths, circle/vector math,
 timed keys and clicks, buffers, zones, task status and view controls. The HUD is
-click-through and follows Hyprland's monitor geometry. To opt into shortcuts,
+click-through and uses a complete Hyprland monitor snapshot cached once at overlay
+startup, including geometry, scale and refresh-rate data for every monitor. Display
+configuration is not polled; restart the Macrohelp plugin after changing it.
+To opt into shortcuts,
 copy/adapt `runtime/source/wld/bindings.lua` in `~/.config/hypr/bindings.lua`
 (or `dofile` it from the installed plugin path). These use quiet shell IPC:
 Shift+Alt+0 saves a point; 1 buffers; 2 workflow; 3 pointer tools; 4/5/6 clicks;

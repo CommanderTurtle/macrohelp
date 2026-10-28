@@ -412,7 +412,6 @@ Item {
         root.recordPathPoint()
         return
       }
-      if(r.event==="monitors"){root.monitors=r.monitors;return}
       if(r.event==="heatmap-session"){
         var book=Object.assign({},root.heatmapState);book.active=r.active
         book.sessions=(book.sessions||[]).map(function(s){return s.id===r.active?r.session:s})

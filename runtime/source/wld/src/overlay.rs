@@ -510,11 +510,17 @@ fn command(program: &str, args: &[&str], input: Option<Vec<u8>>) -> Result<Vec<u
     }
     Ok(data)
 }
+fn hello(config: &Config, monitors: &Value) -> Result<Value> {
+    let path = config.state_dir.join("overlay.json");
+    let state = if path.exists() {
+        read_state(&path)?
+    } else {
+        default_state()
+    };
+    Ok(json!({"state":state,"monitors":monitors,"endpoint":format!("http://{}",config.address)}))
+}
 fn handle(config: &Config, r: &Value) -> Result<Value> {
     match string(r, "method")? {
-        "hello" => Ok(
-            json!({"state":if config.state_dir.join("overlay.json").exists(){read_state(&config.state_dir.join("overlay.json"))?}else{default_state()},"monitors":hypr("monitors").unwrap_or(json!([])),"endpoint":format!("http://{}",config.address)}),
-        ),
         "http" => {
             let verb = string(r, "verb")?;
             if !["GET", "POST"].contains(&verb) {
@@ -678,8 +684,10 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let mut last_input = Instant::now() - Duration::from_secs(1);
     let mut last = json!(null);
     let mut last_poll = Instant::now() - Duration::from_secs(1);
-    let mut last_monitors = Instant::now() - Duration::from_secs(6);
-    let mut scale: f64 = 1.0;
+    // One complete display snapshot per overlay session, shared by hello and
+    // cursor projection. Restart Macrohelp after changing the display layout.
+    let monitors = hypr("monitors").unwrap_or_else(|_| json!([]));
+    let scale = monitor_scale(&monitors);
     while !STOP.load(Ordering::Relaxed) {
         match receiver.recv_timeout(Duration::from_millis(if tracking { 16 } else { 100 })) {
             Ok(line) => {
@@ -700,7 +708,9 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                     Ok(r) => {
-                        let result = if r["method"] == "control-start" {
+                        let result = if r["method"] == "hello" {
+                            hello(&config, &monitors)
+                        } else if r["method"] == "control-start" {
                             if let Some(server) = &control_server {
                                 Ok(json!({"enabled":true,"address":server.address.to_string()}))
                             } else {
@@ -771,15 +781,6 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
             Err(mpsc::RecvTimeoutError::Timeout) => (),
-        }
-        // Refresh geometry before the first cursor sample, and report scale-only
-        // changes even when the pointer has remained completely still.
-        if tracking && last_monitors.elapsed() >= Duration::from_secs(5) {
-            last_monitors = Instant::now();
-            if let Ok(monitors) = hypr("monitors") {
-                scale = monitor_scale(&monitors);
-                println!("{}", json!({"event":"monitors","monitors":monitors}));
-            }
         }
         if tracking && last_poll.elapsed() >= Duration::from_millis(8) {
             last_poll = Instant::now();
@@ -947,6 +948,39 @@ mod tests {
         .unwrap();
         assert_eq!(commands.len(), 1);
         assert!(commands[0].contains("sample(false,false)"));
+    }
+    #[test]
+    fn hello_reuses_all_startup_monitors_without_changing_cached_cursor_scale() {
+        let monitors = json!([
+            {"name":"DP-1","x":0,"y":0,"width":3840,"height":2160,"scale":2,"refreshRate":144.0},
+            {"name":"HDMI-A-1","x":-1920,"y":0,"width":1920,"height":1080,"scale":1,"refreshRate":60.0}
+        ]);
+        let config = Config {
+            address: "127.0.0.1:7777".parse().unwrap(),
+            key: String::new(),
+            env_file: Path::new("unused.env").into(),
+            state_dir: std::env::temp_dir().join(format!(
+                "macrohelp-display-cache-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            )),
+        };
+        let scale = monitor_scale(&monitors);
+        for cursor in [json!({"x":868,"y":573}), json!({"x":-960,"y":540})] {
+            let response = hello(&config, &monitors).unwrap();
+            assert_eq!(response["monitors"], monitors);
+            assert_eq!(response["state"], default_state());
+            assert_eq!(response["endpoint"], "http://127.0.0.1:7777");
+            let event = cursor_event(cursor.clone(), scale);
+            assert_eq!(event["cursor"], cursor);
+            assert_eq!(event["physical"]["x"], cursor["x"].as_f64().unwrap() * 2.0);
+            assert_eq!(event["physical"]["y"], cursor["y"].as_f64().unwrap() * 2.0);
+        }
+        assert_eq!(scale, 2.0);
+        assert_eq!(hello(&config, &json!([])).unwrap()["monitors"], json!([]));
     }
     #[test]
     fn physical_cursor_changes_with_scale_without_changing_logical_placement() {
