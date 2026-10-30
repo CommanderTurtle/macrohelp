@@ -2,7 +2,7 @@
 
 Reviewed 2026-10-25 against the supplied 16:23–16:34 session export, including
 its expanded thinking blocks, Macrohelp `b5c0c1e`, Omarsket `77b9988`,
-Wayland-automation `485fe1f`, wtype v0.4 and Hyprland v0.56.2 source.
+Wayland-automation `0aea350`, wtype v0.4 and Hyprland v0.56.2 source.
 
 ## What explains the Escape label
 
