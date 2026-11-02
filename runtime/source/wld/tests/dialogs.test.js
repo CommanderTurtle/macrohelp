@@ -111,7 +111,7 @@ test("Registry command router edits all persistent fields without treating field
 })
 
 test("Registry points/zones, help, clear, display and play use the existing environment",()=>{
-  const d=dialog("registry_hub");d.submit("1");d.submit("s",{x:-50,y:200});expect(d.environment.points[0]).toEqual([-50,200])
+  const d=dialog("registry_hub");d.submit("1");expect(d.submit("s",{x:1920,y:2124}).close).toBe(true);expect(d.environment.points[0]).toEqual([120,240])
   d.submit("n");d.submit("x");d.submit("1,2,3,4");expect(d.environment.zones.X).toEqual([1,2,3,4])
   d.submit("h");expect(d.state.stage).toBe("Help");expect(d.state.text).toContain("{profile name}");d.submit("")
   expect(d.submit("p").effects).toEqual([{kind:"play",origin:[120,240]}])
@@ -200,6 +200,16 @@ test("scaled dialogs capture physical pixels while placement and dismissal stay 
   expect(s.service.environment.points[2]).toEqual([1280,720])
   s.openDialog("circle_placer");s.edit("150i");s.submit();s.submit("z")
   expect(queued.at(-1)[0].cursormovsmap[0].slice(2)).toEqual([1430,720])
+})
+
+test("Registry quicksave stores the pre-warp pointer and closes asking for the return move",()=>{
+  const {s,closed}=controller()
+  s.service.cursor={x:868,y:572};s.service.physicalCursor={x:1736,y:1146}
+  s.openDialog("registry_hub")
+  s.service.cursor={x:960,y:1062};s.service.physicalCursor={x:1920,y:2124}
+  s.submit("3");s.submit("s")
+  expect(s.service.environment.points[2]).toEqual([1736,1146])
+  expect(s.dialogOpen).toBe(false);expect(closed.at(-1).restore).toBe(true)
 })
 
 test("QML handlers open, edit and submit through the model, retaining the captured origin",()=>{

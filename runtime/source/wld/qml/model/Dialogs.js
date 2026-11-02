@@ -183,7 +183,7 @@ function submit(original, text, env, cursor, W, monitors) {
       else if(s.stage==="ExportPath"||s.stage==="ImportPath")change("paths",s.stage==="ExportPath"?"export":"import",raw)
       else if(s.stage==="Shell")change("shells",s.slot,raw)
       else if(s.stage==="Var")change("vars",s.slot,raw)
-      else if(s.stage==="Point")change("points",Number(s.slot),["s","save","cursor"].indexOf(cmd)>=0?point(cursor):W.pointValue(raw,env,monitors))
+      else if(s.stage==="Point")if(["s","save","cursor"].indexOf(cmd)>=0){change("points",Number(s.slot),s.origin.slice());close=true}else change("points",Number(s.slot),W.pointValue(raw,env,monitors))
       else if(s.stage==="ZoneEdit")change("zones",s.slot,W.zoneValue(raw,env,monitors))
       back()
     }
