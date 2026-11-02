@@ -50,7 +50,7 @@ impl Config {
                 )
             })?)
             .map_err(|e| ApiError::new(400, e.to_string()))?;
-        if manifest["id"] != "io.github.commanderturtle.omarsket" {
+        if manifest["id"] != "omarsket" {
             return Err(ApiError::new(
                 400,
                 "OMARSKET_INSTALL is not the Omarsket plugin",

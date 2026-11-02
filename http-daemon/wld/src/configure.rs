@@ -40,7 +40,7 @@ pub fn initialize(path: &Path, explicit: Option<&str>) -> Result<()> {
             .or_else(|| std::env::var("OMARSKET_INSTALL").ok())
             .unwrap_or_else(|| {
                 format!(
-                    "{}/.config/omarchy/plugins/io.github.commanderturtle.omarsket",
+                    "{}/.config/omarchy/plugins/omarsket",
                     std::env::var("HOME").unwrap_or_default()
                 )
             });
@@ -66,7 +66,7 @@ pub fn initialize(path: &Path, explicit: Option<&str>) -> Result<()> {
             })?,
         )
         .map_err(|e| ApiError::new(400, e.to_string()))?;
-        if m["id"] != "io.github.commanderturtle.omarsket" || !Path::new(&install).is_absolute() {
+        if m["id"] != "omarsket" || !Path::new(&install).is_absolute() {
             return Err(ApiError::new(400, "Not an absolute Omarsket plugin path"));
         }
         let runtime = std::env::var("XDG_RUNTIME_DIR").map_err(|_| {

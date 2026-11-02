@@ -8,7 +8,7 @@ import "model/Workflow.js" as Workflow
 
 Ui.Panel {
   id:root
-  moduleName:"io.github.commanderturtle.macrohelp"
+  moduleName:"macrohelp"
   readonly property var app:bar&&bar.shell?bar.shell.serviceFor(moduleName):null
   readonly property var env:app?app.environment:({})
   readonly property color fg:Commons.Color.foreground

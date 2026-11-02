@@ -237,7 +237,7 @@ test("overlay uses native theme, empty input mask and non-secret helper",()=>{
   expect(service).not.toMatch(/API_KEY|X-Tasket-Key|https?:\/\/[^" ]+/)
   const shortcuts=readFileSync(new URL("../bindings.lua",base),"utf8")
   expect((shortcuts.match(/o\.bind\(/g)||[])).toHaveLength(10)
-  expect(shortcuts).toContain('omarchy-shell -q io.github.commanderturtle.macrohelp ')
+  expect(shortcuts).toContain('omarchy-shell -q macrohelp ')
   expect(service).toContain('if(r.event==="dialog")')
   expect(service).toContain('root.showDialog(kind)')
   expect(service).toContain('if(r.offline)')

@@ -1,5 +1,5 @@
 -- Optional examples for ~/.config/hypr/bindings.lua. Nothing installs these.
-local macrohelp = "omarchy-shell -q io.github.commanderturtle.macrohelp "
+local macrohelp = "omarchy-shell -q macrohelp "
 o.bind("SHIFT + ALT + 0", "Macrohelp: save point", macrohelp .. "point")
 o.bind("SHIFT + ALT + 1", "Macrohelp: buffers", macrohelp .. "page Buffers")
 o.bind("SHIFT + ALT + 2", "Macrohelp: workflow", macrohelp .. "page Workflow")

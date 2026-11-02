@@ -399,7 +399,7 @@ Item {
     id:emergency
     command:[root.helper,"stop"].concat(root.settings&&root.settings.envFile?["--env",String(root.settings.envFile)]:[])
   }
-  Process {id:disablePlugin;command:["omarchy","plugin","disable","io.github.commanderturtle.macrohelp"]}
+  Process {id:disablePlugin;command:["omarchy","plugin","disable","macrohelp"]}
   Process {
     id:runtime;command:root.helperCommand;stdinEnabled:true;running:true
     onStarted:root.call({method:"hello"},function(value,failure){if(failure)return;root.environment=value.state;root.monitors=value.monitors;root.endpoint=value.endpoint;root.ready=true;root.refresh();root.call({method:"control-start"},function(v,e){if(!e&&v.enabled)root.controlAddress=v.address;else if(e)root.error=e});root.call({method:"heatmap",action:"snapshot"},function(v,e){if(!e)root.heatmapState=v;else root.heatmapError=e})})

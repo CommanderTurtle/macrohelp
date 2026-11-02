@@ -8,7 +8,7 @@ set -eu
 cd "$(dirname "$0")/../.."
 
 # Omarsket is the sibling checkout under the same plugins/ directory.
-omarsket_dir="$(cd ../io.github.commanderturtle.omarsket && pwd)"
+omarsket_dir="$(cd ../omarsket && pwd)"
 
 bash http-daemon/wld/build.sh --omarsket "$omarsket_dir"
 bash runtime/source/wld/build.sh

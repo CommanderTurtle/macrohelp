@@ -165,9 +165,9 @@ Optional overlay plugin:
 ```sh
 omarchy plugin add https://github.com/CommanderTurtle/macrohelp.git
 # Leave disabled until its client is built:
-cd ~/.config/omarchy/plugins/io.github.commanderturtle.macrohelp
+cd ~/.config/omarchy/plugins/macrohelp
 bash runtime/source/wld/build.sh
-omarchy plugin enable io.github.commanderturtle.macrohelp
+omarchy plugin enable macrohelp
 ```
 
 The overlay build includes its own control API. It never builds, starts or supervises
@@ -254,7 +254,7 @@ reload config to discard the observers. If the compositor itself restarts, resta
 the Omarchy shell/client in the new session as well; Macrohelp never guesses a
 different instance from another login or nested compositor.
 
-Remove using `omarchy plugin remove io.github.commanderturtle.macrohelp`, stop the
+Remove using `omarchy plugin remove macrohelp`, stop the
 foreground HTTP process separately and remove any sourced bindings. State/binaries
 and build caches remain under the paths above for optional manual removal.
 

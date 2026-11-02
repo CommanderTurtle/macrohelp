@@ -31,11 +31,11 @@ Want to get into .ani cursors? Check out the bilbata rainbow fork for windows [h
 ## Install / remove
 
 Linux (Omarchy Quattro): build the overlay client, then enable the plugin —
-`bash runtime/source/wld/build.sh && omarchy plugin enable io.github.commanderturtle.macrohelp`
+`bash runtime/source/wld/build.sh && omarchy plugin enable macrohelp`
 after `omarchy plugin add https://github.com/CommanderTurtle/macrohelp.git`.
 Full prerequisites, the optional HTTP task daemon, MCP integration, and the
 optional Hyprland input observer are in the [Quick Start](./quick-start.md)
-(Linux section). Remove with `omarchy plugin remove io.github.commanderturtle.macrohelp`;
+(Linux section). Remove with `omarchy plugin remove macrohelp`;
 state, built binaries, and caches stay under `~/.local/share/macrohelp` and
 `~/.cache/macrohelp` for optional manual deletion. Windows build steps are in the
 [Quick Start](./quick-start.md) and [http-daemon/BUILD-FRESH-WINDOWS.md](./http-daemon/BUILD-FRESH-WINDOWS.md).

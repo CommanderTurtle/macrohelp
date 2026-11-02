@@ -11,7 +11,7 @@ Usage, from the checkout root (after omarsket's `scripts/updating/after-pull.sh`
 Sequence (the canonical flow, nothing else):
 
 1. `bash http-daemon/wld/build.sh --omarsket <omarsket checkout>`
-   (the sibling `../io.github.commanderturtle.omarsket`, derived at run time)
+   (the sibling `../omarsket`, derived at run time)
 2. `bash runtime/source/wld/build.sh`
 3. Stop the running (stale) `macrohelp-httpd` with TERM, then start the fresh
    binary:
