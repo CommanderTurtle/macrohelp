@@ -156,13 +156,13 @@ Wayland checks board inputs against already-known display bounds when available.
 Register the built MCP and guide with a client (no build, download or service startup):
 
 ```sh
-bash ./integrate.sh --target omp --dry-run
-bash ./integrate.sh --target omp
-bash ./integrate.sh --target hermes --profile NAME --env /absolute/overlay.env
-bash ./integrate.sh uninstall --target omp
+bash ./scripts/install/integrate.sh --target omp --dry-run
+bash ./scripts/install/integrate.sh --target omp
+bash ./scripts/install/integrate.sh --target hermes --profile NAME --env /absolute/overlay.env
+bash ./scripts/install/integrate.sh uninstall --target omp
 ```
 
-On Windows use `./integrate.ps1` with the same arguments. `--target all` selects
+On Windows use `./scripts/install/integrate.ps1` with the same arguments. `--target all` selects
 OMP and Hermes; named profiles must be explicitly selected. `--mcp PATH` overrides
 binary detection. `OMP_HOME` and `HERMES_HOME` override client directories.
 Existing unrelated servers/settings are preserved, changes are backed up beside

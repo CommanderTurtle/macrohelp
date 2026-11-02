@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parent.parent.parent
 SKILL = ROOT / "skills/macrohelp/SKILL.md"
 
 

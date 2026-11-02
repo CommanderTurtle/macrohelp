@@ -27,7 +27,7 @@ The model reuses the workspace's private window before launching another.
 Optional client registration (no clients/settings are changed until run):
 
 ```sh
-./integrate.sh --target omp --server localsurf --mcp /path/to/macrohelpctl --env /path/to/.env --bindings /path/to/bindings.json --dry-run
+./scripts/install/integrate.sh --target omp --server localsurf --mcp /path/to/macrohelpctl --env /path/to/.env --bindings /path/to/bindings.json --dry-run
 ```
 
 Remove `--dry-run` to register; add `uninstall` to remove only that registration
@@ -42,7 +42,7 @@ Host-only checks:
 
 ```sh
 python3 -m unittest discover -s runtime/source/mcp/localsurf -p 'test_*.py'
-python3 -m unittest discover -s scripts -p 'test_integrate.py'
+python3 -m unittest discover -s scripts/install -p 'test_integrate.py'
 ```
 
 Run `bun test tests/localsurf.test.js` from `runtime/source/wld` for the real QML

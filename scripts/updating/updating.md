@@ -4,9 +4,9 @@ One-shot re-initialization after `git pull` in this checkout.
 Prerequisite: initial setup done once per `quick-start.md` (both builds run
 once, plugin enabled, httpd started).
 
-Usage, from the checkout root (after omarsket's `updating/after-pull.sh`):
+Usage, from the checkout root (after omarsket's `scripts/updating/after-pull.sh`):
 
-    bash updating/after-pull.sh
+    bash scripts/updating/after-pull.sh
 
 Sequence (the canonical flow, nothing else):
 

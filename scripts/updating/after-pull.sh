@@ -1,11 +1,11 @@
 #!/bin/sh
 # Re-initialize macrohelp after pulling changes into this checkout.
-# Run from the checkout root: bash updating/after-pull.sh
+# Run from the checkout root: bash scripts/updating/after-pull.sh
 # Zero frills: this is the canonical update sequence, no tests.
 
 set -eu
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 
 # Omarsket is the sibling checkout under the same plugins/ directory.
 omarsket_dir="$(cd ../io.github.commanderturtle.omarsket && pwd)"
