@@ -44,12 +44,20 @@ fn exercise(executable: &std::ffi::OsStr, native: bool) {
         }
     });
     let key = "mcp-control-integration-key-0123456789";
+    let nonce_path = std::env::temp_dir().join(format!(
+        "macrohelp-control-test-{}-{}.nonce",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
     let server = Server::bind(
         Settings {
             address: ([127, 0, 0, 1], 0).into(),
             key: key.into(),
             cors: false,
-            nonce_file: None,
+            nonce_file: Some(nonce_path.clone()),
             nonce: None,
         },
         dispatch,
@@ -64,17 +72,7 @@ fn exercise(executable: &std::ffi::OsStr, native: bool) {
         .env("MACROHELP_CONTROL_PORT", server.address.port().to_string())
         .env("MACROHELP_CONTROL_KEY", key)
         .env("MACROHELP_CONTROL_ENABLED", "true")
-        .env(
-            "MACROHELP_CONTROL_NONCE",
-            format!(
-                "/macrohelp-control-test-{}-{}/control.nonce",
-                std::process::id(),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos()
-            ),
-        )
+        .env("MACROHELP_CONTROL_NONCE", &nonce_path)
         .env("MACROHELP_API_KEY", "")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

@@ -87,21 +87,23 @@ fn verify_control(
     address: std::net::SocketAddr,
     nonce_path: &std::path::Path,
 ) -> Result<()> {
-    let Ok(expected) = std::fs::read_to_string(nonce_path) else {
-        // Handshake disabled (no XDG_RUNTIME_DIR) or the overlay stopped.
-        return Ok(());
-    };
-    let expected = expected.trim().to_owned();
-    if expected.is_empty() {
-        return Ok(());
-    }
+    let expected = std::fs::read_to_string(nonce_path)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            ApiError::new(
+                503,
+                "Overlay control identity unverifiable; control key withheld (start the overlay service first)",
+            )
+        })?;
     write!(stream,"GET /v1/challenge HTTP/1.1\r\nHost: {address}\r\nConnection: keep-alive\r\n\r\n").map_err(|e| ApiError::new(503, e.to_string()))?;
     stream.flush().map_err(|e| ApiError::new(503, e.to_string()))?;
     let (status, value) = crate::overlay::read_single_response(stream)?;
     if status != 200 || value["result"]["nonce"].as_str() != Some(expected.as_str()) {
         return Err(ApiError::new(
             503,
-            "Overlay control identity unverified; control key withheld",
+            "Overlay control identity unverified; control key withheld (the port was claimed before the overlay started)",
         ));
     }
     Ok(())

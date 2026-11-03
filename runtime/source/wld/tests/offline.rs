@@ -129,25 +129,64 @@ fn slow_http_does_not_block_the_local_overlay() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let (release, wait) = mpsc::channel();
+    // The client proves the controller's identity (challenge -> owner-only
+    // nonce) before it releases the tasket key, so the stand-in answers the
+    // challenge first and only then sees the held, authenticated request.
+    let nonce = "offline-slow-nonce-0123456789abcdef00";
+    let nonce_path = std::env::temp_dir().join(format!(
+        "macrohelp-offline-slow-{}.nonce",
+        std::process::id()
+    ));
+    std::fs::write(&nonce_path, format!("{nonce}\n")).unwrap();
+    let child_nonce = nonce_path.clone();
     let server = std::thread::spawn(move || {
         let (mut socket, _) = listener.accept().unwrap();
         socket
             .set_read_timeout(Some(Duration::from_secs(2)))
             .unwrap();
-        let mut input = BufReader::new(&socket);
+        let mut reader = socket.try_clone().unwrap();
+        let mut input = BufReader::new(&mut reader);
         let mut length = 0;
+        let mut first_head = String::new();
         loop {
             let mut line = String::new();
             input.read_line(&mut line).unwrap();
             if line == "\r\n" {
                 break;
             }
+            first_head.push_str(&line);
+            if let Some(value) = line.strip_prefix("Content-Length: ") {
+                length = value.trim().parse::<usize>().unwrap();
+            }
+        }
+        input.read_exact(&mut vec![0; length]).unwrap();
+        assert!(first_head.starts_with("GET /challenge"));
+        let body = format!("{{\"success\":true,\"data\":{{\"nonce\":\"{nonce}\"}}}}");
+        write!(
+            socket,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n{}",
+            body.len(),
+            body
+        )
+        .unwrap();
+        socket.flush().unwrap();
+        length = 0;
+        let mut second_head = String::new();
+        loop {
+            let mut line = String::new();
+            input.read_line(&mut line).unwrap();
+            if line == "\r\n" {
+                break;
+            }
+            second_head.push_str(&line);
             if let Some(value) = line.strip_prefix("Content-Length: ") {
                 length = value.trim().parse::<usize>().unwrap();
             }
         }
         input.read_exact(&mut vec![0; length]).unwrap();
         drop(input);
+        drop(reader);
+        assert!(second_head.contains("X-Tasket-Key"));
         let _ = wait.recv_timeout(Duration::from_secs(3));
         let body = r#"{"success":true,"data":{"status":"ok"}}"#;
         write!(
@@ -163,6 +202,7 @@ fn slow_http_does_not_block_the_local_overlay() {
         .env("MACROHELP_API_KEY", "macrohelp-local-client-test-key")
         .env("MACROHELP_BIND", "127.0.0.1")
         .env("MACROHELP_PORT", port.to_string())
+        .env("MACROHELP_NONCE", &child_nonce)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

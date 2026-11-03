@@ -35,15 +35,38 @@ if [ -r "$ENV_FILE" ]; then
   key="$(sed -n 's/^MACROHELP_API_KEY=//p' "$ENV_FILE" | tail -1)"
 fi
 
+rt="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+NONCE_FILE="${MACROHELP_NONCE:-$rt/macrohelp/httpd.nonce}"
+
 probe() {
-  local body
+  local body expected got
+  # Fail closed: no readable handshake nonce means the daemon never started
+  # (clean exits remove it), so refuse to hand the key to whoever answers.
+  expected="$(cat "$NONCE_FILE" 2>/dev/null)" || expected=""
+  if [ -z "$expected" ]; then
+    echo "down: no handshake nonce at $NONCE_FILE — start macrohelp-httpd before probing" >&2
+    reason=start
+    return 1
+  fi
+  got="$(curl -fsS -m 3 "http://127.0.0.1:$port/challenge" 2>/dev/null \
+    | sed -n 's/.*"nonce":"\([a-f0-9]*\)".*/\1/p')"
+  if [ "$got" != "$expected" ]; then
+    if [ -z "$got" ]; then
+      echo "down: http://127.0.0.1:$port/challenge unreachable" >&2
+      reason=down
+    else
+      echo "down: controller identity unverified (the port was claimed before startup)" >&2
+      reason=identity
+    fi
+    return 1
+  fi
   # --config keeps the API key off argv, where other UIDs could read it in
   # /proc/<pid>/cmdline; the key travels on stdin instead.
   body="$(curl -fsS -m 3 --config - <<CONFIG 2>/dev/null
 url = "http://127.0.0.1:$port/health"
 header = "X-Tasket-Key: $key"
 CONFIG
-)" || return 1
+)" || { echo "down: health failed after verified identity" >&2; reason=down; return 1; }
   # /health only answers once the Omarsket snapshot round-trip succeeds,
   # so a 2xx here proves the execution path, not just the listener.
   echo "$body"
@@ -54,7 +77,10 @@ if body="$(probe)"; then
   exit 0
 fi
 
-echo "down: http://127.0.0.1:$port/health unreachable" >&2
+if [ "$start" -eq 1 ] && [ "${reason:-down}" = "identity" ]; then
+  echo "not starting: port $port is claimed by a non-controller listener" >&2
+  exit 1
+fi
 
 if [ "$start" -eq 1 ]; then
   [ -x "$BIN" ] || { echo "cannot start: $BIN missing" >&2; exit 1; }

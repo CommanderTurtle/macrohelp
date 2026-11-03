@@ -129,21 +129,23 @@ fn verify_controller(
     address: std::net::SocketAddr,
     nonce_path: &Path,
 ) -> Result<()> {
-    let Ok(expected) = fs::read_to_string(nonce_path) else {
-        // Handshake disabled (no XDG_RUNTIME_DIR) or the daemon stopped.
-        return Ok(());
-    };
-    let expected = expected.trim().to_owned();
-    if expected.is_empty() {
-        return Ok(());
-    }
+    let expected = fs::read_to_string(nonce_path)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            ApiError::new(
+                503,
+                "Controller identity unverifiable; API key withheld (start macrohelp-httpd: no handshake nonce file)",
+            )
+        })?;
     write!(stream,"GET /challenge HTTP/1.1\r\nHost: {address}\r\nConnection: keep-alive\r\n\r\n").map_err(io_error)?;
     stream.flush().map_err(io_error)?;
     let (status, value) = read_single_response(stream)?;
     if status != 200 || value["data"]["nonce"].as_str() != Some(expected.as_str()) {
         return Err(ApiError::new(
             503,
-            "Controller identity unverified; API key withheld",
+            "Controller identity unverified; API key withheld (the port was claimed before the controller started)",
         ));
     }
     Ok(())
@@ -1097,6 +1099,61 @@ mod tests {
         let value = http(&config, "GET", "/health", &json!({})).expect("verified request");
         assert_eq!(value["ok"], true);
         responder.join().unwrap();
+    }
+    fn absent_nonce_key_capture(label: &str, nonce: Option<&str>) -> (bool, String) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let dir = nonce_sandbox(label, "nonce-any");
+        let nonce_path = dir.join("current.nonce");
+        match nonce {
+            Some(text) => std::fs::write(&nonce_path, text).unwrap(),
+            None => {}
+        }
+        let config = Config {
+            nonce_file: Some(nonce_path),
+            ..test_config(address, &dir)
+        };
+        // Something answers on the port, cheerfully, to everything.
+        let responder = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let _ = stream.write_all(
+                b"HTTP/1.1 404 Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            );
+            let mut all = Vec::new();
+            let mut chunk = [0u8; 4096];
+            while let Ok(n) = stream.read(&mut chunk) {
+                if n == 0 {
+                    break;
+                }
+                all.extend_from_slice(&chunk[..n]);
+            }
+            all
+        });
+        let result = http(&config, "GET", "/health", &json!({}));
+        let refused = matches!(&result, Err(e) if e.message.contains("identity unverifiable"));
+        let text = String::from_utf8_lossy(&responder.join().unwrap()).into_owned();
+        (refused, text)
+    }
+    // A stopped daemon removes its handshake nonce; if an impostor binds the
+    // port before the real one starts, there is no expected nonce to compare
+    // against. Absent or empty, the persistent key stays home either way.
+    #[test]
+    fn absent_nonce_file_never_sees_the_key() {
+        let (refused, text) = absent_nonce_key_capture("nonce-absent", None);
+        assert!(refused, "expected unverifiable-identity refusal");
+        assert!(
+            !text.contains("X-Tasket-Key"),
+            "the tasket key was disclosed without a verifiable controller"
+        );
+    }
+    #[test]
+    fn empty_nonce_file_never_sees_the_key() {
+        let (refused, text) = absent_nonce_key_capture("nonce-empty", Some("\n"));
+        assert!(refused, "expected unverifiable-identity refusal");
+        assert!(
+            !text.contains("X-Tasket-Key"),
+            "the tasket key was disclosed without a verifiable controller"
+        );
     }
     #[test]
     fn start_httpd_reports_missing_binary() {

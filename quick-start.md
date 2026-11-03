@@ -165,10 +165,15 @@ write an owner-only nonce (`$XDG_RUNTIME_DIR/macrohelp/httpd.nonce` and
 `control.nonce`, override with `MACROHELP_NONCE`/`MACROHELP_CONTROL_NONCE`).
 Clients verify it over `GET /challenge` / `GET /v1/challenge` before sending
 any key, so a process under a different UID that pre-binds the port never
-sees the credential. `GET /secret` (authenticated) returns the current key to
-callers that already hold it. When calling the APIs from scripts, pass keys
-with `curl --config -` (header on stdin) rather than `-H`, which exposes them
-in `/proc/<pid>/cmdline`. The tray **Status** pane performs these health
+sees the credential. The check fails closed: while the service is not running
+(its nonce is absent) clients and status scripts refuse to probe with the key,
+and when `$XDG_RUNTIME_DIR` is absent the nonce lives in the state/data
+directory instead. Start the service (the tray Status pane can start the
+daemon) and probes succeed again. `GET /secret` (authenticated) returns the
+current key to callers that already hold it. When calling the APIs from
+scripts, pass keys with `curl --config -` (header on stdin) rather than `-H`,
+which exposes them in `/proc/<pid>/cmdline`. The tray **Status** pane performs
+these health
 checks, reconnects the native client, starts the daemon, and reveals the key
 without ever touching a command line.
 

@@ -122,15 +122,16 @@ impl Config {
             }
         }
         #[cfg(unix)]
-        let nonce_file = std::env::var("XDG_RUNTIME_DIR")
-            .ok()
-            .filter(|runtime| !runtime.is_empty())
-            .map(|runtime| {
-                PathBuf::from(get(
-                    "MACROHELP_NONCE",
-                    &format!("{runtime}/macrohelp/httpd.nonce"),
-                ))
-            });
+        let nonce_file = Some(PathBuf::from(get(
+            "MACROHELP_NONCE",
+            &match std::env::var("XDG_RUNTIME_DIR")
+                .ok()
+                .filter(|runtime| !runtime.is_empty())
+            {
+                Some(runtime) => format!("{runtime}/macrohelp/httpd.nonce"),
+                None => format!("{}/nonce/httpd.nonce", state_dir.display()),
+            },
+        )));
         #[cfg(not(unix))]
         let nonce_file: Option<PathBuf> = None;
         Ok(Self {

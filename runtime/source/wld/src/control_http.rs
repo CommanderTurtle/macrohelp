@@ -53,12 +53,19 @@ impl Settings {
             return Err(ApiError::new(400, "Invalid overlay control key"));
         }
         #[cfg(unix)]
-        let nonce_file = std::env::var("XDG_RUNTIME_DIR")
-            .ok()
-            .filter(|runtime| !runtime.is_empty())
-            .map(|runtime| {
-                std::path::PathBuf::from(get("MACROHELP_CONTROL_NONCE").filter(|p| !p.is_empty()).unwrap_or_else(|| format!("{runtime}/macrohelp/control.nonce")))
-            });
+        let nonce_file = Some(std::path::PathBuf::from(
+            get("MACROHELP_CONTROL_NONCE")
+                .filter(|p| !p.is_empty())
+                .unwrap_or_else(|| {
+                    match std::env::var("XDG_RUNTIME_DIR")
+                        .ok()
+                        .filter(|runtime| !runtime.is_empty())
+                    {
+                        Some(runtime) => format!("{runtime}/macrohelp/control.nonce"),
+                        None => format!("{}/control.nonce", config.state_dir.display()),
+                    }
+                }),
+        ));
         #[cfg(not(unix))]
         let nonce_file: Option<std::path::PathBuf> = None;
         Ok(Some(Self {

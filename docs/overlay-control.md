@@ -100,9 +100,12 @@ handshake before any client credential is sent: each writes an owner-only
 nonce (`$XDG_RUNTIME_DIR/macrohelp/control.nonce`, `httpd.nonce`, override with
 `MACROHELP_CONTROL_NONCE`/`MACROHELP_NONCE`) and clients verify it via
 `GET /v1/challenge` / `GET /challenge` first, so a foreign process that
-pre-binds the port never observes the key. `GET /secret` on the task
-controller (port 7777, authenticated) returns the current key to callers that
-already hold it.
+pre-binds the port never observes the key. The check fails closed: without a
+readable nonce (the service never started or exited cleanly) clients refuse to
+send the key at all, and when `$XDG_RUNTIME_DIR` is absent the nonce falls
+back to `<state dir>/nonce/httpd.nonce` / `<state dir>/control.nonce`.
+`GET /secret` on the task controller (port 7777, authenticated) returns the
+current key to callers that already hold it.
 
 The body may also be a JSON-encoded CSV string:
 `"2,Z,\"{type hello, world}\",P,no-replace"`. Quote comma-containing fields;

@@ -88,3 +88,42 @@ fn prebound_impostor_never_sees_the_bearer_key() {
     assert!(text.contains("GET /v1/challenge"));
     assert!(!text.contains("Authorization"));
 }
+
+// A stopped overlay removes nothing it wrote, but a never-started one leaves
+// no nonce at all. With nothing to compare against, the MCP/CLI client must
+// keep the bearer token home rather than trust whoever owns the port.
+#[test]
+fn impostor_without_a_nonce_file_never_sees_the_bearer_key() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let dir = sandbox("control-nonce-absent");
+    let settings = Settings {
+        address,
+        key: KEY.into(),
+        cors: false,
+        nonce_file: Some(dir.join("never-written.nonce")),
+        nonce: None,
+    };
+    let responder = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let _ = stream.write_all(
+            b"HTTP/1.1 401 Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        );
+        let mut all = Vec::new();
+        let mut chunk = [0u8; 4096];
+        while let Ok(n) = stream.read(&mut chunk) {
+            if n == 0 {
+                break;
+            }
+            all.extend_from_slice(&chunk[..n]);
+        }
+        all
+    });
+    let result = control_mcp::http(&settings, "GET", "/v1/health", &json!({}));
+    assert!(
+        matches!(&result, Err(e) if e.message.contains("identity unverifiable")),
+        "expected unverifiable-identity refusal, got {result:?}"
+    );
+    let text = String::from_utf8_lossy(&responder.join().unwrap()).into_owned();
+    assert!(!text.contains("Authorization"));
+}

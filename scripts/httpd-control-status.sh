@@ -33,12 +33,37 @@ if [ -n "$env_file" ] && [ -r "$env_file" ]; then
 fi
 port="${port:-7778}"
 
+rt="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+NONCE_FILE="${MACROHELP_CONTROL_NONCE:-$rt/macrohelp/control.nonce}"
+
 probe() {
-  local key
+  local key expected got
   key="$(cat "$STATE_DIR/control-key" 2>/dev/null)" || {
     echo "down: no control key at $STATE_DIR/control-key" >&2
+    reason=start
     return 1
   }
+  # Fail closed: unless the listener echoes the owner-only handshake nonce,
+  # it never sees the bearer token (an impostor that claimed the port first
+  # would otherwise harvest it and replay it against the real overlay).
+  expected="$(cat "$NONCE_FILE" 2>/dev/null)" || expected=""
+  if [ -z "$expected" ]; then
+    echo "down: no handshake nonce at $NONCE_FILE — start the overlay service before probing" >&2
+    reason=start
+    return 1
+  fi
+  got="$(curl -fsS -m 3 "http://127.0.0.1:$port/v1/challenge" 2>/dev/null \
+    | sed -n 's/.*"nonce":"\([a-f0-9]*\)".*/\1/p')"
+  if [ "$got" != "$expected" ]; then
+    if [ -z "$got" ]; then
+      echo "down: http://127.0.0.1:$port/v1/challenge unreachable" >&2
+      reason=down
+    else
+      echo "down: overlay identity unverified (the port was claimed before startup)" >&2
+      reason=identity
+    fi
+    return 1
+  fi
   # --config keeps the bearer token off argv, where other UIDs could read it
   # in /proc/<pid>/cmdline; the key travels on stdin instead.
   curl -fsS -m 3 --config - <<CONFIG 2>/dev/null
@@ -52,7 +77,10 @@ if body="$(probe)"; then
   exit 0
 fi
 
-echo "down: http://127.0.0.1:$port/v1/health unreachable" >&2
+if [ "$start" -eq 1 ] && [ "${reason:-down}" = "identity" ]; then
+  echo "not starting: port $port is claimed by a non-overlay listener" >&2
+  exit 1
+fi
 
 if [ "$start" -eq 1 ]; then
   [ -x "$CTL_BIN" ] || { echo "cannot start: $CTL_BIN missing" >&2; exit 1; }
