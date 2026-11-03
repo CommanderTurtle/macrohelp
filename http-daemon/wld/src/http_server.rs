@@ -401,8 +401,39 @@ pub fn write_handshake_file(path: &std::path::Path) -> Result<String> {
         .map_err(|e| ApiError::new(500, format!("Handshake file: {e}")))?;
     Ok(nonce)
 }
-pub fn remove_handshake_file(path: &std::path::Path) {
+pub fn remove_handshake_file(path: &std::path::Path, owner: &str) {
+    // Only the writer of the current contents may unlink: a draining
+    // predecessor must not delete a successor's freshly written nonce.
+    if owner.is_empty()
+        || std::fs::read_to_string(path)
+            .map(|value| value.trim() != owner)
+            .unwrap_or(true)
+    {
+        return;
+    }
     let _ = std::fs::remove_file(path);
+}
+
+#[cfg(test)]
+mod cleanup_tests {
+    use super::remove_handshake_file;
+    #[test]
+    fn only_the_current_owner_unlinks_the_nonce() {
+        let path = std::env::temp_dir().join(format!(
+            "macrohelp-ownernonce-{}.nonce",
+            std::process::id()
+        ));
+        std::fs::write(&path, "second-daemon-nonce\n").unwrap();
+        remove_handshake_file(&path, "first-daemon-nonce");
+        assert!(path.exists(), "a draining predecessor unlinked a successor's nonce");
+        remove_handshake_file(&path, "second-daemon-nonce");
+        assert!(!path.exists());
+        remove_handshake_file(&path, "whoever");
+        std::fs::write(&path, "x").unwrap();
+        remove_handshake_file(&path, "");
+        assert!(path.exists(), "an owner-less daemon must not unlink at all");
+        std::fs::remove_file(&path).unwrap();
+    }
 }
 fn read_headers(stream: &mut TcpStream) -> Result<Head> {
     let deadline = Instant::now() + Duration::from_secs(3);

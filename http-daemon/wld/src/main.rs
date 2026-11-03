@@ -71,6 +71,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         },
         None => String::new(),
     };
+    let cleanup_nonce = nonce.clone();
     let app = Arc::new(App::new(Runner::new(config.clone(), executor), nonce));
     app.runner.snapshot()?;
     let _blink = ensure_blink_task(&app);
@@ -95,7 +96,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     serve(server, app.clone(), stop);
     remove_blink_task(&app);
     if let Some(path) = &config.nonce_file {
-        remove_handshake_file(path);
+        remove_handshake_file(path, &cleanup_nonce);
     }
     Ok(())
 }
