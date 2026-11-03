@@ -1,6 +1,6 @@
 use macrohelp_wayland::{
     config::Config,
-    http_server::{App, serve},
+    http_server::{App, remove_handshake_file, serve, write_handshake_file},
     task_executor::SocketExecutor,
     task_runner::Runner,
 };
@@ -58,7 +58,20 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let executor = Arc::new(SocketExecutor {
         path: config.socket.clone(),
     });
-    let app = Arc::new(App::new(Runner::new(config.clone(), executor)));
+    let nonce = match config.nonce_file.as_ref() {
+        Some(path) => match write_handshake_file(path) {
+            Ok(nonce) => {
+                eprintln!("Handshake nonce: {}", path.display());
+                nonce
+            }
+            Err(error) => {
+                eprintln!("Handshake disabled: {}", error.message);
+                String::new()
+            }
+        },
+        None => String::new(),
+    };
+    let app = Arc::new(App::new(Runner::new(config.clone(), executor), nonce));
     app.runner.snapshot()?;
     let _blink = ensure_blink_task(&app);
     let server = Arc::new(std::net::TcpListener::bind(config.address)?);
@@ -81,6 +94,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     });
     serve(server, app.clone(), stop);
     remove_blink_task(&app);
+    if let Some(path) = &config.nonce_file {
+        remove_handshake_file(path);
+    }
     Ok(())
 }
 

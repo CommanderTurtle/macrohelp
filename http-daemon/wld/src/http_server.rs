@@ -17,7 +17,9 @@ use std::{
 };
 pub const ROUTES: &[(&str, &str)] = &[
     ("GET", "/"),
+    ("GET", "/challenge"),
     ("GET", "/health"),
+    ("GET", "/secret"),
     ("GET", "/tasks"),
     ("GET", "/run"),
     ("POST", "/run"),
@@ -35,13 +37,15 @@ pub struct App {
     pub runner: Runner,
     entrypoints: Mutex<BTreeMap<String, Value>>,
     grid: Mutex<BTreeMap<String, Value>>,
+    pub nonce: String,
 }
 impl App {
-    pub fn new(runner: Runner) -> Self {
+    pub fn new(runner: Runner, nonce: String) -> Self {
         Self {
             runner,
             entrypoints: Mutex::new(BTreeMap::new()),
             grid: Mutex::new(BTreeMap::new()),
+            nonce,
         }
     }
     pub fn dispatch(
@@ -75,6 +79,10 @@ impl App {
                     json!({"status":"ok","address":format!("http://{}",self.runner.config.address),"tasks_dir":format!("{}/schedules",s["directory"].as_str().unwrap_or("")),"task_count":s["tasks"].as_array().map_or(0,Vec::len),"backend":"omarsket","shared_queue":true}),
                 ))
             }
+            ("GET", "/secret") => Ok(ok(
+                "Secret",
+                json!({"key":self.runner.config.key,"listen_address":format!("http://{}",self.runner.config.address)}),
+            )),
             ("GET", "/tasks") => {
                 self.runner.executor.call(json!({"method":"reload"}))?;
                 let s = self.runner.snapshot()?;
@@ -229,89 +237,108 @@ impl App {
         if stream.set_nonblocking(false).is_err() {
             return;
         }
-        let result = (|| -> Result<Value> {
-            let (method, target, headers, mut bytes) = read_headers(&mut stream)?;
-            if method == "OPTIONS" && self.runner.config.cors {
-                let (path,_) = split_target(&target)?;
-                let requested = headers.get("access-control-request-method").map(String::as_str).unwrap_or("");
-                if !ROUTES.iter().any(|(m,p)| *m == requested && *p == path) { return Err(ApiError::new(404,"Not Found")); }
-                return Ok(ok("CORS preflight",json!({})));
-            }
-            let key = headers
-                .get("x-tasket-key")
-                .ok_or_else(|| ApiError::new(401, "Missing X-Tasket-Key header"))?;
-            if !same_key(key.as_bytes(), self.runner.config.key.as_bytes()) {
-                return Err(ApiError::new(403, "Invalid API key"));
-            }
-            if !self.runner.config.cors && (headers
-                .get("sec-fetch-site")
-                .is_some_and(|v| v == "cross-site")
-                || headers.contains_key("origin"))
-            {
-                return Err(ApiError::new(
-                    403,
-                    "Browser-origin requests are not enabled",
-                ));
-            }
-            let (path, query) = split_target(&target)?;
-            if headers.contains_key("transfer-encoding") {
-                return Err(ApiError::new(
-                    400,
-                    "Use Content-Length, not Transfer-Encoding",
-                ));
-            }
-            let length = headers
-                .get("content-length")
-                .map(|v| {
-                    v.parse::<usize>()
-                        .map_err(|_| ApiError::new(400, "Invalid Content-Length"))
-                })
-                .transpose()?
-                .unwrap_or(0);
-            if length > 2 * 1024 * 1024 {
-                return Err(ApiError::new(413, "Body exceeds 2 MiB"));
-            }
-            if headers.contains_key("expect") {
-                return Err(ApiError::new(417, "Expect is not supported"));
-            }
-            let deadline = Instant::now() + Duration::from_secs(3);
-            while bytes.len() < length {
-                let mut chunk = [0; 8192];
-                let size = chunk.len().min(length - bytes.len());
-                let n = read_before(&mut stream, &mut chunk[..size], deadline)?;
-                bytes.extend_from_slice(&chunk[..n]);
-            }
-            bytes.truncate(length);
-            let body = if bytes.is_empty() {
-                json!({})
-            } else {
-                serde_json::from_slice::<Value>(&bytes)
-                    .map_err(|e| ApiError::new(400, format!("Invalid JSON: {e}")))?
+        let mut challenge_open = true;
+        loop {
+            let step = (|| -> Result<(Value, bool)> {
+                let (method, target, headers, mut bytes) = read_headers(&mut stream)?;
+                if method == "OPTIONS" && self.runner.config.cors {
+                    let (path,_) = split_target(&target)?;
+                    let requested = headers.get("access-control-request-method").map(String::as_str).unwrap_or("");
+                    if !ROUTES.iter().any(|(m,p)| *m == requested && *p == path) { return Err(ApiError::new(404,"Not Found")); }
+                    return Ok((ok("CORS preflight",json!({})), false));
+                }
+                let (path, query) = split_target(&target)?;
+                // Server-identity proof runs before any client credential is
+                // accepted, so a pre-bound impostor never observes the key.
+                if method == "GET" && path == "/challenge" && challenge_open {
+                    if self.nonce.is_empty() {
+                        return Err(ApiError::new(503, "Handshake unavailable"));
+                    }
+                    let keep_alive =
+                        !headers.get("connection").is_some_and(|v| v.eq_ignore_ascii_case("close"));
+                    return Ok((ok("Handshake", json!({"nonce": self.nonce})), keep_alive));
+                }
+                let key = headers
+                    .get("x-tasket-key")
+                    .ok_or_else(|| ApiError::new(401, "Missing X-Tasket-Key header"))?;
+                if !same_key(key.as_bytes(), self.runner.config.key.as_bytes()) {
+                    return Err(ApiError::new(403, "Invalid API key"));
+                }
+                if !self.runner.config.cors && (headers
+                    .get("sec-fetch-site")
+                    .is_some_and(|v| v == "cross-site")
+                    || headers.contains_key("origin"))
+                {
+                    return Err(ApiError::new(
+                        403,
+                        "Browser-origin requests are not enabled",
+                    ));
+                }
+                if headers.contains_key("transfer-encoding") {
+                    return Err(ApiError::new(
+                        400,
+                        "Use Content-Length, not Transfer-Encoding",
+                    ));
+                }
+                let length = headers
+                    .get("content-length")
+                    .map(|v| {
+                        v.parse::<usize>()
+                            .map_err(|_| ApiError::new(400, "Invalid Content-Length"))
+                    })
+                    .transpose()?
+                    .unwrap_or(0);
+                if length > 2 * 1024 * 1024 {
+                    return Err(ApiError::new(413, "Body exceeds 2 MiB"));
+                }
+                if headers.contains_key("expect") {
+                    return Err(ApiError::new(417, "Expect is not supported"));
+                }
+                let deadline = Instant::now() + Duration::from_secs(3);
+                while bytes.len() < length {
+                    let mut chunk = [0; 8192];
+                    let size = chunk.len().min(length - bytes.len());
+                    let n = read_before(&mut stream, &mut chunk[..size], deadline)?;
+                    bytes.extend_from_slice(&chunk[..n]);
+                }
+                bytes.truncate(length);
+                let body = if bytes.is_empty() {
+                    json!({})
+                } else {
+                    serde_json::from_slice::<Value>(&bytes)
+                        .map_err(|e| ApiError::new(400, format!("Invalid JSON: {e}")))?
+                };
+                if !body.is_object() {
+                    return Err(ApiError::new(400, "JSON body must be an object"));
+                }
+                Ok((self.dispatch(&method, &path, &query, &body)?, false))
+            })();
+            let (status, payload, keep_alive) = match step {
+                Ok((value, keep_alive)) => (200, value, keep_alive),
+                Err(e) => (e.status, failure(&e), false),
             };
-            if !body.is_object() {
-                return Err(ApiError::new(400, "JSON body must be an object"));
+            let body = payload.to_string();
+            let cors = if self.runner.config.cors { "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: X-Tasket-Key, Content-Type\r\nAccess-Control-Allow-Private-Network: true\r\n" } else { "" };
+            let _ = stream.set_write_timeout(Some(Duration::from_secs(3)));
+            let _ = write!(
+                stream,
+                "HTTP/1.1 {status} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nConnection: {}\r\n{cors}\r\n{body}",
+                if status == 200 { "OK" } else { "Error" },
+                body.len(),
+                if keep_alive { "keep-alive" } else { "close" }
+            );
+            if keep_alive {
+                challenge_open = false;
+                continue;
             }
-            self.dispatch(&method, &path, &query, &body)
-        })();
-        let (status, body) = match result {
-            Ok(v) => (200, v),
-            Err(e) => (e.status, failure(&e)),
-        };
-        let body = body.to_string();
-        let cors = if self.runner.config.cors { "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: X-Tasket-Key, Content-Type\r\nAccess-Control-Allow-Private-Network: true\r\n" } else { "" };
-        let _ = stream.set_write_timeout(Some(Duration::from_secs(3)));
-        let _ = write!(
-            stream,
-            "HTTP/1.1 {status} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n{cors}\r\n{body}",
-            if status == 200 { "OK" } else { "Error" },
-            body.len()
-        );
-        // Send FIN before dropping a rejected upload; an unread body must not
-        // turn a complete JSON error response into a TCP reset on Windows.
-        let _ = stream.shutdown(std::net::Shutdown::Write);
-        let until = Instant::now() + Duration::from_millis(50);
-        let mut rest = [0; 8192];
-        while read_before(&mut stream, &mut rest, until).is_ok() {}
+            // Send FIN before dropping a rejected upload; an unread body must not
+            // turn a complete JSON error response into a TCP reset on Windows.
+            let _ = stream.shutdown(std::net::Shutdown::Write);
+            let until = Instant::now() + Duration::from_millis(50);
+            let mut rest = [0; 8192];
+            while read_before(&mut stream, &mut rest, until).is_ok() {}
+            return;
+        }
     }
 }
 type Head = (String, String, BTreeMap<String, String>, Vec<u8>);
@@ -335,6 +362,47 @@ fn read_before(stream: &mut TcpStream, chunk: &mut [u8], deadline: Instant) -> R
             "Cannot read request",
         )),
     }
+}
+/// Writes the owner-private handshake nonce the real daemon must echo before
+/// any client discloses its API key; a foreign UID cannot read this file.
+pub fn write_handshake_file(path: &std::path::Path) -> Result<String> {
+    use std::io::Read;
+    let mut seed = [0u8; 16];
+    let mut urandom = std::fs::File::open("/dev/urandom")
+        .map_err(|e| ApiError::new(500, format!("Handshake entropy: {e}")))?;
+    urandom
+        .read_exact(&mut seed)
+        .map_err(|e| ApiError::new(500, format!("Handshake entropy: {e}")))?;
+    let nonce = seed
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| ApiError::new(500, format!("Handshake directory: {e}")))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
+        }
+    }
+    #[allow(unused_mut)]
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600).custom_flags(libc::O_CLOEXEC);
+    }
+    let mut file = options
+        .open(path)
+        .map_err(|e| ApiError::new(500, format!("Handshake file: {e}")))?;
+    file.write_all(nonce.as_bytes())
+        .map_err(|e| ApiError::new(500, format!("Handshake file: {e}")))?;
+    Ok(nonce)
+}
+pub fn remove_handshake_file(path: &std::path::Path) {
+    let _ = std::fs::remove_file(path);
 }
 fn read_headers(stream: &mut TcpStream) -> Result<Head> {
     let deadline = Instant::now() + Duration::from_secs(3);
@@ -394,7 +462,9 @@ fn tool_inventory() -> Vec<Value> {
         ("List Entrypoints","List entrypoint values.","/entrypoints","GET","/entrypoints"),
         ("Set Grid Cell","Set a grid value.","/grid","POST",r#"{"id":"grid-0","value":"42"}"#),
         ("List Grid","List grid cells.","/grid","GET","/grid"),
-        ("Health Check","Check controller and Omarsket connectivity.","/health","GET","/health")
+        ("Health Check","Check controller and Omarsket connectivity.","/health","GET","/health"),
+        ("Identity Challenge","Handshake nonce proof; no credential required.","/challenge","GET","/challenge"),
+        ("View API Key","Return the configured key to an already-authenticated caller.","/secret","GET","/secret")
     ].iter().map(|(name,description,endpoint,method,example)|json!({"name":name,"description":description,"endpoint":endpoint,"method":method,"example":example})).collect()
 }
 pub fn same_key(a: &[u8], b: &[u8]) -> bool {

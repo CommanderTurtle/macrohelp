@@ -15,6 +15,7 @@ pub struct Config {
     pub cors: bool,
     pub env_file: PathBuf,
     pub state_dir: PathBuf,
+    pub nonce_file: Option<PathBuf>,
 }
 impl Config {
     pub fn load(path: &Path) -> Result<Self> {
@@ -120,6 +121,18 @@ impl Config {
                 ));
             }
         }
+        #[cfg(unix)]
+        let nonce_file = std::env::var("XDG_RUNTIME_DIR")
+            .ok()
+            .filter(|runtime| !runtime.is_empty())
+            .map(|runtime| {
+                PathBuf::from(get(
+                    "MACROHELP_NONCE",
+                    &format!("{runtime}/macrohelp/httpd.nonce"),
+                ))
+            });
+        #[cfg(not(unix))]
+        let nonce_file: Option<PathBuf> = None;
         Ok(Self {
             install,
             socket,
@@ -130,6 +143,7 @@ impl Config {
             cors: get("MACROHELP_CORS", "false") == "true",
             env_file: path.to_path_buf(),
             state_dir,
+            nonce_file,
         })
     }
 }

@@ -90,6 +90,9 @@ pub fn http(config: &Config, method: &str, path: &str, body: &Value) -> Result<V
     stream
         .set_write_timeout(Some(Duration::from_secs(5)))
         .map_err(io_error)?;
+    if let Some(nonce_path) = config.nonce_file.as_ref() {
+        verify_controller(&mut stream, config.address, nonce_path)?;
+    }
     let text = body.to_string();
     write!(stream,"{method} {path} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\nX-Tasket-Key: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{text}",config.address,config.key,text.len()).map_err(io_error)?;
     let mut bytes = Vec::new();
@@ -118,6 +121,116 @@ pub fn http(config: &Config, method: &str, path: &str, body: &Value) -> Result<V
     }
     Ok(value["data"].clone())
 }
+/// Proves the listener owns the owner-private handshake nonce before the API
+/// key is written. A different UID pre-bound the port cannot read that file,
+/// so the impostor is rejected and the key never enters the TCP stream.
+fn verify_controller(
+    stream: &mut TcpStream,
+    address: std::net::SocketAddr,
+    nonce_path: &Path,
+) -> Result<()> {
+    let Ok(expected) = fs::read_to_string(nonce_path) else {
+        // Handshake disabled (no XDG_RUNTIME_DIR) or the daemon stopped.
+        return Ok(());
+    };
+    let expected = expected.trim().to_owned();
+    if expected.is_empty() {
+        return Ok(());
+    }
+    write!(stream,"GET /challenge HTTP/1.1\r\nHost: {address}\r\nConnection: keep-alive\r\n\r\n").map_err(io_error)?;
+    stream.flush().map_err(io_error)?;
+    let (status, value) = read_single_response(stream)?;
+    if status != 200 || value["data"]["nonce"].as_str() != Some(expected.as_str()) {
+        return Err(ApiError::new(
+            503,
+            "Controller identity unverified; API key withheld",
+        ));
+    }
+    Ok(())
+}
+pub(crate) fn read_single_response(stream: &mut TcpStream) -> Result<(u16, serde_json::Value)> {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .map_err(io_error)?;
+    let mut data = Vec::new();
+    let mut chunk = [0u8; 4096];
+    let end = loop {
+        if let Some(at) = data.windows(4).position(|s| s == b"\r\n\r\n") {
+            break at + 4;
+        }
+        if data.len() > 16384 {
+            return Err(ApiError::new(502, "Handshake headers exceed 16 KiB"));
+        }
+        let n = stream.read(&mut chunk).map_err(io_error)?;
+        if n == 0 {
+            return Err(ApiError::new(502, "Handshake connection closed"));
+        }
+        data.extend_from_slice(&chunk[..n]);
+    };
+    let head = String::from_utf8_lossy(&data[..end]).into_owned();
+    let status = head
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse::<u16>().ok())
+        .ok_or_else(|| ApiError::new(502, "Invalid handshake status"))?;
+    let length = head
+        .lines()
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            if name.trim().eq_ignore_ascii_case("content-length") {
+                Some(value.trim().parse::<usize>())
+            } else {
+                None
+            }
+        })
+        .transpose()
+        .map_err(|_| ApiError::new(502, "Invalid handshake length"))?
+        .unwrap_or(0);
+    let mut body = data[end..].to_vec();
+    while body.len() < length {
+        let n = stream.read(&mut chunk).map_err(io_error)?;
+        if n == 0 {
+            return Err(ApiError::new(502, "Handshake body truncated"));
+        }
+        body.extend_from_slice(&chunk[..n]);
+    }
+    let value: serde_json::Value = if body[..length].is_empty() {
+        // Error responses legitimately carry no body; the status decides.
+        serde_json::Value::Null
+    } else {
+        serde_json::from_slice(&body[..length])
+            .map_err(|_| ApiError::new(502, "Invalid handshake JSON"))?
+    };
+    Ok((status, value))
+}
+fn start_httpd(config: &Config) -> Result<serde_json::Value> {
+    if http(config, "GET", "/health", &serde_json::json!({})).is_ok() {
+        return Ok(serde_json::json!({"started":false,"reason":"already running"}));
+    }
+    let binary = config.state_dir.join("http-daemon/bin/macrohelp-httpd");
+    if !binary.is_file() {
+        return Err(ApiError::new(
+            503,
+            "macrohelp-httpd is not installed; run bash http-daemon/wld/build.sh",
+        ));
+    }
+    let log_path = config.state_dir.join("httpd.log");
+    let log = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .map_err(io_error)?;
+    let log2 = log.try_clone().map_err(io_error)?;
+    std::process::Command::new(binary)
+        .arg("--env")
+        .arg(&config.env_file)
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(log))
+        .stderr(Stdio::from(log2))
+        .spawn()
+        .map_err(io_error)?;
+    Ok(serde_json::json!({"started":true,"log":log_path}))
+}
 fn io_error(e: std::io::Error) -> ApiError {
     ApiError::new(500, e.to_string())
 }
@@ -144,7 +257,7 @@ fn input_sample_with(
 fn background_request(method: Option<&str>) -> bool {
     matches!(
         method,
-        Some("http" | "stop" | "regedited" | "rgd-read" | "rgd-strings" | "bindings")
+        Some("http" | "stop" | "start-httpd" | "regedited" | "rgd-read" | "rgd-strings" | "bindings")
     )
 }
 
@@ -529,6 +642,7 @@ fn handle(config: &Config, r: &Value) -> Result<Value> {
             http(config, verb, string(r, "path")?, &r["body"])
         }
         "stop" => { crate::rgd::cancel(); http(config, "POST", "/stop", &json!({})) },
+        "start-httpd" => start_httpd(config),
         "rgd-cancel" => { crate::rgd::cancel(); Ok(json!(true)) },
         "rgd-read" => crate::rgd::read(string(r,"file")?, string(r,"reference")?, r["rgd_generation"].as_u64().unwrap_or_else(crate::rgd::generation), |verb,path,body| http(config,verb,path,body)),
         "rgd-strings" => crate::rgd::strings(string(r,"file")?, string(r,"reference")?, r["rgd_generation"].as_u64().unwrap_or_else(crate::rgd::generation), |verb,path,body| http(config,verb,path,body)),
@@ -876,10 +990,126 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+    fn nonce_sandbox(label: &str, nonce: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "macrohelp-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("httpd.nonce"), nonce).unwrap();
+        dir
+    }
+    fn test_config(address: std::net::SocketAddr, dir: &Path) -> Config {
+        Config {
+            address,
+            key: "macrohelp-test-key-0123456789abcd".into(),
+            env_file: dir.join(".env"),
+            state_dir: dir.to_path_buf(),
+            nonce_file: Some(dir.join("httpd.nonce")),
+        }
+    }
+    #[test]
+    fn unverified_controller_never_sees_the_key() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let dir = nonce_sandbox("prebind", "nonce-expected");
+        let config = test_config(address, &dir);
+        let responder = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let _ = stream.write_all(
+                b"HTTP/1.1 404 Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            );
+            let mut all = Vec::new();
+            let mut chunk = [0u8; 4096];
+            while let Ok(n) = stream.read(&mut chunk) {
+                if n == 0 {
+                    break;
+                }
+                all.extend_from_slice(&chunk[..n]);
+            }
+            all
+        });
+        let result = http(&config, "GET", "/health", &json!({}));
+        assert!(
+            matches!(&result, Err(e) if e.message.contains("key withheld")),
+            "expected withheld-key error, got {result:?}"
+        );
+        let text = String::from_utf8_lossy(&responder.join().unwrap()).into_owned();
+        assert!(text.contains("GET /challenge"));
+        assert!(!text.contains("X-Tasket-Key"));
+    }
+    #[test]
+    fn verified_controller_receives_key_after_challenge() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let dir = nonce_sandbox("verified", "nonce-good");
+        let config = test_config(address, &dir);
+        let responder = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut head = Vec::new();
+            let mut byte = [0u8; 1];
+            while !head.ends_with(b"\r\n\r\n") && stream.read(&mut byte).unwrap() == 1 {
+                head.push(byte[0]);
+            }
+            let first = String::from_utf8_lossy(&head).into_owned();
+            assert!(first.contains("GET /challenge"));
+            let body = "{\"success\":true,\"message\":\"Handshake\",\"data\":{\"nonce\":\"nonce-good\"}}";
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+            let mut second = Vec::new();
+            while !second.ends_with(b"\r\n\r\n") && stream.read(&mut byte).unwrap() == 1 {
+                second.push(byte[0]);
+            }
+            let text = String::from_utf8_lossy(&second).into_owned();
+            assert!(text.contains("GET /health"));
+            assert!(text.contains("X-Tasket-Key: macrohelp-test-key-0123456789abcd"));
+            // Drain the small JSON body so closing cannot RST our response.
+            let length = text
+                .lines()
+                .find_map(|l| {
+                    let (n, v) = l.split_once(':')?;
+                    if n.trim().eq_ignore_ascii_case("content-length") {
+                        Some(v.trim().parse::<usize>().unwrap())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(0);
+            let mut body_in = vec![0u8; length];
+            stream.read_exact(&mut body_in).unwrap();
+            let body = "{\"success\":true,\"message\":\"Healthy\",\"data\":{\"ok\":true}}";
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+        });
+        let value = http(&config, "GET", "/health", &json!({})).expect("verified request");
+        assert_eq!(value["ok"], true);
+        responder.join().unwrap();
+    }
+    #[test]
+    fn start_httpd_reports_missing_binary() {
+        let dir = nonce_sandbox("start-missing", "nonce-any");
+        let config = test_config(([127, 0, 0, 1], 1).into(), &dir);
+        let result = start_httpd(&config);
+        assert!(matches!(&result, Err(e) if e.message.contains("not installed")));
+    }
     #[test]
     fn shortcut_reads_use_bounded_workers_instead_of_stalling_the_hud_loop() {
         assert!(background_request(Some("bindings")));
         assert!(background_request(Some("http")));
+        assert!(background_request(Some("start-httpd")));
         for method in [
             None,
             Some("hello"),
@@ -967,6 +1197,7 @@ mod tests {
                     .unwrap()
                     .as_nanos()
             )),
+            nonce_file: None,
         };
         let scale = monitor_scale(&monitors);
         for cursor in [json!({"x":868,"y":573}), json!({"x":-960,"y":540})] {

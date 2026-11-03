@@ -40,6 +40,9 @@ pub fn http(settings: &Settings, method: &str, path: &str, body: &Value) -> Resu
     stream
         .set_write_timeout(Some(Duration::from_secs(5)))
         .map_err(|e| ApiError::new(503, e.to_string()))?;
+    if let Some(nonce_path) = settings.nonce_file.as_ref() {
+        verify_control(&mut stream, settings.address, nonce_path)?;
+    }
     let body = if method == "GET" {
         String::new()
     } else {
@@ -76,6 +79,32 @@ pub fn http(settings: &Settings, method: &str, path: &str, body: &Value) -> Resu
         ));
     }
     Ok(result["result"].clone())
+}
+/// Proves the listener owns the owner-private control nonce before the
+/// persistent Bearer key is written; a pre-bound impostor never sees it.
+fn verify_control(
+    stream: &mut TcpStream,
+    address: std::net::SocketAddr,
+    nonce_path: &std::path::Path,
+) -> Result<()> {
+    let Ok(expected) = std::fs::read_to_string(nonce_path) else {
+        // Handshake disabled (no XDG_RUNTIME_DIR) or the overlay stopped.
+        return Ok(());
+    };
+    let expected = expected.trim().to_owned();
+    if expected.is_empty() {
+        return Ok(());
+    }
+    write!(stream,"GET /v1/challenge HTTP/1.1\r\nHost: {address}\r\nConnection: keep-alive\r\n\r\n").map_err(|e| ApiError::new(503, e.to_string()))?;
+    stream.flush().map_err(|e| ApiError::new(503, e.to_string()))?;
+    let (status, value) = crate::overlay::read_single_response(stream)?;
+    if status != 200 || value["result"]["nonce"].as_str() != Some(expected.as_str()) {
+        return Err(ApiError::new(
+            503,
+            "Overlay control identity unverified; control key withheld",
+        ));
+    }
+    Ok(())
 }
 pub fn tools() -> Value {
     let empty = json!({"type":"object","properties":{},"additionalProperties":false});

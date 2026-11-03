@@ -39,8 +39,12 @@ probe() {
     echo "down: no control key at $STATE_DIR/control-key" >&2
     return 1
   }
-  curl -fsS -m 3 -H "Authorization: Bearer $key" \
-    "http://127.0.0.1:$port/v1/health" 2>/dev/null
+  # --config keeps the bearer token off argv, where other UIDs could read it
+  # in /proc/<pid>/cmdline; the key travels on stdin instead.
+  curl -fsS -m 3 --config - <<CONFIG 2>/dev/null
+url = "http://127.0.0.1:$port/v1/health"
+header = "Authorization: Bearer $key"
+CONFIG
 }
 
 if body="$(probe)"; then

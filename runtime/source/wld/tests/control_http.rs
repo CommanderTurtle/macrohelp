@@ -13,7 +13,7 @@ const KEY: &str = "control-contract-test-key-0123456789";
 fn cors_preflight_never_dispatches_or_bypasses_bearer_auth() {
     for cors in [false,true] {
         let count=Arc::new(Mutex::new(0));let calls=count.clone();
-        let server=Server::bind(Settings{address:([127,0,0,1],0).into(),key:KEY.into(),cors},Arc::new(move|_,_,_|{*calls.lock().unwrap()+=1;Ok(json!({"ready":true}))})).unwrap();
+        let server=Server::bind(Settings{address:([127,0,0,1],0).into(),key:KEY.into(),cors,nonce_file:None,nonce:None},Arc::new(move|_,_,_|{*calls.lock().unwrap()+=1;Ok(json!({"ready":true}))})).unwrap();
         let raw=|method:&str,auth:&str|{
             let mut stream=TcpStream::connect(server.address).unwrap();
             write!(stream,"{method} /v1/health HTTP/1.1\r\nHost: {}\r\nOrigin: https://any-site.example\r\nAccess-Control-Request-Method: GET\r\n{auth}\r\n",server.address).unwrap();
@@ -65,6 +65,8 @@ fn authenticated_http_normalizes_inputs_before_the_ui_boundary() {
             address: ([127, 0, 0, 1], 0).into(),
             key: KEY.into(),
             cors: false,
+            nonce_file: None,
+            nonce: None,
         },
         dispatch,
     )
@@ -124,6 +126,8 @@ fn busy_is_explicit_and_stop_uses_the_same_authenticated_route() {
             address: ([127, 0, 0, 1], 0).into(),
             key: KEY.into(),
             cors: false,
+            nonce_file: None,
+            nonce: None,
         },
         dispatch,
     )
@@ -145,6 +149,8 @@ fn malformed_framing_does_not_reach_the_overlay() {
             address: ([127, 0, 0, 1], 0).into(),
             key: KEY.into(),
             cors: false,
+            nonce_file: None,
+            nonce: None,
         },
         dispatch,
     )

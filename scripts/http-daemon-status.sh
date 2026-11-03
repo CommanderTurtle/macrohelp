@@ -37,8 +37,13 @@ fi
 
 probe() {
   local body
-  body="$(curl -fsS -m 3 -H "X-Tasket-Key: $key" \
-    "http://127.0.0.1:$port/health" 2>/dev/null)" || return 1
+  # --config keeps the API key off argv, where other UIDs could read it in
+  # /proc/<pid>/cmdline; the key travels on stdin instead.
+  body="$(curl -fsS -m 3 --config - <<CONFIG 2>/dev/null
+url = "http://127.0.0.1:$port/health"
+header = "X-Tasket-Key: $key"
+CONFIG
+)" || return 1
   # /health only answers once the Omarsket snapshot round-trip succeeds,
   # so a 2xx here proves the execution path, not just the listener.
   echo "$body"

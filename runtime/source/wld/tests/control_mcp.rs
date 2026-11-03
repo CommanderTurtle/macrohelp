@@ -49,6 +49,8 @@ fn exercise(executable: &std::ffi::OsStr, native: bool) {
             address: ([127, 0, 0, 1], 0).into(),
             key: key.into(),
             cors: false,
+            nonce_file: None,
+            nonce: None,
         },
         dispatch,
     )
@@ -62,6 +64,17 @@ fn exercise(executable: &std::ffi::OsStr, native: bool) {
         .env("MACROHELP_CONTROL_PORT", server.address.port().to_string())
         .env("MACROHELP_CONTROL_KEY", key)
         .env("MACROHELP_CONTROL_ENABLED", "true")
+        .env(
+            "MACROHELP_CONTROL_NONCE",
+            format!(
+                "/macrohelp-control-test-{}-{}/control.nonce",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ),
+        )
         .env("MACROHELP_API_KEY", "")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

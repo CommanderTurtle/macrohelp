@@ -160,6 +160,18 @@ Task IDs, delays, loops and cancellation come from Omarsket. `cleanup:true` temp
 tasks stay in memory; saved tasks use `.omscht` and never overwrite existing names.
 Ctrl+C stops HTTP-owned runs; it does not stop independent backend jobs.
 
+Identity handshake: on Linux both the httpd and the overlay control API first
+write an owner-only nonce (`$XDG_RUNTIME_DIR/macrohelp/httpd.nonce` and
+`control.nonce`, override with `MACROHELP_NONCE`/`MACROHELP_CONTROL_NONCE`).
+Clients verify it over `GET /challenge` / `GET /v1/challenge` before sending
+any key, so a process under a different UID that pre-binds the port never
+sees the credential. `GET /secret` (authenticated) returns the current key to
+callers that already hold it. When calling the APIs from scripts, pass keys
+with `curl --config -` (header on stdin) rather than `-H`, which exposes them
+in `/proc/<pid>/cmdline`. The tray **Status** pane performs these health
+checks, reconnects the native client, starts the daemon, and reveals the key
+without ever touching a command line.
+
 Optional overlay plugin:
 
 ```sh

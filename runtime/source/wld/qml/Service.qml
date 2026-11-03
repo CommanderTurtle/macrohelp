@@ -37,6 +37,7 @@ Item {
   property bool bindingsPending: false
   property int bindingsEpoch: 0
   property string bindingsError: ""
+  property string secretKey:""
   function refreshBindings(){
     if(!ready)return
     if(bindingsRefreshing){bindingsPending=true;return}
@@ -123,6 +124,11 @@ Item {
   function remember(text){history=history.concat([text]).slice(-6)}
   function change(section,key,value){var next=Workflow.copy(environment);if(section==="view"){var patch={};patch[key]=value;next.view=Workflow.viewPatch(next.view,patch)}else if(section){if(!next[section])next[section]={};next[section][key]=value}else next[key]=value;environment=next;persist.restart()}
   function save(){if(ready&&!(controlRun&&controlRun.noReplace))call({method:"save-state",state:environment})}
+  function ping(){refresh()}
+  function startDaemon(){call({method:"start-httpd"},function(value,error){message=error?error:(value&&value.started===false?"Controller already running":"Controller starting");daemonPing.restart()})}
+  Timer {id:daemonPing;interval:1800;onTriggered:refresh()}
+  function revealSecret(){http("GET","/secret",{},function(value,error){secretKey=error||!value||!value.key?"":String(value.key);if(!secretKey)message="API key unavailable (controller offline)"})}
+  function hideSecret(){secretKey=""}
   function refresh(){
     if(refreshing)return
     refreshing=true

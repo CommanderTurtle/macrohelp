@@ -85,8 +85,24 @@ curl.exe http://127.0.0.1:7778/v1/control -H "Authorization: Bearer $key" -H "Co
 
 ```sh
 key=$(cat "${MACROHELP_STATE_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/macrohelp}/control-key")
-curl http://127.0.0.1:7778/v1/control -H "Authorization: Bearer $key" -H 'Content-Type: application/json' --data-binary @request.json
+curl --config - <<EOF
+url = "http://127.0.0.1:7778/v1/control"
+header = "Authorization: Bearer $key"
+header = "Content-Type: application/json"
+data-binary = "@request.json"
+EOF
 ```
+
+Passing the key through `--config` (or `curl.config`) instead of `-H` keeps it
+out of process arguments, where other local UIDs could read it from
+`/proc/<pid>/cmdline`. The overlay and task controller also require a server
+handshake before any client credential is sent: each writes an owner-only
+nonce (`$XDG_RUNTIME_DIR/macrohelp/control.nonce`, `httpd.nonce`, override with
+`MACROHELP_CONTROL_NONCE`/`MACROHELP_NONCE`) and clients verify it via
+`GET /v1/challenge` / `GET /challenge` first, so a foreign process that
+pre-binds the port never observes the key. `GET /secret` on the task
+controller (port 7777, authenticated) returns the current key to callers that
+already hold it.
 
 The body may also be a JSON-encoded CSV string:
 `"2,Z,\"{type hello, world}\",P,no-replace"`. Quote comma-containing fields;
@@ -175,7 +191,10 @@ Invalid tool arguments return `isError:true` with `error.status`, `message` and
 Nothing automatically rewrites or retries an action. Inspect state before retrying
 after a native error, timeout or disconnect because effects may already have begun.
 
-Read coordinates with `curl http://127.0.0.1:7778/v1/coords -H "Authorization: Bearer $key"`.
+Read coordinates with the same `--config` pattern (URL plus bearer header on
+stdin, never `-H "...Bearer $key"` on argv):
+`curl --config - <<EOF` … `url = "http://127.0.0.1:7778/v1/coords"` …
+`header = "Authorization: Bearer $key"` … `EOF`.
 This uses the overlay's existing displayed coordinate source; it does not move the pointer.
 On Linux, dismissing a blinked quick dialog returns the pointer to its frozen entry
 position using a memory-only `/temp-task` with `cleanup:true`. Escape and the

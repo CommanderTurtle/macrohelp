@@ -52,6 +52,7 @@ pub struct Config {
     pub key: String,
     pub env_file: PathBuf,
     pub state_dir: PathBuf,
+    pub nonce_file: Option<PathBuf>,
 }
 impl Config {
     pub fn load(path: &Path) -> Result<Self> {
@@ -97,11 +98,24 @@ impl Config {
             "MACROHELP_STATE_DIR",
             &data_home().join("macrohelp").to_string_lossy(),
         ));
+        #[cfg(unix)]
+        let nonce_file = std::env::var("XDG_RUNTIME_DIR")
+            .ok()
+            .filter(|runtime| !runtime.is_empty())
+            .map(|runtime| {
+                PathBuf::from(get(
+                    "MACROHELP_NONCE",
+                    &format!("{runtime}/macrohelp/httpd.nonce"),
+                ))
+            });
+        #[cfg(not(unix))]
+        let nonce_file: Option<PathBuf> = None;
         Ok(Self {
             address: SocketAddr::new(ip, port),
             key,
             env_file: path.to_path_buf(),
             state_dir,
+            nonce_file,
         })
     }
 }

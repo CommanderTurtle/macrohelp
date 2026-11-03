@@ -107,8 +107,12 @@ impl Harness {
             cors,
             env_file: dir.join(".env"),
             state_dir: dir.join("state"),
+            nonce_file: None,
         };
-        let app = Arc::new(App::new(Runner::new(config, Arc::new(Engine::new(&dir)))));
+        let app = Arc::new(App::new(
+            Runner::new(config, Arc::new(Engine::new(&dir))),
+            String::new(),
+        ));
         let stop = Arc::new(AtomicBool::new(false));
         let stopped = stop.clone();
         let thread = std::thread::spawn(move || serve(server, app, stopped));
@@ -175,7 +179,22 @@ fn qt_route_inventory_matches_exactly() {
         .iter()
         .map(|(m, p)| (m.to_string(), p.to_string()))
         .collect();
-    assert_eq!(actual, expected);
+    // The handshake and key-view routes are the Linux identity surface; the
+    // Windows Qt build has no client that discloses a key pre-auth, so it
+    // intentionally lacks exactly these two.
+    let linux_only: BTreeSet<_> = actual
+        .symmetric_difference(&expected)
+        .cloned()
+        .collect();
+    assert_eq!(
+        linux_only,
+        BTreeSet::from([
+            ("GET".to_string(), "/challenge".to_string()),
+            ("GET".to_string(), "/secret".to_string())
+        ])
+    );
+    let shared: BTreeSet<_> = actual.intersection(&expected).cloned().collect();
+    assert_eq!(shared, expected);
 }
 
 #[test]

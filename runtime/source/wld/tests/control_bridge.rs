@@ -70,6 +70,8 @@ fn session_relays_authenticated_http_and_releases_pending_calls_at_exit() {
         address,
         key: key.into(),
         cors: false,
+        nonce_file: None,
+        nonce: None,
     };
     let client = settings.clone();
     let http = std::thread::spawn(move || {

@@ -22,6 +22,8 @@ pub struct Settings {
     pub address: SocketAddr,
     pub key: String,
     pub cors: bool,
+    pub nonce_file: Option<std::path::PathBuf>,
+    pub nonce: Option<String>,
 }
 impl Settings {
     pub fn load(config: &Config) -> Result<Option<Self>> {
@@ -50,12 +52,53 @@ impl Settings {
         if !(24..=256).contains(&key.len()) || !key.bytes().all(|b| (33..=126).contains(&b)) {
             return Err(ApiError::new(400, "Invalid overlay control key"));
         }
+        #[cfg(unix)]
+        let nonce_file = std::env::var("XDG_RUNTIME_DIR")
+            .ok()
+            .filter(|runtime| !runtime.is_empty())
+            .map(|runtime| {
+                std::path::PathBuf::from(get("MACROHELP_CONTROL_NONCE").filter(|p| !p.is_empty()).unwrap_or_else(|| format!("{runtime}/macrohelp/control.nonce")))
+            });
+        #[cfg(not(unix))]
+        let nonce_file: Option<std::path::PathBuf> = None;
         Ok(Some(Self {
             address: ([127, 0, 0, 1], port).into(),
             key,
             cors: get("MACROHELP_CORS").as_deref() == Some("true"),
+            nonce_file,
+            nonce: None,
         }))
     }
+}
+/// Owner-private handshake nonce for the control plane; the same UID trust
+/// boundary the tasket controller uses before any Bearer key is disclosed.
+pub fn write_control_nonce(path: &std::path::Path) -> std::io::Result<String> {
+    use std::io::Read;
+    let mut seed = [0u8; 16];
+    let mut urandom = std::fs::File::open("/dev/urandom")?;
+    urandom.read_exact(&mut seed)?;
+    let nonce = seed
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
+        }
+    }
+    #[allow(unused_mut)]
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(path)?.write_all(nonce.as_bytes())?;
+    Ok(nonce)
 }
 fn private_key(path: PathBuf) -> Result<String> {
     let err = |e: std::io::Error| ApiError::new(500, format!("Overlay control key: {e}"));
@@ -143,7 +186,12 @@ pub fn envelope(result: Result<Value>) -> (u16, Value) {
 fn same_key(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && a.iter().zip(b).fold(0, |acc, (a, b)| acc | (a ^ b)) == 0
 }
-fn request(stream: &mut TcpStream, settings: &Settings, dispatch: &Dispatch) -> Result<Value> {
+fn request(
+    stream: &mut TcpStream,
+    settings: &Settings,
+    dispatch: &Dispatch,
+    challenge_open: bool,
+) -> Result<(Value, bool)> {
     let deadline = Instant::now() + Duration::from_secs(5);
     stream
         .set_write_timeout(Some(Duration::from_secs(5)))
@@ -218,7 +266,18 @@ fn request(stream: &mut TcpStream, settings: &Settings, dispatch: &Dispatch) -> 
         let allowed = (requested == "GET" && ["/v1/health","/v1/schema","/v1/state","/v1/coords","/v1/board","/v1/help","/v1/skills"].contains(&path.as_str()))
             || (requested == "POST" && ["/v1/control","/v1/stop","/v1/skills","/v1/skills/query"].contains(&path.as_str()));
         if !allowed { return Err(ApiError::new(404,"Unknown overlay control route")); }
-        return Ok(json!({"cors":true}));
+        return Ok((json!({"cors":true}), false));
+    }
+    // The overlay must prove it owns the owner-private nonce before any
+    // client discloses the persistent Bearer key on this connection.
+    if method == "GET" && path == "/v1/challenge" && challenge_open {
+        let keep_alive = !headers
+            .get("connection")
+            .is_some_and(|v| v.eq_ignore_ascii_case("close"));
+        return Ok((
+            json!({"nonce":settings.nonce.clone().unwrap_or_default()}),
+            keep_alive,
+        ));
     }
     let expected = format!("Bearer {}", settings.key);
     if !headers.get("authorization").is_some_and(|v| same_key(v.as_bytes(), expected.as_bytes())) {
@@ -276,7 +335,7 @@ fn request(stream: &mut TcpStream, settings: &Settings, dispatch: &Dispatch) -> 
             .map_err(|_| ApiError::new(400, "Invalid UTF-8 JSON body"))?
     };
     if path == "/v1/schema" {
-        return Ok(control_protocol::schema());
+        return Ok((control_protocol::schema(), false));
     }
     let body = if path == "/v1/control" {
         control_protocol::normalize(&body)?
@@ -285,7 +344,7 @@ fn request(stream: &mut TcpStream, settings: &Settings, dispatch: &Dispatch) -> 
     } else {
         body
     };
-    dispatch(&method, &path, &body)
+    Ok((dispatch(&method, &path, &body)?, false))
 }
 fn io(error: std::io::Error) -> ApiError {
     ApiError::new(503, error.to_string())
@@ -295,15 +354,30 @@ pub fn handle(mut stream: TcpStream, settings: &Settings, dispatch: &Dispatch) {
     if stream.set_nonblocking(false).is_err() {
         return;
     }
-    let (status, body) = envelope(request(&mut stream, settings, dispatch));
-    let body = body.to_string();
-    let reason = if status == 200 { "OK" } else { "Error" };
-    let cors = if settings.cors { "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: Authorization, Content-Type\r\nAccess-Control-Allow-Private-Network: true\r\n" } else { "" };
-    let _ = write!(
-        stream,
-        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n{cors}\r\n{body}",
-        body.len()
-    );
+    let mut challenge_open = true;
+    loop {
+        let (status, body, keep_alive) =
+            match request(&mut stream, settings, dispatch, challenge_open) {
+                Ok((value, keep_alive)) => {
+                    let (status, body) = envelope(Ok(value));
+                    (status, body, keep_alive)
+                }
+                Err(error) => (error.status, envelope(Err(error)).1, false),
+            };
+        let body = body.to_string();
+        let reason = if status == 200 { "OK" } else { "Error" };
+        let cors = if settings.cors { "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nAccess-Control-Allow-Headers: Authorization, Content-Type\r\nAccess-Control-Allow-Private-Network: true\r\n" } else { "" };
+        let _ = write!(
+            stream,
+            "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n{cors}\r\n{body}",
+            body.len(),
+            if keep_alive { "keep-alive" } else { "close" }
+        );
+        if !keep_alive {
+            return;
+        }
+        challenge_open = false;
+    }
 }
 pub struct Server {
     pub address: SocketAddr,
@@ -312,6 +386,9 @@ pub struct Server {
 }
 impl Server {
     pub fn bind(mut settings: Settings, dispatch: Dispatch) -> Result<Self> {
+        if let Some(path) = settings.nonce_file.clone() {
+            settings.nonce = write_control_nonce(&path).ok();
+        }
         let listener = Arc::new(TcpListener::bind(settings.address).map_err(io)?);
         listener.set_nonblocking(true).map_err(io)?;
         settings.address = listener.local_addr().map_err(io)?;

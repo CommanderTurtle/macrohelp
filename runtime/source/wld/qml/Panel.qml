@@ -62,6 +62,7 @@ Ui.Panel {
         width:parent.width;spacing:Style.space(5)
         Repeater {model:["Workflow","Pointer","Keys","Buffers","Zones","Tasks","Presets","View"];Ui.Button{required property string modelData;text:modelData;foreground:root.app&&root.app.page===modelData?Commons.Color.accent:root.fg;onClicked:if(root.app)root.app.page=modelData}}
         Ui.Button {text:"Stop";onClicked:if(root.app)root.app.stop()}
+        Ui.Button {text:"Status";foreground:root.app&&root.app.page==="Status"?Commons.Color.accent:root.fg;onClicked:if(root.app)root.app.page="Status"}
         Ui.Button {text:"×";onClicked:root.close()}
       }
       Text {width:parent.width;wrapMode:Text.Wrap;textFormat:Text.PlainText;color:Commons.Color.accent;font.family:Style.font.family;font.pixelSize:Style.font.caption;text:root.localError||(root.app?(root.app.error||root.app.message):"Enable the Macrohelp service");visible:text!==""}
@@ -72,6 +73,14 @@ Ui.Panel {
           width:scroll.availableWidth;spacing:Style.space(10)
           enabled:root.app&&root.app.ready
           Loader {width:parent.width;active:!!root.app&&["Keys","Zones"].indexOf(root.app.page)>=0;sourceComponent:Component {ShortcutStatus {width:parent.width;service:root.app}}}
+      Loader {width:parent.width;active:!!root.app&&root.app.page==="Status";sourceComponent:Component {Column {width:parent?parent.width:320;spacing:Style.space(6)
+        Text {width:parent.width;wrapMode:Text.Wrap;color:root.app&&root.app.connected?Commons.Color.success:Commons.Color.warning;font.family:Style.font.family;font.pixelSize:Style.font.caption;text:root.app&&root.app.connected?"Controller verified · "+root.app.endpoint:"Controller unverified or offline (stopped, not built, or its port was claimed first)"}
+        Text {width:parent.width;wrapMode:Text.Wrap;color:Commons.Color.warning;font.family:Style.font.family;font.pixelSize:Style.font.caption;text:root.app&&!root.app.ready?"Native client stopped — Reconnect, or rebuild with bash runtime/source/wld/build.sh":"";visible:text!==""}
+        Text {width:parent.width;wrapMode:Text.Wrap;color:Commons.Color.warning;font.family:Style.font.family;font.pixelSize:Style.font.caption;text:root.app?root.app.error:"";visible:text!==""}
+        Row {spacing:Style.space(5);Ui.Button {text:"Ping health";onClicked:if(root.app)root.app.ping()}Ui.Button {text:"Reconnect";onClicked:if(root.app)root.app.reconnect()}Ui.Button {text:"Start daemon";onClicked:if(root.app)root.app.startDaemon()}Ui.Button {text:root.app&&root.app.secretKey!==""?"Hide key":"Reveal key";onClicked:if(root.app){if(root.app.secretKey==="")root.app.revealSecret();else root.app.hideSecret()}}}
+        Text {width:parent.width;wrapMode:Text.Wrap;color:Commons.Color.accent;font.family:Style.font.family;font.pixelSize:Style.font.caption;text:root.app?root.app.secretKey:"";visible:root.app&&root.app.secretKey!==""}
+        Text {width:parent.width;wrapMode:Text.Wrap;color:root.fg;font.family:Style.font.family;font.pixelSize:Style.font.caption;text:"Health checks, daemon control, and the API key live inside this tray. The key is fetched with GET /secret only after the controller answers the owner-only handshake challenge, and no key ever crosses a command line."}
+      }}}
           Column {
             width:parent.width;spacing:Style.space(8);visible:root.app&&root.app.page==="Workflow"
             Ui.TextField {id:taskName;width:parent.width;text:root.scheduleName;placeholderText:"Schedule name";onTextEdited:root.scheduleName=text}
