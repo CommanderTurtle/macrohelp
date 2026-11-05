@@ -252,7 +252,15 @@ Item {
     if(stepIndex>=steps.length){if(dispatch&&dispatch.next){nextDispatch(token);return}dispatch=null;busy=false;hidden=false;message="Finished";save();refresh();return}
     var step=steps[stepIndex++]
     function done(value,error){if(token!==root.generation)return;if(error){root.busy=false;root.dispatch=null;root.hidden=false;if(root.controlRun)root.controlRun.failure=error;if(root.connected)root.error=error;return}if(step.slot&&value&&value.text!==undefined)root.change(/^[ASDF]$/.test(step.slot)?"vars":"buffers",step.slot,step.singleLine?value.text.replace(/[\r\n]+/g," ").trim():value.text);root.nextStep(token)}
-    if(step.kind==="input"){hidden=!!step.capture;if(dispatch){message=dispatch.index+"/"+dispatch.total+" sequence is running";console.info("Macrohelp: "+message)}queue(Workflow.resolve(step.actions,environment),function(v,e){if(token!==root.generation)return;if(e){done(null,e);return}root.currentJob=v.task;poll.restart()},step.capture?1:0,dispatch?"Macrohelp sequence "+dispatch.index+" of "+dispatch.total:undefined)}
+    if(step.kind==="input"){
+      hidden=!!step.capture
+      var resolvedActions=Workflow.resolve(step.actions,environment)
+      // Snapshot the pointer only for captures that drag it themselves;
+      // native picker captures ("S"/{screen}) leave the mouse to the user,
+      // and warping mid-drag would mangle the rectangle they draw.
+      if(step.capture&&resolvedActions.some(function(a){return a.type==="cursormovements"&&((a.optionalkeysstroke)||[]).indexOf("LEFT_MOUSE")>=0}))step.origin={x:root.physicalCursor.x,y:root.physicalCursor.y}
+      if(dispatch){message=dispatch.index+"/"+dispatch.total+" sequence is running";console.info("Macrohelp: "+message)}queue(resolvedActions,function(v,e){if(token!==root.generation)return;if(e){done(null,e);return}root.currentJob=v.task;poll.restart()},step.capture?1:0,dispatch?"Macrohelp sequence "+dispatch.index+" of "+dispatch.total:undefined)
+    }
     else if(step.kind==="clipboard")readClipboard(function(v,e){if(token!==root.generation)return;root.hidePanel();root.pending=function(){done(v,e)};startDelay.restart()})
     else if(step.kind==="regedited")call({method:"regedited",action:step.action,file:step.file,reference:step.reference},done)
   }
@@ -397,6 +405,16 @@ Item {
       if(v.state==="scheduled"||v.state==="running"){poll.restart();return}
       root.currentJob=null;root.hidden=false
       if(v.state!=="finished"){root.busy=false;root.dispatch=null;root.error=v.error||v.state;if(root.controlRun)root.controlRun.failure=root.error;return}
+      // Macrohelp-spawned zone captures drag the pointer into the zone and
+      // leave it stranded there. We know this step was ours (capture flag)
+      // and where the pointer stood before we warped it, so walk it home on
+      // success only; failures keep the pointer parked for inspection. This
+      // is our courtesy, not an Omarsket task semantic.
+      var finishedStep=root.steps[root.stepIndex-1]
+      if(finishedStep&&finishedStep.capture&&finishedStep.origin&&finishedStep.origin.x&&finishedStep.origin.y){
+        root.queue([{type:"move",x:Math.round(finishedStep.origin.x),y:Math.round(finishedStep.origin.y),duration_ms:250}],function(){root.nextStep(token)},0)
+        return
+      }
       root.nextStep(token)
     })
   }}
