@@ -57,19 +57,55 @@ test("circle distance, radians, degrees and scaled vectors retain the frozen ori
   expect(r.state.target).toEqual([120,230])
   const v=dialog("circle_placer");v.submit("100@-3i+4j")
   expect(v.state.target).toEqual([60,160]);expect(v.state.stage).toBe("Confirm")
-  v.submit("x");expect(v.state.stage).toBe("ZoneAction");expect(v.state.pendingZone).toEqual([120,240,60,160])
+  v.submit("x");expect(v.state.stage).toBe("Confirm");v.submit("x")
+  expect(v.state.stage).toBe("ZoneAction");expect(v.state.pendingZone).toEqual([120,240,60,160])
+  expect(v.state.zoneBy).toBe("x")
   expect(v.preview("bad").origin).toEqual([120,240])
 })
 
-test("circle X zones the movement itself and C re-anchors the diff",()=>{
+test("circle zone doctrine: same key confirms, other key re-anchors",()=>{
   const d=dialog("circle_placer")
   d.submit("10i");d.submit("x")
+  expect(d.state.stage).toBe("Confirm")
+  expect(d.state.zoneStart).toEqual([120,240])
+  expect(d.state.pendingZone).toBe(null)
+  // The typed key must not linger: leftover "x" turns the next press into "xx"
+  // and the single-key route silently ignores multi-character text.
+  expect(d.state.text).toBe("")
+  d.submit("x")
   expect(d.state.stage).toBe("ZoneAction")
   expect(d.state.pendingZone).toEqual([120,240,130,240])
   expect(d.submit("b").effects).toEqual([{kind:"zone-router",rect:[120,240,130,240]}])
-  const c=dialog("circle_placer");c.submit("10i");c.submit("c");c.submit("20j");c.submit("x")
-  expect(c.state.pendingZone).toEqual([130,240,130,220])
-  expect(()=>{const z=dialog("circle_placer");z.submit("0.0001i");z.submit("x")}).toThrow("different position")
+  // X over V: the cursor anchor replaces V's corner instead of confirming.
+  const v=dialog("circle_placer");v.submit("10i");v.submit("v");v.submit("20j");v.submit("x")
+  expect(v.state.stage).toBe("Confirm")
+  expect(v.state.zoneBy).toBe("x")
+  expect(v.state.zoneStart).toEqual([120,240])
+  v.submit("x")
+  expect(v.state.pendingZone).toEqual([120,240,130,220])
+  // V over X: the placement anchor replaces X's corner and re-anchors origin.
+  const x=dialog("circle_placer");x.submit("10i");x.submit("x");x.submit("v")
+  expect(x.state.stage).toBe("Distance")
+  expect(x.state.zoneBy).toBe("v")
+  expect(x.state.origin).toEqual([130,240])
+  x.submit("10i");x.submit("v")
+  expect(x.state.pendingZone).toEqual([130,240,140,240])
+  const c=dialog("circle_placer");c.submit("10i");c.submit("c");c.submit("20j");c.submit("x");c.submit("x")
+  expect(c.state.pendingZone).toEqual([120,240,130,220])
+  expect(()=>{const z=dialog("circle_placer");z.submit("0.0001i");z.submit("x");z.submit("x")}).toThrow("different position")
+})
+
+test("circle B clicks the target and blinks back to the starting cursor",()=>{
+  const d=dialog("circle_placer");d.submit("10i")
+  const effects=d.submit("b").effects
+  expect(effects.length).toBe(1);expect(effects[0].kind).toBe("queue")
+  const a=effects[0].actions
+  expect(a[0].cursormovsmap[0].slice(2)).toEqual([130,240])
+  expect(a[2].type).toBe("keyssequence");expect(JSON.stringify(a[2])).toContain("LEFT_MOUSE")
+  expect(a[4].cursormovsmap[0].slice(2)).toEqual([120,240])
+  // Same timing schema as a zone-drag capture: 300ms in, 250ms home.
+  expect(a[0].cursormovsmap[0][1]).toBe(300)
+  expect(a[4].cursormovsmap[0][1]).toBe(250)
 })
 
 test("circle chains and zone storage never move the pointer to the menu",()=>{
