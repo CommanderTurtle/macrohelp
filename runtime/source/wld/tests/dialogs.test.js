@@ -57,8 +57,19 @@ test("circle distance, radians, degrees and scaled vectors retain the frozen ori
   expect(r.state.target).toEqual([120,230])
   const v=dialog("circle_placer");v.submit("100@-3i+4j")
   expect(v.state.target).toEqual([60,160]);expect(v.state.stage).toBe("Confirm")
-  expect(v.submit("x").effects[0].kind).toBe("export")
+  v.submit("x");expect(v.state.stage).toBe("ZoneAction");expect(v.state.pendingZone).toEqual([120,240,60,160])
   expect(v.preview("bad").origin).toEqual([120,240])
+})
+
+test("circle X zones the movement itself and C re-anchors the diff",()=>{
+  const d=dialog("circle_placer")
+  d.submit("10i");d.submit("x")
+  expect(d.state.stage).toBe("ZoneAction")
+  expect(d.state.pendingZone).toEqual([120,240,130,240])
+  expect(d.submit("b").effects).toEqual([{kind:"zone-router",rect:[120,240,130,240]}])
+  const c=dialog("circle_placer");c.submit("10i");c.submit("c");c.submit("20j");c.submit("x")
+  expect(c.state.pendingZone).toEqual([130,240,130,220])
+  expect(()=>{const z=dialog("circle_placer");z.submit("0.0001i");z.submit("x")}).toThrow("different position")
 })
 
 test("circle chains and zone storage never move the pointer to the menu",()=>{

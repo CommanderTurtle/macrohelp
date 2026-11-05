@@ -55,7 +55,7 @@ function recorded(s, sample, name) {
 }
 function description(s, env) {
   var title={save_cursor:"Save Cursor",paste_buffers:"Paste Buffers",registry_hub:"Registry Hub",circle_placer:"Circle Placer",click_left:"Left Click",click_right:"Right Click",click_middle:"Middle Click",stop_all:"Stop All",view_toggles:"Display",record_keys:"Record Keys"}[s.kind]||s.kind
-  var hints={Name:"Name",Distance:"Radius, -20i+20j, or 316@-2i+2j",Mode:"R · radians   D · degrees",Angle:s.unit==="radians"?"Radians · pi/2":"Degrees",Confirm:"Z · move   X · append   C · next circle   V · zone",ZoneAction:"Z · screenshot   V · copy   X · OCR   C · single line   S · picker   B · store zone",
+  var hints={Name:"Name",Distance:"Radius, -20i+20j, or 316@-2i+2j",Mode:"R · radians   D · degrees",Angle:s.unit==="radians"?"Radians · pi/2":"Degrees",Confirm:"Z · move   X · diff zone   C · next circle   V · point zone",ZoneAction:"Z · screenshot   V · copy   X · OCR   C · single line   S · picker   B · store zone",
     Edit:"Buffer "+s.slot+" · Shift+Enter for a new line",PasteSelect:"Z / X / C / V · paste   B · sequence",PasteSequence:"Buffer order · Z,X,C,V",ZoneCommand:"Z / X / C / V · edit   B · play",ZonePlaySelect:"Z / X / C / V · choose zone   B · capture to buffer",ZonePlayFlow:"Z · screenshot   V · copy   X · OCR   C · single line   S · picker",ZoneCaptureZoneSelect:"Z / X / C / V · source zone",ZoneCaptureFlow:"X · text   C · single line   V · copy",ZoneCaptureTarget:"Z / X / C / V · destination buffer",ZoneEdit:"x1,y1,x2,y2 · two point numbers · saved zone",ZoneSelect:"Z / X / C / V · edit zone",Point:"x,y · point number · S to save current cursor",Paste:"Paste text · Shift+Enter for a new line",HoldMs:"Hold milliseconds · 1–600000",Script:"Workflow · Shift+Enter for a new line",Manual:"Choose up to three keys per step",RegistryPath:"Registry file path",ExportPath:"Export file path",ImportPath:"Import file path",Shell:"Shell "+s.slot,Var:"Variable "+s.slot}
   if(s.stage==="Command") {
     if(s.kind==="save_cursor")hints.Command="Z · save   X · add point   C · save + click   V · cancel"
@@ -70,7 +70,7 @@ function description(s, env) {
   function buttons(keys,labels){shortcuts=keys.map(function(k,i){return {key:k,label:labels?labels[i]:k}})}
   if(commandStage(s)){
     if(s.stage==="Mode")buttons(["r","d"],["Radians","Degrees"])
-    else if(s.stage==="Confirm")buttons(["z","x","c","v"],["Move","Append","Next circle","Zone"])
+    else if(s.stage==="Confirm")buttons(["z","x","c","v"],["Move","Diff zone","Next circle","Point zone"])
     else if(s.stage==="ZoneAction")buttons(["z","v","x","c","s","b"],["Screenshot zone","Copy zone","OCR zone","OCR single line","Screenshot picker","Store zone"])
     else if(s.stage==="ZonePlayFlow")buttons(["z","v","x","c","s"],["Screenshot zone","Copy zone","OCR zone","OCR single line","Screenshot picker"])
     else if(s.stage==="ZoneCaptureFlow")buttons(["x","c","v"])
@@ -122,7 +122,13 @@ function submit(original, text, env, cursor, W, monitors) {
       s.unit=cmd[0]==="r"?"radians":"degrees";field(s,"Angle")
     } else if(s.stage==="Confirm") {
       if(cmd==="z"||cmd==="move"||cmd==="1")queue([W.move(s.target,220)])
-      else if(cmd==="x"||cmd==="append"||cmd==="2")output("Circle",[W.move(s.target,1000),W.wait(200)])
+      else if(cmd==="x"||cmd==="append"||cmd==="2") {
+        // Diff zone: the rectangle between where the circle was placed and
+        // where the pointer ended up - the movement itself, made into a zone.
+        // (V still means the two-centre zone, so the two stay distinct.)
+        if(s.origin[0]===s.target[0]&&s.origin[1]===s.target[1])throw Error("Move to a different position first")
+        s.pendingZone=s.origin.concat(s.target);field(s,"ZoneAction");return {state:s,effects:effects,close:false}
+      }
       else if(cmd==="c"||cmd==="circle"||cmd==="v"||cmd==="zone"||cmd==="zonemake") {
         if(cmd==="v"||cmd==="zone"||cmd==="zonemake") {
           if(s.zoneStart){s.pendingZone=s.zoneStart.concat(s.target);field(s,"ZoneAction");return {state:s,effects:effects,close:false}}

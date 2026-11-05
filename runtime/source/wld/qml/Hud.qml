@@ -71,7 +71,8 @@ Item {
               var origin=quick?quick.origin:root.service.circleOrigin,target=quick?(quick.target||quick.origin):root.service.circleTarget,radius=quick?quick.radius:root.service.radius
               var o=project(origin),t=project(target)
               c.beginPath();c.arc(o[0],o[1],radius/scale,0,Math.PI*2);c.moveTo(o[0],o[1]);c.lineTo(t[0],t[1]);c.stroke()
-              if(quick&&quick.zoneStart){var corner=project(quick.zoneStart),end=project(quick.target||quick.origin);c.strokeRect(corner[0],corner[1],end[0]-corner[0],end[1]-corner[1])}
+              if(quick&&quick.zoneStart&&!quick.pendingZone){var corner=project(quick.zoneStart),end=project(quick.target||quick.origin);c.strokeRect(corner[0],corner[1],end[0]-corner[0],end[1]-corner[1])}
+              if(quick&&quick.pendingZone){var zoneA=project(quick.pendingZone.slice(0,2)),zoneB=project(quick.pendingZone.slice(2));c.strokeRect(zoneA[0],zoneA[1],zoneB[0]-zoneA[0],zoneB[1]-zoneA[1])}
             }
             Object.keys(root.service.environment.zones||{}).forEach(function(k){var r=root.service.environment.zones[k];if(r){var a=project(r.slice(0,2)),b=project(r.slice(2));c.strokeRect(a[0],a[1],b[0]-a[0],b[1]-a[1]);c.fillText(k,a[0]+4,a[1]+14)}})
           }

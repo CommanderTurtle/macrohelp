@@ -140,7 +140,7 @@ Overlay evidence: [Windows implementation](../runtime/source/src/main.cpp),
 | O57 · Circle Placer: radius | Radius, visible preview | Present |
 | O58 · Circle Placer: radians/degrees | Angle mode | Present |
 | O59 · Circle Placer: vector / scaled direction | `i+j` expression, scaled direction syntax | Partial: numeric `x,y` offset field; no equivalent scaled-direction expression parser |
-| O60 · Circle Placer: move / append / next circle | Three separate actions | Partial: move target, target → point, set origin present; named JSON append / chained staged circle UI absent |
+| O60 · Circle Placer: move / append / next circle | Three separate actions | Divergent: move target and chained origin re-anchor present; Linux replaced the unused named JSON append with X = diff zone (placement origin → final pointer, straight into the ZoneAction flow) |
 | O61 · Circle Placer: ZoneMake | Circle bounds into zone/capture flow | Present: Circle → zone, then Zones method controls |
 | O62 · Shift+Alt+4/5/6 | Manual Click: left/right/middle | Present: same optional hotkeys and Keys buttons |
 | O63 · Manual Click: delayed/repeated/held click | Click count and hold-duration behavior | Present: Keys → Hold ms / Repeat; timing is a queued backend action |
