@@ -1,30 +1,54 @@
-# Macrohelp — a developer's best friend
+<img src="https://github.com/CommanderTurtle/CommanderTurtle/raw/refs/heads/main/src/macrohelp.svg" alt="Macrohelp Icon" title="Redirect to Quickstart" href="./quick-start.md" />
+
+— a developer's best friend
 
 ### A lightweight overlay runtime. (~300kb harness) for [Tasket++](https://github.com/AmirHammouteneEI/ScheduledPasteAndKeys) or [Omarsket](https://github.com/CommanderTurtle/omarsket)
 
-Circles! Shipped with computer-use Skill MCP for local models.
+Control the mouse with a dotproduct coordinate system! Shipped with computer-use Skill MCP for local models.
 
 Built with them in mind, and what they can use - zone math:
 
-https://github.com/user-attachments/assets/e3f4da20-7689-4dae-992d-30daf80da2ab
+https://github.com/user-attachments/assets/494433ae-0158-49c7-b8b0-c931c50ef26d
 
-Focused on QoL, coordinate capture, buffers, zone math, and translating intent into native Tasket `.scht` work through `tasket-httpd` daemon.
+𝕍𝕚𝕕𝕖𝕠 ℙ𝕣𝕖𝕧𝕚𝕖𝕨 — 𝔼𝕩𝕒𝕞𝕡𝕝𝕖 𝕠𝕗 𝕆𝕙-𝕄𝕪-ℙ𝕚 𝕤𝕖𝕒𝕣𝕔𝕙𝕚𝕟𝕘 𝕗𝕠𝕣 𝕥𝕙𝕖 𝕢𝕦𝕖𝕖𝕟 𝕠𝕗 𝔼𝕟𝕘𝕝𝕒𝕟𝕕
 
-On Hyprland in Linux, we maintain the python package, [wayland-automation](https://github.com/CommanderTurtle/Wayland-automation) for this. As well, packaging our own [Omarsket](https://github.com/CommanderTurtle/omarsket) - a linux fork of Tasket.
+---
+
+Macrohelp is focused on QoL, coordinates, buffers, zone math, and type safety. Commands transition intent into native Tasket `.scht` (`.omscht` on linux) work through the programmatic daemon. The assembly language has boolean support, too.
+
+Tasks written in macrohelp registry will concatenate into schedules that play. For those familiar with [delayed expansion](https://docs.shel.sh/symbols/?h=delayed#delayed-expansion-var), it might be helpful to note that this is exactly how the registry is expanded. 
+
+`{wait 500}{scrolldown 3}{press win shift enter}{type echo "howdy"}{wait 500}{press enter}` will be split into two ephemeral `.scht` (or `.omscht`) files. Running one after the next (there are two `wait`s).
+
+You can also (if you use our rust replacement for SQL, [regedited](https://github.com/CommanderTurtle/regedited)) save entire scripts to a registry string or zone in any text file!
+
+`{rgd i1z1}` decompiles a saved scriptlet wherever it is used, and respects nested waits.
+
+On Hyprland in Linux, we maintain the python package, [wayland-automation](https://github.com/CommanderTurtle/Wayland-automation) for these feats! As well, packaging our own [Omarsket](https://github.com/CommanderTurtle/omarsket) - a linux fork of Tasket.
 
 Wayland packages remain separate from the source code for Windows. For Windows QT builds and development, all information is contained within the Quick Start, just as it is for linux. No binaries are shipped purposefully.
 
-The daemon is a natively built sidecar for a running Tasket instance, with full GET support for schedules and availability of a local tasket session.
-
-https://github.com/user-attachments/assets/68dd4d90-b1f2-44f1-94a8-9648ee998eca
+The daemon on Windows is a natively built sidecar for a running Tasket instance, with full GET support for schedules and availability of a local tasket session.
 
 Macrohelp bundles machine code into readable instances that any automation friend would like to have on their machine.
+
+## Omarchy
 
 <img width="600" height="auto" alt="screenshot-2026-10-26_04-32-15" src="https://github.com/user-attachments/assets/f4dd4812-3de0-4780-a3b8-f083789e704f" />
 
 Not only is the harness capable of spawning macros and workflow stacks chained with if-then sequencing, but macrohelp natively visualizes the unit circle, and performs dot product translations and Unit-Circle visuals for moving the mouse off relative location. The final feature is a Dance-Dance revolution style keyboard history stylized with open-source [prompt-font](https://shinmera.com/docs/promptfont/)
 
-Want to get into .ani cursors? Check out the bilbata rainbow fork for windows [here](https://github.com/CommanderTurtle/Bibata_Cursor_Rainbow_2.0) — (includes info on .ani and the windows .inf cursor-style for animating)
+<details><summary>View More Videos</summary>
+
+### Hyprland, taking a screenshot with a zone:
+
+https://github.com/user-attachments/assets/e3f4da20-7689-4dae-992d-30daf80da2ab
+
+### Windows, playing around with an old alpha version:
+
+https://github.com/user-attachments/assets/68dd4d90-b1f2-44f1-94a8-9648ee998eca
+
+</details>
 
 #### See the Quick Start [here](./quick-start.md)
 
