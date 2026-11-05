@@ -212,6 +212,18 @@ binding, including PP-OCR, stays in charge. Clipboard buffers use the native edi
 Registry helpers remain unchanged and require `rgd` on PATH (`wl-paste` for append,
 already supplied by Omarchy). Import/export transfers environments, including Windows
 Registry Hub text exports; adjust Windows paths and shell aliases before use.
+
+Circle and zone placement (Shift+Alt+3 or the Pointer page) works from relative
+vectors (`-20i+20j`, `316@-2i+2j`, or radius plus radians/degrees). At Confirm:
+Z moves the pointer; **X anchors a zone at the live cursor, V at the circle
+placement; a second press of the same key opens the zone method menu, and the
+other key re-anchors the zone with its own corner - a press never confirms the
+other key's zone**. C chains a new circle from the placement. B walks to the
+target, clicks, and walks back, following the same 300 ms-out / 250 ms-back
+timing schema as zone captures. Successful zone captures automatically walk the
+pointer home to where it stood when the task began; failures deliberately leave
+it parked for inspection, and native-picker captures ("S"/`{screen}`) never
+warp the pointer because your hand is on the drag.
 Workflow conditions evaluate on Play/Save. Clipboard/OCR/registry workflow steps
 use Play; Export environment preserves those workflows. Input-only workflows may
 also be saved as native schedules. Shell aliases open the desktop terminal shortcut

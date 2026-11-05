@@ -1,11 +1,18 @@
 // Dialog state only. Desktop input, persistence and tools remain in Service.
+// Conventions for command branches (Dialogs.qml routes single a-z keypresses
+// straight to submit):
+// - Any branch that keeps the current stage alive must clear s.text (field()
+//   does this). A leftover typed character makes the next keypress arrive as
+//   multi-character text, and the single-key route silently stops firing.
+// - Stage moves go through field(); closing sets close=true; environment
+//   writes return "change" effects rather than mutating env here.
 var slots = ["Z", "X", "C", "V"]
 function clone(value) { return JSON.parse(JSON.stringify(value)) }
 function point(cursor) { return [Math.round(cursor.x), Math.round(cursor.y)] }
 function open(kind, cursor, pendingZone) {
   return {kind:kind, stage:kind === "save_cursor" || kind === "record_keys" ? "Name" : kind === "circle_placer" ? "Distance" : "Command",
     text:"", name:"", error:"", slot:"Z", origin:point(cursor), points:[point(cursor)], radius:0, angle:0, unit:"degrees",
-    target:null, zoneStart:null, pendingZone:pendingZone || null, steps:[], delay:200, capturing:false, captured:[], held:[], captureReady:false}
+    target:null, zoneStart:null, zoneBy:"", pendingZone:pendingZone || null, steps:[], delay:200, capturing:false, captured:[], held:[], captureReady:false}
 }
 function field(s, stage, text) { s.stage=stage; s.text=text===undefined?"":String(text); s.error="" }
 function commandStage(s) { return ["Command","Mode","Confirm","ZoneAction","PasteSelect","ZoneCommand","ZonePlaySelect","ZonePlayFlow","ZoneCaptureZoneSelect","ZoneCaptureFlow","ZoneCaptureTarget","ZoneSelect"].indexOf(s.stage)>=0 }
