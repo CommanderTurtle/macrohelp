@@ -1,4 +1,4 @@
-<img src="https://github.com/CommanderTurtle/CommanderTurtle/raw/refs/heads/main/src/macrohelp.svg" alt="Macrohelp Icon" title="Redirect to Quickstart" href="./quick-start.md" />
+<a href="./quick-start.md" title="Redirect to Quickstart"><img src="https://github.com/CommanderTurtle/CommanderTurtle/raw/refs/heads/main/src/macrohelp.svg" alt="Macrohelp Icon" /></a>
 
 — a developer's best friend
 
