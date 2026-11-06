@@ -232,7 +232,10 @@ impl App {
             _ => Err(ApiError::new(404, "Not Found")),
         }
     }
-    pub fn handle(&self, mut stream: TcpStream) {
+    pub fn handle(&self, stream: TcpStream) {
+        self.handle_stream(stream.into())
+    }
+    fn handle_stream(&self, mut stream: crate::private_transport::Stream) {
         // Accepted sockets inherit nonblocking mode on Windows, unlike Linux.
         if stream.set_nonblocking(false).is_err() {
             return;
@@ -248,8 +251,7 @@ impl App {
                     return Ok((ok("CORS preflight",json!({})), false));
                 }
                 let (path, query) = split_target(&target)?;
-                // Server-identity proof runs before any client credential is
-                // accepted, so a pre-bound impostor never observes the key.
+                // Legacy diagnostic echo; Linux clients authenticate the Unix peer.
                 if method == "GET" && path == "/challenge" && challenge_open {
                     if self.nonce.is_empty() {
                         return Err(ApiError::new(503, "Handshake unavailable"));
@@ -342,7 +344,7 @@ impl App {
     }
 }
 type Head = (String, String, BTreeMap<String, String>, Vec<u8>);
-fn read_before(stream: &mut TcpStream, chunk: &mut [u8], deadline: Instant) -> Result<usize> {
+fn read_before(stream: &mut crate::private_transport::Stream, chunk: &mut [u8], deadline: Instant) -> Result<usize> {
     let time = deadline
         .checked_duration_since(Instant::now())
         .filter(|t| !t.is_zero())
@@ -363,8 +365,7 @@ fn read_before(stream: &mut TcpStream, chunk: &mut [u8], deadline: Instant) -> R
         )),
     }
 }
-/// Writes the owner-private handshake nonce the real daemon must echo before
-/// any client discloses its API key; a foreign UID cannot read this file.
+/// Writes the legacy diagnostic nonce. Linux clients use kernel peer credentials.
 pub fn write_handshake_file(path: &std::path::Path) -> Result<String> {
     use std::io::Read;
     let mut seed = [0u8; 16];
@@ -435,7 +436,7 @@ mod cleanup_tests {
         std::fs::remove_file(&path).unwrap();
     }
 }
-fn read_headers(stream: &mut TcpStream) -> Result<Head> {
+fn read_headers(stream: &mut crate::private_transport::Stream) -> Result<Head> {
     let deadline = Instant::now() + Duration::from_secs(3);
     let mut data = Vec::new();
     loop {
@@ -494,7 +495,7 @@ fn tool_inventory() -> Vec<Value> {
         ("Set Grid Cell","Set a grid value.","/grid","POST",r#"{"id":"grid-0","value":"42"}"#),
         ("List Grid","List grid cells.","/grid","GET","/grid"),
         ("Health Check","Check controller and Omarsket connectivity.","/health","GET","/health"),
-        ("Identity Challenge","Handshake nonce proof; no credential required.","/challenge","GET","/challenge"),
+        ("Legacy Challenge","Diagnostic nonce echo; no credential required.","/challenge","GET","/challenge"),
         ("View API Key","Return the configured key to an already-authenticated caller.","/secret","GET","/secret")
     ].iter().map(|(name,description,endpoint,method,example)|json!({"name":name,"description":description,"endpoint":endpoint,"method":method,"example":example})).collect()
 }
@@ -549,7 +550,12 @@ fn decode(s: &str) -> Result<String> {
     }
     String::from_utf8(out).map_err(|_| ApiError::new(400, "URL must be UTF-8"))
 }
-pub fn serve(server: Arc<TcpListener>, app: Arc<App>, stop: Arc<AtomicBool>) {
+pub fn serve(server: Arc<TcpListener>, app: Arc<App>, stop: Arc<AtomicBool>) -> Result<()> {
+    #[cfg(unix)]
+    let private = app.runner.config.nonce_file.as_deref()
+        .map(crate::private_transport::PrivateListener::bind)
+        .transpose().map_err(|e| ApiError::new(503, format!("Private HTTP endpoint: {e}")))?
+        .map(Arc::new);
     server
         .set_nonblocking(true)
         .expect("Set listener nonblocking");
@@ -558,8 +564,18 @@ pub fn serve(server: Arc<TcpListener>, app: Arc<App>, stop: Arc<AtomicBool>) {
             let server = server.clone();
             let app = app.clone();
             let stop = stop.clone();
+            #[cfg(unix)]
+            let private = private.clone();
             std::thread::spawn(move || {
                 while !stop.load(Ordering::Relaxed) {
+                    #[cfg(unix)]
+                    if let Some(private) = &private {
+                        match private.accept() {
+                            Ok(stream) => app.handle_stream(stream),
+                            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => (),
+                            Err(e) => eprintln!("Private HTTP connection: {e}"),
+                        }
+                    }
                     match server.accept() {
                         Ok((stream, _)) => app.handle(stream),
                         Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -575,4 +591,5 @@ pub fn serve(server: Arc<TcpListener>, app: Arc<App>, stop: Arc<AtomicBool>) {
         let _ = worker.join();
     }
     app.runner.stop_owned();
+    Ok(())
 }

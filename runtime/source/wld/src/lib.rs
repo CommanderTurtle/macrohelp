@@ -7,4 +7,5 @@ pub mod control_skills;
 pub mod heatmap;
 pub mod overlay;
 pub mod profiles;
+pub mod private_transport;
 pub mod rgd;

@@ -44,14 +44,21 @@ fn exercise(executable: &std::ffi::OsStr, native: bool) {
         }
     });
     let key = "mcp-control-integration-key-0123456789";
-    let nonce_path = std::env::temp_dir().join(format!(
-        "macrohelp-control-test-{}-{}.nonce",
+    let directory = std::env::temp_dir().join(format!(
+        "macrohelp-mcp-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos()
     ));
+    std::fs::create_dir_all(&directory).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let nonce_path = directory.join("control.nonce");
     let server = Server::bind(
         Settings {
             address: ([127, 0, 0, 1], 0).into(),

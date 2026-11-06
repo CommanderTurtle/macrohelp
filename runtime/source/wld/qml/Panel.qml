@@ -79,7 +79,7 @@ Ui.Panel {
         Text {width:parent.width;wrapMode:Text.Wrap;color:Commons.Color.warning;font.family:Style.font.family;font.pixelSize:Style.font.caption;text:root.app?root.app.error:"";visible:text!==""}
         Row {spacing:Style.space(5);Ui.Button {text:"Ping health";onClicked:if(root.app)root.app.ping()}Ui.Button {text:"Reconnect";onClicked:if(root.app)root.app.reconnect()}Ui.Button {text:"Start daemon";onClicked:if(root.app)root.app.startDaemon()}Ui.Button {text:root.app&&root.app.secretKey!==""?"Hide key":"Reveal key";onClicked:if(root.app){if(root.app.secretKey==="")root.app.revealSecret();else root.app.hideSecret()}}}
         Text {width:parent.width;wrapMode:Text.Wrap;color:Commons.Color.accent;font.family:Style.font.family;font.pixelSize:Style.font.caption;text:root.app?root.app.secretKey:"";visible:root.app&&root.app.secretKey!==""}
-        Text {width:parent.width;wrapMode:Text.Wrap;color:root.fg;font.family:Style.font.family;font.pixelSize:Style.font.caption;text:"Health checks, daemon control, and the API key live inside this tray. The key is fetched with GET /secret only after the controller answers the owner-only handshake challenge, and no key ever crosses a command line."}
+        Text {width:parent.width;wrapMode:Text.Wrap;color:root.fg;font.family:Style.font.family;font.pixelSize:Style.font.caption;text:"Health checks, daemon control, and the API key live inside this tray. The key is fetched with GET /secret over the owner-private socket after the kernel peer UID is verified, and no key ever crosses a command line."}
       }}}
           Column {
             width:parent.width;spacing:Style.space(8);visible:root.app&&root.app.page==="Workflow"

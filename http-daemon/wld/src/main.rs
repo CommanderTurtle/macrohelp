@@ -55,6 +55,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Err("Expected --env PATH".into());
     };
     let config = Config::load(&path)?;
+    let server = Arc::new(std::net::TcpListener::bind(config.address)?);
     let executor = Arc::new(SocketExecutor {
         path: config.socket.clone(),
     });
@@ -75,7 +76,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let app = Arc::new(App::new(Runner::new(config.clone(), executor), nonce));
     app.runner.snapshot()?;
     let _blink = ensure_blink_task(&app);
-    let server = Arc::new(std::net::TcpListener::bind(config.address)?);
     eprintln!(
         "Macrohelp HTTP: http://{} · shared Omarsket queue · authentication required",
         config.address
@@ -93,11 +93,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         signal.store(true, Ordering::Relaxed);
     });
-    serve(server, app.clone(), stop);
+    let result = serve(server, app.clone(), stop);
     remove_blink_task(&app);
     if let Some(path) = &config.nonce_file {
         remove_handshake_file(path, &cleanup_nonce);
     }
+    result?;
     Ok(())
 }
 

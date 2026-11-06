@@ -1,6 +1,4 @@
-//! The controller must prove it owns the handshake nonce before any client
-//! credential crosses the wire, so a foreign UID that pre-binds the port
-//! captures at most the challenge — never the persistent API key.
+//! Legacy TCP challenge compatibility. Linux clients use peer-checked Unix sockets.
 use macrohelp_wayland::{
     config::Config, http_server::App, task_executor::Executor, task_runner::Runner,
 };
@@ -13,6 +11,41 @@ use std::{
 };
 const KEY: &str = "macrohelp-local-test-key-0123456789";
 const NONCE: &str = "0f1e2d3c4b5a69788796a5b4c3d2e1f0";
+#[cfg(target_os = "linux")]
+#[test]
+fn private_controller_uses_the_existing_authenticated_routes() {
+    use macrohelp_wayland::{http_server::serve, private_transport};
+    use std::{os::unix::fs::PermissionsExt, sync::atomic::{AtomicBool, Ordering}, time::{Duration, Instant}};
+    let dir = std::env::temp_dir().join(format!("mh-http-{}-{}",std::process::id(),std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir(&dir).unwrap();
+    std::fs::set_permissions(&dir,std::fs::Permissions::from_mode(0o700)).unwrap();
+    let nonce=dir.join("httpd.nonce");
+    let server=Arc::new(TcpListener::bind("127.0.0.1:0").unwrap());
+    let address=server.local_addr().unwrap();
+    let mut config=app(NONCE).runner.config.clone();
+    config.address=address;
+    config.nonce_file=Some(nonce.clone());
+    let service=Arc::new(App::new(Runner::new(config,Arc::new(Stub)),NONCE.into()));
+    let stop=Arc::new(AtomicBool::new(false));
+    let quitting=stop.clone();
+    let thread=std::thread::spawn(move || serve(server,service,quitting).unwrap());
+    let until=Instant::now()+Duration::from_secs(3);
+    while !nonce.with_extension("sock").exists() && Instant::now()<until { std::thread::sleep(Duration::from_millis(5)); }
+    for key in [None,Some(KEY)] {
+        let mut stream=private_transport::connect(address,Some(&nonce)).unwrap();
+        stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        let auth=key.map(|k|format!("X-Tasket-Key: {k}\r\n")).unwrap_or_default();
+        write!(stream,"GET /secret HTTP/1.1\r\nHost: {address}\r\n{auth}Connection: close\r\n\r\n").unwrap();
+        let mut response=String::new();
+        stream.read_to_string(&mut response).unwrap();
+        assert!(response.starts_with(if key.is_some() {"HTTP/1.1 200"} else {"HTTP/1.1 401"}),"{response}");
+        assert_eq!(response.contains(KEY),key.is_some());
+    }
+    stop.store(true,Ordering::Relaxed);
+    thread.join().unwrap();
+    assert!(!nonce.with_extension("sock").exists());
+    std::fs::remove_dir_all(dir).unwrap();
+}
 struct Stub;
 impl Executor for Stub {
     fn call(&self, _: Value) -> macrohelp_wayland::types::Result<Value> {
@@ -70,7 +103,7 @@ fn read_one(stream: &mut TcpStream) -> (u16, Value) {
     )
 }
 #[test]
-fn challenge_proves_identity_then_key_travels_same_connection() {
+fn legacy_challenge_and_authenticated_secret_share_one_connection() {
     let (mut client, server) = pair();
     let handle = app(NONCE);
     let thread = std::thread::spawn(move || handle.handle(server));

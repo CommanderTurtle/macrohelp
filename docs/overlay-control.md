@@ -84,26 +84,27 @@ curl.exe http://127.0.0.1:7778/v1/control -H "Authorization: Bearer $key" -H "Co
 ```
 
 ```sh
-key=$(cat "${MACROHELP_STATE_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/macrohelp}/control-key")
-curl --config - <<EOF
-url = "http://127.0.0.1:7778/v1/control"
-header = "Authorization: Bearer $key"
-header = "Content-Type: application/json"
-data-binary = "@request.json"
-EOF
+"${XDG_DATA_HOME:-$HOME/.local/share}/macrohelp/overlay/bin/macrohelpctl" \
+  control-request --method POST --path /v1/control < request.json
 ```
 
-Passing the key through `--config` (or `curl.config`) instead of `-H` keeps it
-out of process arguments, where other local UIDs could read it from
-`/proc/<pid>/cmdline`. The overlay and task controller also require a server
-handshake before any client credential is sent: each writes an owner-only
-nonce (`$XDG_RUNTIME_DIR/macrohelp/control.nonce`, `httpd.nonce`, override with
-`MACROHELP_CONTROL_NONCE`/`MACROHELP_NONCE`) and clients verify it via
-`GET /v1/challenge` / `GET /challenge` first, so a foreign process that
-pre-binds the port never observes the key. The check fails closed: without a
-readable nonce (the service never started or exited cleanly) clients refuse to
-send the key at all, and when `$XDG_RUNTIME_DIR` is absent the nonce falls
-back to `<state dir>/nonce/httpd.nonce` / `<state dir>/control.nonce`.
+On Linux the overlay, MCP and status scripts use owner-private Unix sockets:
+`$XDG_RUNTIME_DIR/macrohelp/control.sock` and `httpd.sock` (mode `0600`, parent
+`0700`). The socket is a sibling of the configured
+`MACROHELP_CONTROL_NONCE`/`MACROHELP_NONCE` path, with `.sock` replacing its
+extension. Without `$XDG_RUNTIME_DIR`, paths are `<state dir>/control.sock`
+and `<state dir>/nonce/httpd.sock`. The connected peer's kernel `SO_PEERCRED`
+UID must match the client's effective UID before credentials are written.
+Missing, unsafe or foreign endpoints fail closed; Linux clients never fall
+back to TCP. Secrets stay inside the native process, away from command arguments.
+
+Use `control-request` for overlay routes and `controller-request` for execution
+routes; `--env PATH` selects the existing private configuration and POST JSON
+comes from stdin. Both return a nonzero exit status when unavailable. TCP APIs
+remain available for existing integrations. Their public `/v1/challenge` and
+`/challenge` echoes are legacy diagnostics, rather than server authentication.
+Rebuild both Linux binaries and restart their processes together when upgrading.
+Rotate any previously exposed persistent keys in their existing private files.
 `GET /secret` on the task controller (port 7777, authenticated) returns the
 current key to callers that already hold it.
 
@@ -194,10 +195,7 @@ Invalid tool arguments return `isError:true` with `error.status`, `message` and
 Nothing automatically rewrites or retries an action. Inspect state before retrying
 after a native error, timeout or disconnect because effects may already have begun.
 
-Read coordinates with the same `--config` pattern (URL plus bearer header on
-stdin, never `-H "...Bearer $key"` on argv):
-`curl --config - <<EOF` … `url = "http://127.0.0.1:7778/v1/coords"` …
-`header = "Authorization: Bearer $key"` … `EOF`.
+Read coordinates with `macrohelpctl control-request --path /v1/coords`.
 This uses the overlay's existing displayed coordinate source; it does not move the pointer.
 On Linux, dismissing a blinked quick dialog returns the pointer to its frozen entry
 position using a memory-only `/temp-task` with `cleanup:true`. Escape and the

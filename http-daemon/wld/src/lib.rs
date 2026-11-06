@@ -1,6 +1,8 @@
 pub mod config;
 pub mod configure;
 pub mod http_server;
+#[path = "../../../runtime/source/wld/src/private_transport.rs"]
+pub mod private_transport;
 pub mod task_executor;
 pub mod task_json_loader;
 pub mod task_registry;

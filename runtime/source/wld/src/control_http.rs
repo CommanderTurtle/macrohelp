@@ -1,6 +1,7 @@
 //! Authenticated loopback transport for the overlay. Never executes macros.
 use crate::client::{ApiError, Config, Result};
 use crate::control_protocol::{self, LIMIT};
+use crate::private_transport::Stream;
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
@@ -77,8 +78,7 @@ impl Settings {
         }))
     }
 }
-/// Owner-private handshake nonce for the control plane; the same UID trust
-/// boundary the tasket controller uses before any Bearer key is disclosed.
+/// Legacy diagnostic nonce. Linux credentials travel over a peer-checked socket.
 pub fn write_control_nonce(path: &std::path::Path) -> std::io::Result<String> {
     use std::io::Read;
     let mut seed = [0u8; 16];
@@ -194,7 +194,7 @@ fn same_key(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && a.iter().zip(b).fold(0, |acc, (a, b)| acc | (a ^ b)) == 0
 }
 fn request(
-    stream: &mut TcpStream,
+    stream: &mut Stream,
     settings: &Settings,
     dispatch: &Dispatch,
     challenge_open: bool,
@@ -275,8 +275,7 @@ fn request(
         if !allowed { return Err(ApiError::new(404,"Unknown overlay control route")); }
         return Ok((json!({"cors":true}), false));
     }
-    // The overlay must prove it owns the owner-private nonce before any
-    // client discloses the persistent Bearer key on this connection.
+    // Retained for compatibility; this public echo is not server authentication.
     if method == "GET" && path == "/v1/challenge" && challenge_open {
         let keep_alive = !headers
             .get("connection")
@@ -356,7 +355,10 @@ fn request(
 fn io(error: std::io::Error) -> ApiError {
     ApiError::new(503, error.to_string())
 }
-pub fn handle(mut stream: TcpStream, settings: &Settings, dispatch: &Dispatch) {
+pub fn handle(stream: TcpStream, settings: &Settings, dispatch: &Dispatch) {
+    handle_stream(stream.into(), settings, dispatch)
+}
+fn handle_stream(mut stream: Stream, settings: &Settings, dispatch: &Dispatch) {
     // Windows accepted sockets can inherit the listener's nonblocking mode.
     if stream.set_nonblocking(false).is_err() {
         return;
@@ -393,11 +395,15 @@ pub struct Server {
 }
 impl Server {
     pub fn bind(mut settings: Settings, dispatch: Dispatch) -> Result<Self> {
+        let listener = Arc::new(TcpListener::bind(settings.address).map_err(io)?);
+        listener.set_nonblocking(true).map_err(io)?;
+        #[cfg(unix)]
+        let private = settings.nonce_file.as_deref()
+            .map(crate::private_transport::PrivateListener::bind)
+            .transpose().map_err(io)?.map(Arc::new);
         if let Some(path) = settings.nonce_file.clone() {
             settings.nonce = write_control_nonce(&path).ok();
         }
-        let listener = Arc::new(TcpListener::bind(settings.address).map_err(io)?);
-        listener.set_nonblocking(true).map_err(io)?;
         settings.address = listener.local_addr().map_err(io)?;
         let address = settings.address;
         let stop = Arc::new(AtomicBool::new(false));
@@ -409,8 +415,18 @@ impl Server {
                     let stop = quitting.clone();
                     let dispatch = dispatch.clone();
                     let settings = settings.clone();
+                    #[cfg(unix)]
+                    let private = private.clone();
                     thread::spawn(move || {
                         while !stop.load(Ordering::Relaxed) {
+                            #[cfg(unix)]
+                            if let Some(private) = &private {
+                                match private.accept() {
+                                    Ok(stream) => handle_stream(stream, &settings, &dispatch),
+                                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => (),
+                                    Err(e) => eprintln!("Overlay private connection: {e}"),
+                                }
+                            }
                             match listener.accept() {
                                 Ok((stream, _)) => handle(stream, &settings, &dispatch),
                                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {

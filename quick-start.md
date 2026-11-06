@@ -160,22 +160,21 @@ Task IDs, delays, loops and cancellation come from Omarsket. `cleanup:true` temp
 tasks stay in memory; saved tasks use `.omscht` and never overwrite existing names.
 Ctrl+C stops HTTP-owned runs; it does not stop independent backend jobs.
 
-Identity handshake: on Linux both the httpd and the overlay control API first
-write an owner-only nonce (`$XDG_RUNTIME_DIR/macrohelp/httpd.nonce` and
-`control.nonce`, override with `MACROHELP_NONCE`/`MACROHELP_CONTROL_NONCE`).
-Clients verify it over `GET /challenge` / `GET /v1/challenge` before sending
-any key, so a process under a different UID that pre-binds the port never
-sees the credential. The check fails closed: while the service is not running
-(its nonce is absent) clients and status scripts refuse to probe with the key,
-and when `$XDG_RUNTIME_DIR` is absent the nonce lives in the state/data
-directory instead. Start the service (the tray Status pane can start the
-daemon) and probes succeed again. `GET /secret` (authenticated) returns the
-current key to callers that already hold it. When calling the APIs from
-scripts, pass keys with `curl --config -` (header on stdin) rather than `-H`,
-which exposes them in `/proc/<pid>/cmdline`. The tray **Status** pane performs
-these health
-checks, reconnects the native client, starts the daemon, and reveals the key
-without ever touching a command line.
+Linux server identity: the native clients and status scripts use private Unix
+sockets (`$XDG_RUNTIME_DIR/macrohelp/httpd.sock` and `control.sock`, mode `0600`
+inside a `0700` directory). Socket paths follow `MACROHELP_NONCE` and
+`MACROHELP_CONTROL_NONCE`, replacing the nonce filename's extension with `.sock`.
+Without `$XDG_RUNTIME_DIR`, they use `<state dir>/nonce/httpd.sock` and
+`<state dir>/control.sock`. Each connection verifies the peer's kernel UID
+before writing a key, with no Linux TCP fallback. The public challenge routes
+remain legacy diagnostics. Existing TCP integrations remain available.
+
+Use `macrohelpctl controller-request` or `macrohelpctl control-request` from
+scripts; add `--env PATH`, `--path /route` and `--method POST` as needed, with
+POST JSON on stdin. These use the native configuration and keep keys off argv.
+Rebuild both Linux binaries and restart their processes together on upgrade;
+rotate previously exposed persistent keys in their private files. The tray
+**Status** pane retains health checks, reconnect, start and key display.
 
 Optional overlay plugin:
 

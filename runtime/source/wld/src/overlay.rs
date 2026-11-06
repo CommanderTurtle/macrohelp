@@ -1,11 +1,12 @@
 //! Private overlay state, authenticated loopback client and Hyprland read-only IPC.
 use crate::client::{ApiError, Config, Result, string};
 use crate::heatmap;
+#[cfg(not(unix))]
+use crate::private_transport::Stream;
 use serde_json::{Value, json};
 use std::{
     fs,
     io::{BufRead, Read, Write},
-    net::TcpStream,
     path::Path,
     process::{Command, Stdio},
     sync::{
@@ -79,17 +80,16 @@ pub fn http(config: &Config, method: &str, path: &str, body: &Value) -> Result<V
     if config.key.is_empty() {
         return Err(ApiError::new(503, "Controller not configured"));
     }
-    if path.contains(['\r', '\n', ' ']) || !path.starts_with('/') {
-        return Err(ApiError::new(400, "Invalid local HTTP path"));
-    }
-    let mut stream = TcpStream::connect_timeout(&config.address, Duration::from_secs(2))
-        .map_err(|e| ApiError::new(503, format!("Start macrohelp-httpd first: {e}")))?;
+    crate::control_mcp::validate_request(method, path)?;
+    let mut stream = crate::private_transport::connect(config.address, config.nonce_file.as_deref())
+        .map_err(|e| ApiError::new(503, format!("Controller identity unverifiable; key withheld. Start macrohelp-httpd first: {e}")))?;
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .map_err(io_error)?;
     stream
         .set_write_timeout(Some(Duration::from_secs(5)))
         .map_err(io_error)?;
+    #[cfg(not(unix))]
     if let Some(nonce_path) = config.nonce_file.as_ref() {
         verify_controller(&mut stream, config.address, nonce_path)?;
     }
@@ -121,11 +121,10 @@ pub fn http(config: &Config, method: &str, path: &str, body: &Value) -> Result<V
     }
     Ok(value["data"].clone())
 }
-/// Proves the listener owns the owner-private handshake nonce before the API
-/// key is written. A different UID pre-bound the port cannot read that file,
-/// so the impostor is rejected and the key never enters the TCP stream.
+/// Legacy non-Unix transport compatibility. Linux uses kernel peer credentials.
+#[cfg(not(unix))]
 fn verify_controller(
-    stream: &mut TcpStream,
+    stream: &mut Stream,
     address: std::net::SocketAddr,
     nonce_path: &Path,
 ) -> Result<()> {
@@ -150,7 +149,8 @@ fn verify_controller(
     }
     Ok(())
 }
-pub(crate) fn read_single_response(stream: &mut TcpStream) -> Result<(u16, serde_json::Value)> {
+#[cfg(not(unix))]
+pub(crate) fn read_single_response(stream: &mut Stream) -> Result<(u16, serde_json::Value)> {
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .map_err(io_error)?;
@@ -717,7 +717,7 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "--help") {
         println!(
-            "macrohelpctl [session|stop|health|mcp] [--env PATH]\nOverlay client and MCP adapter; execution still requires the separate HTTP daemon."
+            "macrohelpctl [session|stop|health|mcp] [--env PATH]\nmacrohelpctl [controller-request|control-request] [--env PATH] [--method GET|POST] [--path /route] [--port-free]\nRequests print JSON; POST bodies come from stdin. Linux authenticates the private socket peer before sending credentials."
         );
         return Ok(());
     }
@@ -730,6 +730,49 @@ pub fn run() -> std::result::Result<(), Box<dyn std::error::Error>> {
         .map(String::as_str)
         .unwrap_or_else(|| default_path.to_str().unwrap_or(".env"));
     let config = Config::load(Path::new(path))?;
+    if matches!(mode, "controller-request" | "control-request") {
+        let mut method = "GET";
+        let mut route = if mode == "control-request" { "/v1/health" } else { "/health" };
+        let mut port_free = false;
+        let mut index = 1;
+        while index < args.len() {
+            match args[index].as_str() {
+                "--port-free" => { port_free = true; index += 1; }
+                "--env" | "--method" | "--path" => {
+                    let value = args.get(index + 1).ok_or("Missing option value")?;
+                    match args[index].as_str() {
+                        "--method" => method = value,
+                        "--path" => route = value,
+                        _ => (),
+                    }
+                    index += 2;
+                }
+                _ => return Err("Unknown request option".into()),
+            }
+        }
+        crate::control_mcp::validate_request(method, route)?;
+        let settings = if mode == "control-request" {
+            Some(crate::control_http::Settings::load(&config)?.ok_or("Overlay control is disabled")?)
+        } else { None };
+        if port_free {
+            let address = settings.as_ref().map(|s| s.address).unwrap_or(config.address);
+            let _listener = std::net::TcpListener::bind(address)
+                .map_err(|e| format!("Port {address} is unavailable; service not started: {e}"))?;
+            return Ok(());
+        }
+        let body = if method == "POST" {
+            let mut bytes = Vec::new();
+            std::io::stdin().take(crate::control_protocol::LIMIT as u64 + 1).read_to_end(&mut bytes)?;
+            if bytes.len() > crate::control_protocol::LIMIT { return Err("Body exceeds 1 MiB".into()); }
+            if bytes.is_empty() { json!({}) } else { serde_json::from_slice(&bytes)? }
+        } else { json!({}) };
+        let value = match settings {
+            Some(settings) => crate::control_mcp::http(&settings, method, route, &body)?,
+            None => http(&config, method, route, &body)?,
+        };
+        println!("{value}");
+        return Ok(());
+    }
     if mode == "mcp" {
         let settings =
             crate::control_http::Settings::load(&config)?.ok_or("Overlay control is disabled")?;
@@ -1016,6 +1059,7 @@ mod tests {
         }
     }
     #[test]
+    #[cfg(not(unix))]
     fn unverified_controller_never_sees_the_key() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
@@ -1046,6 +1090,7 @@ mod tests {
         assert!(!text.contains("X-Tasket-Key"));
     }
     #[test]
+    #[cfg(not(unix))]
     fn verified_controller_receives_key_after_challenge() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
@@ -1100,6 +1145,7 @@ mod tests {
         assert_eq!(value["ok"], true);
         responder.join().unwrap();
     }
+    #[cfg(not(unix))]
     fn absent_nonce_key_capture(label: &str, nonce: Option<&str>) -> (bool, String) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
@@ -1138,6 +1184,7 @@ mod tests {
     // port before the real one starts, there is no expected nonce to compare
     // against. Absent or empty, the persistent key stays home either way.
     #[test]
+    #[cfg(not(unix))]
     fn absent_nonce_file_never_sees_the_key() {
         let (refused, text) = absent_nonce_key_capture("nonce-absent", None);
         assert!(refused, "expected unverifiable-identity refusal");
@@ -1147,6 +1194,7 @@ mod tests {
         );
     }
     #[test]
+    #[cfg(not(unix))]
     fn empty_nonce_file_never_sees_the_key() {
         let (refused, text) = absent_nonce_key_capture("nonce-empty", Some("\n"));
         assert!(refused, "expected unverifiable-identity refusal");

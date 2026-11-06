@@ -115,7 +115,7 @@ impl Harness {
         ));
         let stop = Arc::new(AtomicBool::new(false));
         let stopped = stop.clone();
-        let thread = std::thread::spawn(move || serve(server, app, stopped));
+        let thread = std::thread::spawn(move || serve(server, app, stopped).unwrap());
         Self {
             addr,
             stop,
@@ -179,7 +179,7 @@ fn qt_route_inventory_matches_exactly() {
         .iter()
         .map(|(m, p)| (m.to_string(), p.to_string()))
         .collect();
-    // The handshake and key-view routes are the Linux identity surface; the
+    // The legacy challenge and key-view routes remain TCP-compatible; the
     // Windows Qt build has no client that discloses a key pre-auth, so it
     // intentionally lacks exactly these two.
     let linux_only: BTreeSet<_> = actual

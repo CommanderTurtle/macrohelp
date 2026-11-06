@@ -7,7 +7,6 @@ use crate::{
 use serde_json::{Value, json};
 use std::{
     io::{BufRead, Read, Write},
-    net::TcpStream,
     sync::OnceLock,
     time::Duration,
 };
@@ -32,14 +31,16 @@ fn available(item: &Value) -> bool {
 }
 
 pub fn http(settings: &Settings, method: &str, path: &str, body: &Value) -> Result<Value> {
-    let mut stream = TcpStream::connect_timeout(&settings.address, Duration::from_secs(2))
-        .map_err(|_| ApiError::new(503, "Start the Macrohelp overlay first"))?;
+    validate_request(method, path)?;
+    let mut stream = crate::private_transport::connect(settings.address, settings.nonce_file.as_deref())
+        .map_err(|e| ApiError::new(503, format!("Overlay control identity unverifiable; key withheld. Start the overlay first: {e}")))?;
     stream
         .set_read_timeout(Some(Duration::from_secs(20)))
         .map_err(|e| ApiError::new(503, e.to_string()))?;
     stream
         .set_write_timeout(Some(Duration::from_secs(5)))
         .map_err(|e| ApiError::new(503, e.to_string()))?;
+    #[cfg(not(unix))]
     if let Some(nonce_path) = settings.nonce_file.as_ref() {
         verify_control(&mut stream, settings.address, nonce_path)?;
     }
@@ -80,10 +81,17 @@ pub fn http(settings: &Settings, method: &str, path: &str, body: &Value) -> Resu
     }
     Ok(result["result"].clone())
 }
-/// Proves the listener owns the owner-private control nonce before the
-/// persistent Bearer key is written; a pre-bound impostor never sees it.
+pub(crate) fn validate_request(method: &str, path: &str) -> Result<()> {
+    if !matches!(method, "GET" | "POST") || !path.starts_with('/')
+        || !path.bytes().all(|b| (33..=126).contains(&b)) {
+        return Err(ApiError::new(400, "Invalid local HTTP method or path"));
+    }
+    Ok(())
+}
+/// Legacy non-Unix compatibility; Linux authenticates the connected Unix peer.
+#[cfg(not(unix))]
 fn verify_control(
-    stream: &mut TcpStream,
+    stream: &mut crate::private_transport::Stream,
     address: std::net::SocketAddr,
     nonce_path: &std::path::Path,
 ) -> Result<()> {

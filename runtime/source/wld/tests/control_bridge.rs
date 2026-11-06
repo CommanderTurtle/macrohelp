@@ -29,6 +29,7 @@ fn session_relays_authenticated_http_and_releases_pending_calls_at_exit() {
         .env("MACROHELP_CONTROL_KEY", key)
         .env("MACROHELP_CONTROL_PORT", address.port().to_string())
         .env("MACROHELP_CONTROL_ENABLED", "true")
+        .env("MACROHELP_CONTROL_NONCE", dir.join("control.nonce"))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -70,7 +71,7 @@ fn session_relays_authenticated_http_and_releases_pending_calls_at_exit() {
         address,
         key: key.into(),
         cors: false,
-        nonce_file: None,
+        nonce_file: if cfg!(unix) { Some(dir.join("control.nonce")) } else { None },
         nonce: None,
     };
     let client = settings.clone();

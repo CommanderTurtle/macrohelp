@@ -126,18 +126,21 @@ fn slow_http_does_not_block_the_local_overlay() {
     use std::io::{BufRead, BufReader, Read};
     use std::sync::mpsc;
     use std::time::Duration;
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
+    let tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = tcp.local_addr().unwrap().port();
     let (release, wait) = mpsc::channel();
-    // The client proves the controller's identity (challenge -> owner-only
-    // nonce) before it releases the tasket key, so the stand-in answers the
-    // challenge first and only then sees the held, authenticated request.
-    let nonce = "offline-slow-nonce-0123456789abcdef00";
-    let nonce_path = std::env::temp_dir().join(format!(
-        "macrohelp-offline-slow-{}.nonce",
-        std::process::id()
-    ));
-    std::fs::write(&nonce_path, format!("{nonce}\n")).unwrap();
+    let dir = std::env::temp_dir().join(format!("mh-slow-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let nonce_path = dir.join("httpd.nonce");
+    #[cfg(unix)]
+    let listener = {
+        use std::os::unix::fs::PermissionsExt;
+        drop(tcp);
+        std::fs::set_permissions(&dir,std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::os::unix::net::UnixListener::bind(nonce_path.with_extension("sock")).unwrap()
+    };
+    #[cfg(not(unix))]
+    let listener = tcp;
     let child_nonce = nonce_path.clone();
     let server = std::thread::spawn(move || {
         let (mut socket, _) = listener.accept().unwrap();
@@ -160,33 +163,10 @@ fn slow_http_does_not_block_the_local_overlay() {
             }
         }
         input.read_exact(&mut vec![0; length]).unwrap();
-        assert!(first_head.starts_with("GET /challenge"));
-        let body = format!("{{\"success\":true,\"data\":{{\"nonce\":\"{nonce}\"}}}}");
-        write!(
-            socket,
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: keep-alive\r\n\r\n{}",
-            body.len(),
-            body
-        )
-        .unwrap();
-        socket.flush().unwrap();
-        length = 0;
-        let mut second_head = String::new();
-        loop {
-            let mut line = String::new();
-            input.read_line(&mut line).unwrap();
-            if line == "\r\n" {
-                break;
-            }
-            second_head.push_str(&line);
-            if let Some(value) = line.strip_prefix("Content-Length: ") {
-                length = value.trim().parse::<usize>().unwrap();
-            }
-        }
-        input.read_exact(&mut vec![0; length]).unwrap();
+        assert!(first_head.starts_with("GET /health"));
         drop(input);
         drop(reader);
-        assert!(second_head.contains("X-Tasket-Key"));
+        assert!(first_head.contains("X-Tasket-Key"));
         let _ = wait.recv_timeout(Duration::from_secs(3));
         let body = r#"{"success":true,"data":{"status":"ok"}}"#;
         write!(
@@ -240,6 +220,7 @@ fn slow_http_does_not_block_the_local_overlay() {
     assert!(child.wait().unwrap().success());
     server.join().unwrap();
     reader.join().unwrap();
+    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
